@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { isDemoPricing } from "@/config/business";
 import { estimateShipping } from "@/config/shipping";
-import { quoteConfiguration, requiresCustomQuote } from "@/lib/pricing/engine";
+import { quoteConfiguration, requiresCustomQuote } from "@/modules/pricing";
 import { track } from "@/lib/analytics/track";
 import { useCart } from "@/lib/cart/cart-context";
 import { formatDimensions, formatMoney, formatPct, formatQty, formatUnitPrice } from "@/lib/format";

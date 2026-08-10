@@ -81,18 +81,29 @@ render visibly until replaced.
 
 ## Cost model (required for margins, contribution profit & price guardrails)
 
-None of these exist yet — the pricing engine knows sell prices only.
-Margin math and every price guardrail stay disabled ("fail closed") until
-these are provided. Do NOT let anyone invent them.
+The structure now exists in `config/costs.ts` (Session 02) with every value
+an explicit `null` placeholder. Margin math reports "unavailable" and every
+price guardrail fails closed until ALL of these are provided. Do NOT let
+anyone invent them. Units: integer cents; rates in basis points (290 = 2.9%).
 
-| Item | Where (planned) |
+| Item | Where |
 | --- | --- |
-| Base manufacturing cost per bag (per size/material) | pricing cost config (Session 02) |
-| Printing cost per unit (1c/2c) + setup fees | same |
-| Packaging cost per carton / per unit | same |
-| Shipping cost basis (per carton, per lane) or subsidy policy | same |
-| Payment processing fee (% + fixed) | same |
-| Target margin / minimum margin | same |
+| Base manufacturing cost per bag | `config/costs.ts` → `products.<id>.baseManufacturingCentsPerUnit` |
+| Per-size manufacturing deltas | `config/costs.ts` → `products.<id>.sizeAdjustmentCentsPerUnit` (every offered size id) |
+| Per-material cost deltas (GSM/weight) | `config/costs.ts` → `products.<id>.materialAdjustmentCentsPerUnit` |
+| Printing cost per unit (1c/2c) + setup fees | `config/costs.ts` → `products.<id>.printing.<printOptionId>` |
+| Packaging cost per unit | `config/costs.ts` → `products.<id>.packagingCentsPerUnit` |
+| Shipping cost basis (per unit / per order / per carton) | `config/costs.ts` → `products.<id>.shipping` |
+| Other variable cost (0 is a valid confirmed value) | `config/costs.ts` → `products.<id>.otherVariableCentsPerUnit` |
+| Payment processing fee (% + fixed) | `config/costs.ts` → `paymentFee` |
+| Minimum gross / contribution margin + target margin | `config/costs.ts` → `marginPolicy` |
+
+## Database & first-party data (Session 03)
+
+| Item | Where |
+| --- | --- |
+| Production Postgres connection string | `.env` → `DATABASE_URL` (then run `npm run db:migrate` at deploy) |
+| Consent policy review for first-party analytics | The storefront stores its own behavioral events (`/api/events`, `bd_sid`/`bd_aid` cookies) independently of the GA4/Meta consent gate; review with legal and either update the privacy policy/banner copy or set `NEXT_PUBLIC_FIRST_PARTY_EVENTS=false` |
 
 ## AI & guardrail configuration (for the AI-platform roadmap)
 

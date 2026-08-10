@@ -7,6 +7,8 @@
  * flush. No artwork contents or personal data ever enter the dataLayer.
  */
 
+import { forwardFirstParty } from "./first-party";
+
 export type EcommerceItem = {
   product_id: string;
   product_name: string;
@@ -69,6 +71,10 @@ function push(event: AnalyticsEvent): void {
 }
 
 export function track(event: AnalyticsEvent): void {
+  // First-party dual-write: selected events also persist to /api/events
+  // (non-blocking, exception-safe). The dataLayer path below is unchanged.
+  // See lib/analytics/first-party.ts for the mapping table + consent notes.
+  forwardFirstParty(event);
   if (event.name === "purchase") {
     const tid = event.params.transaction_id;
     if (firedPurchases.has(tid)) return; // duplicate purchase guard

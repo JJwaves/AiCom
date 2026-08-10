@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { track } from "@/lib/analytics/track";
-import { baseUnitPriceCents } from "@/lib/pricing/engine";
+import { baseUnitPriceCents } from "@/modules/pricing";
 import type { Product } from "@/types/commerce";
 
 /** Fires view_item once per product page view. */

@@ -1,9 +1,10 @@
 import type { MetadataRoute } from "next";
 import { BUSINESS } from "@/config/business";
-import { PRODUCTS } from "@/config/products";
+import { listCatalogProducts } from "@/lib/commerce/catalog";
 import { LANDING_PAGES } from "@/config/landing-pages";
 
-export default function sitemap(): MetadataRoute.Sitemap {
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
+  const products = await listCatalogProducts();
   const base = `https://${BUSINESS.DOMAIN}`;
   const staticPaths = [
     "",
@@ -21,7 +22,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
   ];
   return [
     ...staticPaths.map((p) => ({ url: `${base}${p}`, changeFrequency: "weekly" as const })),
-    ...PRODUCTS.map((p) => ({
+    ...products.map((p) => ({
       url: `${base}/products/${p.slug}`,
       changeFrequency: "weekly" as const,
       priority: p.hero ? 1 : 0.8,

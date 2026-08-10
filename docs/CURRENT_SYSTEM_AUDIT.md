@@ -4,6 +4,25 @@ Audited 2026-08-08 (Session 01 of the AI-platform upgrade). Snapshot of the
 storefront as originally built; the source of truth for what exists before
 any AI work begins.
 
+Re-verified 2026-08-08 (second pass, full source read): all Session-01
+claims held up; three code-level findings were added — catalog reads
+bypassing the commerce provider (risk 7), component-local configurator
+state (risk 6), and the stale mock-fallback comment in the Shopify
+provider. Baseline re-confirmed green: 39/39 tests, clean typecheck, clean
+lint, clean production build.
+
+**Session 02 resolution note (2026-08-08, same day):** risks 2 (client-
+trusted checkout pricing), 3 (no margin floor — structure now exists,
+values still `[TO BE PROVIDED]`) and 7 (catalog reads bypassing the
+provider) are RESOLVED; the stale Shopify fallback comment is resolved by
+implementing the described fallback in `lib/commerce/catalog.ts`. The
+pricing REFACTOR (→ `modules/pricing` + cost model + server re-quote at
+`/api/checkout`) and the catalog-reads REFACTOR are done — see
+ARCHITECTURE.md and CLAUDE.md for the as-built state. 59/59 tests green.
+Risks 1, 4, 5, 6 (persistence, session identity, catalog id stability,
+configurator store) remain open for Sessions 03/06. The snapshot below is
+kept as originally audited.
+
 ## Stack summary
 
 | Layer | Current implementation |
@@ -25,8 +44,16 @@ any AI work begins.
 - **Deterministic pricing engine** (`lib/pricing/engine.ts`) — pure
   integer-cent functions: tier selection, option deltas, savings %,
   below-MOQ / custom-config routing to quote. Unit-tested.
-- **Commerce abstraction** (`lib/commerce/provider.ts`) — UI depends only on
-  the `CommerceProvider` interface; Shopify swaps in via env.
+- **Commerce abstraction** (`lib/commerce/provider.ts`) — the
+  `CommerceProvider` interface (`listProducts` / `getProduct` /
+  `createCheckout`) exists and checkout goes through it; Shopify swaps in
+  via env. **Caveat (verified in code):** catalog *reads* do not all go
+  through it — 8 files (`app/page.tsx`, `app/products/page.tsx`,
+  `app/products/[slug]/page.tsx`, `app/cart/page.tsx`, `app/sitemap.ts`,
+  `app/request-quote/quote-client.tsx`, `components/landing/*`) import
+  `config/products` directly. Harmless while mock ≡ config, but under
+  Shopify the catalog pages and cart re-pricing would silently keep using
+  the seed catalog. See REFACTOR.
 - **Typed analytics event model** (`lib/analytics/track.ts`) — GA4-compatible
   ecommerce events + funnel events, pushed to a dataLayer, consent-gated
   with pre-consent buffering, purchase dedup by transaction id.
@@ -51,7 +78,13 @@ any AI work begins.
 
 - **Shopify provider** — checkout mutation + config detection exist;
   product/variant mapping and the `b2b.pricing_tiers` metafield read are
-  `TODO(shopify)` (needs a real store).
+  `TODO(shopify)` (needs a real store). **Two verified gotchas:** (a) a
+  comment in `lib/commerce/shopify.ts` claims `index.ts` "falls back to the
+  mock catalog for empty results" — no such fallback exists; the switch in
+  `getCommerce()` is all-or-nothing, so setting the Shopify env vars before
+  the mapping is complete empties the catalog. (b) `createCheckout` ships a
+  hard-coded `REPLACE_ME` variant id, so it cannot succeed until mapping is
+  done. Neither matters today (env vars unset), both are Session-02 fixes.
 - **Artwork persistence** — files validated but held as object URLs;
   no binary storage (S3/Shopify Files is a launch task).
 - **Order status** — mock orders render from sessionStorage; Shopify order
@@ -94,6 +127,18 @@ any AI work begins.
    a durable session id minted server-side.
 5. **Anonymous config-file catalog.** Fine for now (KEEP), but product ids
    must remain stable once conversations/orders reference them.
+6. **Configurator state is component-local.** `ProductConfigurator` holds
+   size/material/color/print/quantity/artwork in six `useState` hooks
+   inside one client component. There is no shared, validated
+   configuration store an AI tool could read or mutate — the "ONE
+   authoritative configuration state" the AI-sales design requires does
+   not exist yet and must be extracted (a validated reducer/store with
+   the same rules the UI enforces) before chat ↔ configurator sync.
+7. **Catalog reads bypass the provider.** Product/landing/cart/sitemap
+   code imports `config/products` directly (8 files) instead of calling
+   `getCommerce()`. The abstraction is real at checkout but only nominal
+   for catalog reads; AI product tools must not repeat this shortcut, and
+   the read path must be unified before Shopify activation.
 
 ## Classification
 
@@ -114,9 +159,24 @@ any AI work begins.
   contribution outputs, `minimumAllowedPrice`; add server-side checkout
   re-quote. Engine math itself is reused as-is.
 - **Events** → `track()` dual-writes: dataLayer (existing) + first-party
-  event store (new). Component call sites stay unchanged.
+  event store (new). Component call sites stay unchanged. Note: the client
+  event names are GA4-shaped (`view_item`, `product_config_started`,
+  `select_quantity`…) while the planned first-party taxonomy in
+  DATABASE_SCHEMA.md uses platform names (`product_viewed`,
+  `configurator_started`, `quantity_selected`…) — the dual-write layer
+  owns that mapping explicitly; do not rename the GA4-facing events.
 - **Checkout** → server route validates cart lines against the engine
   before creating a checkout/order.
+- **Configurator state** → extract the component-local `useState` cluster
+  into one shared, validated configuration store (reducer semantics, same
+  option/quantity rules). The UI dispatches to it today; AI tools dispatch
+  to the *same* store in Stage C. Prerequisite for chat ↔ configurator
+  sync — never two parallel copies of configuration state.
+- **Catalog reads** → route the 8 direct `config/products` imports through
+  `getCommerce()` (or a thin server catalog module backed by it) so the
+  provider switch actually switches the whole storefront, not just
+  checkout. Also fix the stale mock-fallback comment in
+  `lib/commerce/shopify.ts` (or implement the fallback it describes).
 - **Artwork** → extend metadata flow with persistence + workflow states.
 
 ### ADD (in roadmap order)

@@ -13,19 +13,38 @@ The funnel is: **ad → landing page → configurator → price → cart → che
   `CommerceProvider` interface. `mock` serves the seed catalog in
   `config/products.ts`; `shopify` activates automatically when
   `NEXT_PUBLIC_SHOPIFY_*` env vars exist and hands checkout to Shopify's
-  secure checkout (no custom card handling, ever).
+  secure checkout (no custom card handling, ever). All catalog reads go
+  through `lib/commerce/catalog.ts` (provider-backed, with a loud mock
+  fallback while the Shopify mapping is incomplete).
 - **Config-first**: brand, products, pricing tiers, shipping, FAQ and landing
   pages are data files under `config/` — no business values hard-coded in
   components.
-- **Pricing engine** (`lib/pricing/engine.ts`): pure, integer-cent tier math.
-  Unit tested.
+- **Pricing module** (`modules/pricing/`): pure, integer-cent tier math
+  (`engine.ts`) plus the factory cost model (`cost-model.ts`, fed by
+  `config/costs.ts` placeholders — margins report "unavailable" and price
+  floors fail closed until real economics are provided). Unit tested.
+- **Server-authoritative checkout** (`app/api/checkout/route.ts`): the
+  browser proposes, the server re-prices every cart line with the engine
+  before any checkout/order is created; drift answers 409 REPRICED.
 - **Attribution** (`lib/attribution/`): first-party first/last-touch UTM +
   gclid/gbraid/wbraid/fbclid capture, persisted, attached to checkout as
   order metadata. Unit tested.
 - **Analytics** (`lib/analytics/track.ts`): one typed event model pushed to a
   dataLayer; consent-gated; buffered before consent; purchase dedup by
   transaction id. GTM/GA4/Meta load from env IDs in
-  `components/analytics/AnalyticsProvider.tsx`.
+  `components/analytics/AnalyticsProvider.tsx`. Selected events also
+  dual-write first-party via `lib/analytics/first-party.ts` → `/api/events`
+  (explicit GA4→platform mapping table; beacon-batched; disable with
+  `NEXT_PUBLIC_FIRST_PARTY_EVENTS=false`).
+- **Database** (`db/` + `lib/data/`): Postgres via Drizzle ORM — the AI
+  data foundation (sessions, first-party events, customers, orders, quotes,
+  need profiles, conversations, AI-ops tables). **Zero setup in dev/tests:**
+  with `DATABASE_URL` unset, an embedded PGlite Postgres lives at
+  `.data/pglite` (gitignored) and migrations apply automatically.
+  Production sets `DATABASE_URL` and runs `npm run db:migrate` at deploy
+  (`db:generate` emits migrations from `db/schema.ts`; `db:seed` writes
+  clearly-labeled DEMO data, dev only). All access goes through the
+  validated services in `lib/data/` — see `docs/DATABASE_SCHEMA.md`.
 - **Design system**: Cobalt theme (OKLCH tokens in `app/globals.css`),
   Space Grotesk / Inter / JetBrains Mono via `next/font`.
 
@@ -33,12 +52,25 @@ The funnel is: **ad → landing page → configurator → price → cart → che
 app/                 routes (see Information architecture below)
 components/
   analytics/  forms/  landing/  layout/  product/
-config/              business.ts · products.ts · shipping.ts · faq.ts · landing-pages.ts
+config/              business.ts · products.ts · costs.ts · shipping.ts · faq.ts · landing-pages.ts
+db/                  schema.ts (Drizzle) · client.ts (Postgres/PGlite) · migrations/ · seed.ts
 lib/
-  analytics/  attribution/  cart/  commerce/  pricing/  validation/  format.ts
+  analytics/  attribution/  cart/  commerce/  data/ (DB service boundary)  validation/  format.ts
+modules/
+  pricing/           engine.ts (tier math) · cost-model.ts (costs/margins/price floor)
 tests/               vitest unit tests
 types/               commerce domain types
 ```
+
+## AI-platform direction
+
+BagDirect is evolving into an AI-native factory-direct commerce platform
+(AI Packaging Expert, customer intelligence, guarded automation). The
+storefront above is the foundation and keeps working unchanged. Start with
+[CLAUDE.md](CLAUDE.md), then the doc set under [docs/](docs/):
+system audit, target architecture, database schema, AI agent architecture,
+guardrails, roadmap, and the owner's master spec. Development sessions are
+driven by the prompt files in [prompts/](prompts/).
 
 ## Local setup
 
@@ -141,12 +173,13 @@ verify webhook signatures with `SHOPIFY_WEBHOOK_SECRET`.
 ## Testing
 
 `npm test` covers the money paths: tier selection (boundaries), option
-deltas, quote math, custom-quote routing, artwork validation (type, size,
-spoofed MIME), quote-form schema, US/CA postal detection, and
-first/last-touch attribution merging. UI flows (configurator, cart, checkout
-handoff, UTM persistence, mobile layout, 404, SEO metadata, analytics
-events) are verified in-browser; add Playwright for regression coverage as a
-follow-up.
+deltas, quote math, custom-quote routing, the server checkout re-quote
+(tamper → 409, invalid configs → 422), cost/margin math and its fail-closed
+behavior with unconfigured costs, artwork validation (type, size, spoofed
+MIME), quote-form schema, US/CA postal detection, and first/last-touch
+attribution merging. UI flows (configurator, cart, checkout handoff, UTM
+persistence, mobile layout, 404, SEO metadata, analytics events) are
+verified in-browser; add Playwright for regression coverage as a follow-up.
 
 ## Deployment
 

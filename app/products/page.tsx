@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { PRODUCTS } from "@/config/products";
+import { listCatalogProducts } from "@/lib/commerce/catalog";
 import { ProductCard } from "@/components/landing/sections";
 
 export const metadata: Metadata = {
@@ -9,7 +9,8 @@ export const metadata: Metadata = {
   alternates: { canonical: "/products" },
 };
 
-export default function ProductsPage() {
+export default async function ProductsPage() {
+  const products = await listCatalogProducts();
   return (
     <section className="mx-auto max-w-6xl px-4 py-12 sm:px-6">
       <h1 className="text-3xl sm:text-4xl" style={{ fontWeight: 600 }}>
@@ -20,7 +21,7 @@ export default function ProductsPage() {
         specs beyond these go through the quote form.
       </p>
       <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {PRODUCTS.map((p) => (
+        {products.map((p) => (
           <ProductCard key={p.id} product={p} />
         ))}
       </div>

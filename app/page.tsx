@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { PRODUCTS } from "@/config/products";
+import { getHeroCatalogProduct, listCatalogProducts } from "@/lib/commerce/catalog";
 import { FAQ_ITEMS } from "@/config/faq";
 import { PricingDemo } from "@/components/landing/PricingDemo";
 import {
@@ -20,7 +20,9 @@ export const metadata: Metadata = {
   alternates: { canonical: "/" },
 };
 
-export default function HomePage() {
+export default async function HomePage() {
+  const products = await listCatalogProducts();
+  const hero = await getHeroCatalogProduct();
   return (
     <>
       {/* HERO — Workbench: headline left, live pricing panel (product in use) right */}
@@ -43,7 +45,7 @@ export default function HomePage() {
               </Link>
             </div>
           </div>
-          <PricingDemo />
+          <PricingDemo product={hero} />
         </div>
       </section>
 
@@ -61,7 +63,7 @@ export default function HomePage() {
           quantity — price on screen the whole time.
         </p>
         <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {PRODUCTS.map((p) => (
+          {products.map((p) => (
             <ProductCard key={p.id} product={p} />
           ))}
         </div>

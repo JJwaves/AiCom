@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
-import { quoteSchema } from "@/lib/validation/quote";
+import { quoteSchema, type QuoteRequest } from "@/lib/validation/quote";
 import { validateArtworkFile, ARTWORK_MAX_BYTES } from "@/lib/validation/artwork";
+import { applyNeedProfileUpdate, type NeedProfileUpdate } from "@/lib/data/customer-need-service";
+import { ensureBusiness, linkCustomerBusiness, upsertCustomerByEmail } from "@/lib/data/customer-service";
+import { createQuote, recordArtwork } from "@/lib/data/quote-service";
+import { sessionFromRequest, setSessionCookies } from "@/lib/data/request-session";
+import { linkCustomer, type SessionRow } from "@/lib/data/session-service";
 
 /**
  * Custom-quote intake.
@@ -94,5 +99,85 @@ export async function POST(req: Request) {
     console.log("[quote] request received (no QUOTE_WEBHOOK_URL configured):", JSON.stringify(payload, null, 2));
   }
 
-  return NextResponse.json({ ok: true });
+  // First-party persistence (additive; delivery above already succeeded —
+  // a data-layer failure logs loudly and never turns into a customer error).
+  const sessionCtx = await sessionFromRequest(req);
+  if (sessionCtx) {
+    await persistQuote(sessionCtx.session, parsed.data, payload, attribution, file instanceof File && file.size > 0 ? file : null);
+  }
+
+  const res = NextResponse.json({ ok: true });
+  if (sessionCtx) setSessionCookies(res, sessionCtx.session);
+  return res;
+}
+
+/** "5,000" / " 5000 " → 5000; anything non-numeric (e.g. "a few thousand") stays unknown — never guessed. */
+function parseExactQuantity(raw: string): number | null {
+  const cleaned = raw.replace(/[,\s]/g, "");
+  if (!/^\d+$/.test(cleaned)) return null;
+  const n = Number(cleaned);
+  return Number.isSafeInteger(n) && n > 0 && n <= 100_000_000 ? n : null;
+}
+
+/**
+ * Persist the submitted quote as first-party records: Customer + Business
+ * identity, the Quote row (full validated payload), artwork metadata, and a
+ * USER_STATED CustomerNeedProfile enrichment — the customer told us these
+ * facts in their own words.
+ */
+async function persistQuote(
+  session: SessionRow,
+  data: QuoteRequest,
+  payload: Record<string, unknown>,
+  attribution: Record<string, string>,
+  artworkFile: File | null,
+): Promise<void> {
+  try {
+    const customer = await upsertCustomerByEmail({
+      email: data.email,
+      name: data.contactName,
+      phone: data.phone || undefined,
+    });
+    const business = await ensureBusiness({ name: data.businessName });
+    await linkCustomerBusiness(customer.id, business.id);
+    await linkCustomer(session.id, customer.id, business.id);
+
+    const quote = await createQuote({
+      sessionId: session.id,
+      customerId: customer.id,
+      businessId: business.id,
+      status: "submitted",
+      createdBy: "customer",
+      payload,
+      attribution,
+    });
+
+    if (artworkFile) {
+      await recordArtwork({
+        sessionId: session.id,
+        customerId: customer.id,
+        quoteId: quote.id,
+        fileName: artworkFile.name,
+        fileType: artworkFile.type || "application/octet-stream",
+        sizeBytes: artworkFile.size,
+      });
+    }
+
+    const quantity = parseExactQuantity(data.quantity);
+    const update: NeedProfileUpdate = {
+      businessName: data.businessName,
+      productInterest: data.productType,
+      ...(quantity !== null ? { quantity } : {}),
+      ...(data.printing ? { printingRequirement: data.printing } : {}),
+      ...(data.postalCode ? { shippingPostalCode: data.postalCode } : {}),
+      ...(data.desiredDelivery ? { desiredDeliveryDate: data.desiredDelivery } : {}),
+      ...(artworkFile ? { logoAvailable: true } : {}),
+    };
+    await applyNeedProfileUpdate(session.id, update, "USER_STATED", {
+      customerId: customer.id,
+      businessId: business.id,
+    });
+  } catch (err) {
+    console.error("[quote] persistence failed — quote delivery unaffected", err);
+  }
 }

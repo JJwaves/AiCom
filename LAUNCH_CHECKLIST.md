@@ -9,9 +9,19 @@ take real traffic until they pass.
 - [ ] Security headers checked (CSP, X-Frame-Options, Referrer-Policy)
 - [ ] 404 page tested (`/definitely-not-a-page`)
 
+## Database (first-party data)
+- [ ] ⛔ Production `DATABASE_URL` set to a real Postgres instance (managed Postgres recommended; PGlite is dev/test-only and the app now refuses to start database access in production without `DATABASE_URL` — db/client.ts)
+- [ ] ⛔ Migrations applied to the production database BEFORE first traffic: run `npm run db:migrate` with the production `DATABASE_URL` as an explicit deploy step (the app never runs DDL against an external database at request time)
+- [ ] ⛔ Verified the deployed environment is NOT on the embedded PGlite fallback: with `DATABASE_URL` unset the production app must fail loudly at first database use (actionable `[db] DATABASE_URL is not set` error in server logs) — never silently store data on instance disk
+- [ ] Migration process documented in the deploy pipeline (schema changes: `npm run db:generate` in development → review SQL in `db/migrations/` → `npm run db:migrate` at deploy)
+- [ ] `npm run db:seed` never pointed at production (it writes DEMO-labeled data and refuses external databases unless forced — leave it that way)
+- [ ] Database backups/point-in-time recovery enabled on the production Postgres
+
 ## Commerce
 - [ ] ⛔ Shopify production credentials in env (`NEXT_PUBLIC_SHOPIFY_*`)
 - [ ] ⛔ Variant mapping complete in `lib/commerce/shopify.ts` (no `REPLACE_ME` ids)
+- [ ] ⛔ Mock-catalog read fallback removed from `lib/commerce/catalog.ts` once the Shopify mapping is verified (it exists so an early env switch can't empty the storefront; launch must serve the real catalog only)
+- [ ] Cost model filled in `config/costs.ts` (no `null` inputs) so margins compute and price guardrails can verify — see BUSINESS_CONFIG_TODO "Cost model"
 - [ ] ⛔ Real product prices loaded; `pricingStatus: "LIVE"`; `NEXT_PUBLIC_DEMO_PRICING=false`
 - [ ] ⛔ Real MOQ confirmed (`MOQ_CONFIRMED: true`)
 - [ ] ⛔ Real shipping costs (rate source configured or Shopify shipping profiles)

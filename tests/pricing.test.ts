@@ -5,7 +5,7 @@ import {
   requiresCustomQuote,
   savingsPct,
   tierForQuantity,
-} from "@/lib/pricing/engine";
+} from "@/modules/pricing";
 import { PRODUCTS } from "@/config/products";
 import type { ProductConfiguration } from "@/types/commerce";
 

@@ -68,6 +68,30 @@ Exit: AgentDecision → human approval loop operating.
   tests, reorder outreach). Never automated: large refunds, legal changes,
   unsupported factory promises, major price/spend changes.
 
+## Stage-number mapping (owner spec ↔ this roadmap)
+
+The owner's spec numbers phases 0–17; this roadmap groups them A–J.
+Same plan, two labels:
+
+| Spec stage | Meaning | Here |
+| --- | --- | --- |
+| 0 | Existing system audit | A (Session 01 ✅) |
+| 1 | Commerce + pricing stabilization | A remainder |
+| 2 | AI data foundation | B |
+| 3 | AI provider infrastructure | B |
+| 4 | AI Sales Agent | C |
+| 5 | AI Sales × Configurator | C |
+| 6 | AI Sales × Checkout | C |
+| 7 | Customer intelligence | D |
+| 8 | Contribution profit + business intelligence | E |
+| 9 | Guardrails + AI Action Center | E |
+| 10 | Experiment engine + CRO agent | F |
+| 11 | Pricing intelligence | G |
+| 12–14 | Google Ads read-only → recommendations → guarded automation | H |
+| 15 | Meta Ads | I |
+| 16 | Advanced business decision agent | J |
+| 17 | Guarded autonomous commerce | J |
+
 ## Session map (prompt pack ↔ stages)
 
 | Session | Scope | Stage |

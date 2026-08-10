@@ -2,8 +2,8 @@ import Link from "next/link";
 import Script from "next/script";
 import { BUSINESS } from "@/config/business";
 import type { LandingContent } from "@/config/landing-pages";
-import { getProductBySlug } from "@/config/products";
-import { startingUnitPriceCents } from "@/lib/pricing/engine";
+import { getCatalogProduct } from "@/lib/commerce/catalog";
+import { startingUnitPriceCents } from "@/modules/pricing";
 import { formatQty, formatUnitPrice } from "@/lib/format";
 import { BagIllustration } from "@/components/product/BagIllustration";
 import { TierPricingTable } from "@/components/product/TierPricingTable";
@@ -15,8 +15,8 @@ import { FAQAccordion, FinalCTA, HowItWorks, TrustBar } from "@/components/landi
  * objective; the organic variant keeps full context. UTM params survive via
  * the attribution layer (captured on every page load) — links stay clean.
  */
-export function LandingTemplate({ content, adMode = false }: { content: LandingContent; adMode?: boolean }) {
-  const product = getProductBySlug(content.productSlug);
+export async function LandingTemplate({ content, adMode = false }: { content: LandingContent; adMode?: boolean }) {
+  const product = await getCatalogProduct(content.productSlug);
   if (!product) return null;
   const productHref = `/products/${product.slug}`;
 

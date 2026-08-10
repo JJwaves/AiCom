@@ -2,17 +2,18 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { getHeroProduct } from "@/config/products";
-import { quoteConfiguration } from "@/lib/pricing/engine";
+import { quoteConfiguration } from "@/modules/pricing";
 import { formatMoney, formatPct, formatQty, formatUnitPrice } from "@/lib/format";
+import type { Product } from "@/types/commerce";
 
 /**
  * The hero's live pricing panel — Workbench "product in use".
  * A real, interactive slice of the configurator: pick a quantity,
  * watch the unit price and total move. Instrument-panel styling.
+ * The product arrives as a prop from a server component (catalog reads go
+ * through lib/commerce/catalog, never config/products).
  */
-export function PricingDemo() {
-  const product = getHeroProduct();
+export function PricingDemo({ product }: { product: Product }) {
   const [qty, setQty] = useState(5000);
 
   const quote = quoteConfiguration(product, {

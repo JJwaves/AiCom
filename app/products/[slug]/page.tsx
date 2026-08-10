@@ -2,20 +2,21 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import Script from "next/script";
-import { PRODUCTS, getProductBySlug } from "@/config/products";
+import { getCatalogProduct, listCatalogProducts } from "@/lib/commerce/catalog";
 import { BUSINESS, isDemoPricing } from "@/config/business";
-import { baseUnitPriceCents, startingUnitPriceCents } from "@/lib/pricing/engine";
+import { baseUnitPriceCents, startingUnitPriceCents } from "@/modules/pricing";
 import { ProductConfigurator } from "@/components/product/ProductConfigurator";
 import { HowItWorks } from "@/components/landing/sections";
 import { ViewItemTracker } from "./view-item-tracker";
 
-export function generateStaticParams() {
-  return PRODUCTS.map((p) => ({ slug: p.slug }));
+export async function generateStaticParams() {
+  const products = await listCatalogProducts();
+  return products.map((p) => ({ slug: p.slug }));
 }
 
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   const { slug } = await params;
-  const product = getProductBySlug(slug);
+  const product = await getCatalogProduct(slug);
   if (!product) return {};
   return {
     title: `${product.title} — Volume Pricing & Custom Printing`,
@@ -28,7 +29,7 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
 
 export default async function ProductPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const product = getProductBySlug(slug);
+  const product = await getCatalogProduct(slug);
   if (!product) notFound();
 
   // Product structured data — omit price when demo pricing is active so the

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
+import { listCatalogProducts } from "@/lib/commerce/catalog";
 import { QuoteClient } from "./quote-client";
 
 export const metadata: Metadata = {
@@ -10,7 +11,8 @@ export const metadata: Metadata = {
   alternates: { canonical: "/request-quote" },
 };
 
-export default function RequestQuotePage() {
+export default async function RequestQuotePage() {
+  const products = await listCatalogProducts();
   return (
     <section className="mx-auto max-w-3xl px-4 py-12 sm:px-6">
       <h1 className="text-3xl sm:text-4xl" style={{ fontWeight: 600 }}>
@@ -26,7 +28,7 @@ export default function RequestQuotePage() {
       </p>
       <div className="mt-8">
         <Suspense>
-          <QuoteClient />
+          <QuoteClient products={products.map((p) => ({ slug: p.slug, title: p.title }))} />
         </Suspense>
       </div>
     </section>

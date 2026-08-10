@@ -42,8 +42,11 @@ async function storefront<T>(query: string, variables: Record<string, unknown> =
 
 /* ---------------------------------------------------------------------- */
 /* NOTE: full product mapping lands when a store exists. The queries and   */
-/* mapping skeleton below compile and run; they return [] until then, and  */
-/* lib/commerce/index.ts falls back to the mock catalog for empty results. */
+/* mapping skeleton below compile and run; they return [] until then.      */
+/* Catalog READS fall back to the mock catalog (with a loud warning) via   */
+/* lib/commerce/catalog.ts, so activating the env vars early never empties */
+/* the storefront. createCheckout has NO fallback — it fails visibly until */
+/* the variant mapping below is complete.                                  */
 /* ---------------------------------------------------------------------- */
 
 const CART_CREATE = /* GraphQL */ `

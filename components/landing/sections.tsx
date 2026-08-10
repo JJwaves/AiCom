@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { VALUE_PROPS } from "@/config/business";
-import { baseUnitPriceCents, startingUnitPriceCents } from "@/lib/pricing/engine";
+import { baseUnitPriceCents, startingUnitPriceCents } from "@/modules/pricing";
 import { formatQty, formatUnitPrice } from "@/lib/format";
 import type { Product } from "@/types/commerce";
 import { BagIllustration } from "@/components/product/BagIllustration";
