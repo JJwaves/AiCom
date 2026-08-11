@@ -53,11 +53,11 @@ limits, refund authorization, agent autonomy, approvals.
 
 ## Current project stage
 
-**Stage B "AI Data Foundation" COMPLETE AND HARDENED (Session 03 +
-hardening Session 03.5, both 2026-08-09) — next milestone: Session 04
-"AI Provider Infrastructure + Tool Architecture".**
+**Session 04 "AI Provider Infrastructure + Tool Architecture" COMPLETE
+(2026-08-10; Stage B data foundation completed+hardened 2026-08-09) — next
+milestone: Session 05 "AI Sales Agent Core".**
 
-## Current architecture (2026-08-09, post-Session 03)
+## Current architecture (2026-08-10, post-Session 04)
 
 Working B2B storefront, verified end-to-end (see
 docs/CURRENT_SYSTEM_AUDIT.md + its Session-02 resolution note):
@@ -95,12 +95,35 @@ docs/CURRENT_SYSTEM_AUDIT.md + its Session-02 resolution note):
   gates overwrites (tested). Live writers: quote form (USER_STATED), mock
   checkout (ORDER_DATA). Unknown stays unknown — vague quantities are not
   parsed into numbers.
-- **AI-ops preparation (empty but live):** AiUsage (+ totals for budget
-  caps), AgentDecision with typed AgentAction schema, Approval auto-created
-  pending, AgentConfig (missing row ⇒ OBSERVE fail-safe), CustomerInsight
-  (sourceRefs ≥ 1 enforced — fabrication structurally impossible),
-  ProductOpportunity (humanValidationRequired always true), Experiment +
-  sticky assignments. No agents, no LLM calls, no runtime.
+- **AI-ops data (live):** AiUsage (+ totals for budget caps; S04 added
+  prompt_id/prompt_version columns, migration 0001), AgentDecision with
+  typed AgentAction schema, Approval auto-created pending, AgentConfig
+  (missing row ⇒ OBSERVE fail-safe), CustomerInsight (sourceRefs ≥ 1
+  enforced), ProductOpportunity (humanValidationRequired always true),
+  Experiment + sticky assignments.
+- **AI runtime `lib/ai` (Session 04 — foundation, no agents, no UI, OFF by
+  default):** server-only module (docs/AI_RUNTIME.md is authoritative).
+  Provider abstraction with the Anthropic adapter implemented on the
+  official SDK (openai/gemini interface-ready, selecting them fails loudly);
+  `AiRuntime` facade = flags → env config → workload router
+  (LOW_COST/STANDARD/REASONING → haiku-4-5/sonnet-5/opus-5, env-overridable)
+  → budget guard → provider call (timeout, normalized AiError codes) →
+  AiUsage row (non-fatal, loudly logged). Versioned prompt registry (infra
+  prompts only; usage rows trace prompt+model). Structured output =
+  provider-constrained JSON + OUR zod validation, bounded 1-retry.
+  Budget guard fails CLOSED (caps+unpriced model ⇒ config error; totals
+  outage ⇒ AI_BUDGET_EXCEEDED check_failed). Typed tool registry:
+  permission tiers READ/CUSTOMER_WRITE/COMMERCE/FINANCIAL_RESTRICTED/
+  ADMIN_RESTRICTED, server-minted ToolExecutionContext, zod in+out
+  validation, sha256-hashed audit logs, loop limits (tool calls/model
+  calls/duration end turns with a status). Sales toolset (6):
+  searchProducts, getProductDetails, calculatePrice + getQuantityPricing
+  (engine delegation — output schemas structurally exclude cost/margin/
+  floor), getShippingEstimate (honest), saveCustomerNeed (AI_INFERRED
+  provenance, session from context). `config/flags.ts` all-default-OFF;
+  `config/ai-pricing.ts` null placeholders (budgets unenforceable until
+  filled — documented). FakeAiProvider ships for tests; no credentials or
+  network in tests/build.
 - `lib/commerce` — provider abstraction; `mock` active, `shopify`
   Storefront skeleton env-gated (variant mapping TODO, needs real store).
   **All catalog reads go through `lib/commerce/catalog.ts`** (provider-
@@ -294,6 +317,67 @@ architecture changes, no new AI features — hardening only.
    cascade vs. commerce survival, customer redaction incl. filenames,
    cross-session cleanup, second-customer isolation, unknown-id no-op).
 
+## Completed in Session 04 (2026-08-10) — AI Provider Infrastructure + Tool Architecture
+
+Runtime foundation only — no agents, no customer-facing AI, no autonomous
+actions. Everything OFF until `AI_RUNTIME_ENABLED=true` + a provider key.
+**Security boundaries (structural, tested):** AI cannot override or set any
+price (pricing tools delegate to the engine; outputs exclude cost/margin/
+floor fields), cannot access admin secrets (server env unreachable from
+tools; keys never in prompts or logs), cannot modify ads, issue refunds, or
+change manufacturing rules (no such tools exist; FINANCIAL_RESTRICTED /
+ADMIN_RESTRICTED tiers are granted to no agent and rejected from
+customer-facing registries), and cannot invent authorization (contexts are
+server-minted).
+
+1. **Provider layer** — `lib/ai/providers`: minimal `AIProvider` interface
+   (generateText / generateStructured / generateToolStep — single-shot;
+   the loop is provider-agnostic in runtime.ts), Anthropic adapter on
+   `@anthropic-ai/sdk` (new dependency) with injectable fetch, SDK-level
+   timeout + conservative retries, vendor errors normalized to AiError
+   (RATE_LIMITED/PROVIDER_UNAVAILABLE/TIMEOUT/CONFIGURATION/…), refusal
+   stop-reason handled. Vendor blocks round-trip opaquely. IMPLEMENTED:
+   anthropic · INTERFACE-READY, DEFERRED: openai, gemini (typed loud error).
+2. **Config & flags** — `lib/ai/config.ts` (server-only, throws in browser;
+   zod-parsed env: provider, keys, per-workload models, budgets, timeout,
+   loop limits); `config/flags.ts` (AI_RUNTIME, AI_SALES, … all default
+   OFF, `<FLAG>_ENABLED=true|1` to enable); `.env.example` documented.
+3. **Router** — `selectModel(config, workload)`: deterministic env-config
+   mapping, defaults haiku-4-5 / sonnet-5 / opus-5.
+4. **Prompts** — versioned registry (id + semver + purpose + strict {{var}}
+   templates); AiUsage rows carry prompt_id/prompt_version (schema +
+   migration `0001_ai_usage_prompt.sql`, additive).
+5. **Usage + budget** — every provider call (success AND failure) records
+   through `recordAiUsage` non-fatally with loud logging; cost from
+   `config/ai-pricing.ts` (null placeholders, maintenance documented, no
+   invented prices); `assertWithinAiBudget` before every call: no caps ⇒
+   proceed; over ⇒ AI_BUDGET_EXCEEDED; caps+unpriced model ⇒ config error
+   (fail closed); totals outage ⇒ check_failed (fail closed).
+6. **Structured outputs** — sanitizer produces provider JSON Schema, full
+   zod re-validation on our side is the authority; bounded retry (default
+   1) with a corrective registry prompt; refusals never retry.
+7. **Tool architecture** — `ToolDefinition` (zod in+out, permission,
+   server execute), `ToolRegistry` pipeline (exists → permitted → validate
+   → execute → validate → audit-log with input hash, never content),
+   server-minted `ToolExecutionContext` (LLM can't invent authorization),
+   `AGENT_TOOL_PERMISSIONS` map (sales = READ+CUSTOMER_WRITE; ads = none),
+   loop limits config-driven. Six sales tools (see architecture bullet);
+   `createSalesToolRegistry()` refuses restricted tools structurally.
+8. **Runtime facade** — `AiRuntime.generateText / generateStructuredObject
+   / runToolConversation` + `isAiRuntimeAvailable()` no-throw probe.
+9. **Tests 116 → 198** (all green; zero credentials, zero network):
+   config/flags/factory/router/prompts, mocked-fetch Anthropic adapter
+   (+ every error class + timeout), structured parsing/sanitizer/cost,
+   budget guard (real DB, int4-overflow totals, fail-closed outage),
+   registry mechanics + all six tools (engine-delegation equality,
+   cost-field exclusion, provenance gate, no-session failure), end-to-end
+   FakeAiProvider runs (exit criteria: whitelisted tool end-to-end with
+   usage rows; injection red-team: modifyPrice/issueRefund →
+   unknown_tool/permission_denied with zero side effects; all three loop
+   limits; budget wiring).
+10. **Docs** — new docs/AI_RUNTIME.md; AI_AGENT_ARCHITECTURE +
+    ARCHITECTURE + BUSINESS_CONFIG_TODO + .env.example updated.
+
 ## Important decisions (and why)
 
 1. **Database is the first ADD** — every roadmap capability consumes
@@ -330,6 +414,17 @@ architecture changes, no new AI features — hardening only.
     missing AgentConfig ⇒ OBSERVE** — one audit trail, fail-safe autonomy
     floor; insights REQUIRE sourceRefs so fabricated intelligence is
     structurally impossible.
+12. **(S04) Official vendor SDK inside our adapter, one provider
+    implemented** — @anthropic-ai/sdk stays entirely inside
+    lib/ai/providers/anthropic.ts; the loop is provider-agnostic; no
+    speculative openai/gemini adapters (interface-ready, loud typed error).
+13. **(S04) AI security is capability-based, AI spend fails closed** —
+    permission tiers + server-minted contexts + structurally-limited output
+    schemas (sell-side pricing only), injection cases are unit tests;
+    budgets over unpriced models or a failed budget check block the call
+    rather than silently spending. Pricing config ships null (no invented
+    economics), so budget caps are unenforceable until the owner fills
+    config/ai-pricing.ts — deliberate.
 
 ## Known issues
 
@@ -380,8 +475,9 @@ notices until `NEXT_PUBLIC_DEMO_PRICING=false`), the entire cost model
 guardrails fail closed until filled), factory identity/photos, policies
 legal review, Shopify store + variant mapping, production `DATABASE_URL`
 (+ `npm run db:migrate` at deploy), consent-policy review for first-party
-events, AI provider keys + budget caps, guardrail thresholds, escalation
-destination.
+events, AI provider key + budget caps + **model pricing
+(`config/ai-pricing.ts`, null placeholders — budget caps fail closed until
+filled)**, guardrail thresholds, escalation destination.
 
 ## Deferred work
 
@@ -402,11 +498,15 @@ the 03.5 hardening pass (small blast radius, none block Session 04):
   413s payloads but has no per-session/IP rate limit; add one before
   real traffic (pairs with the launch checklist, likely at the platform
   edge or in the route).
-- **CustomerNeedProfile concurrent-writer locking** —
+- **CustomerNeedProfile concurrent-writer locking — S05 MUST FIX FIRST** —
   `applyNeedProfileUpdate` does read-merge-write without row locking;
-  two simultaneous writers can lose one side's fields. Real risk begins
-  when AI extraction (S04+) writes alongside checkout/quote — revisit
-  with `SELECT … FOR UPDATE` or a jsonb-merge update then.
+  two simultaneous writers can lose one side's fields. Session 04 kept
+  this deferred deliberately: its `saveCustomerNeed` tool runs tool calls
+  sequentially and no agent runtime exists, so there are still no
+  concurrent AI writers. Session 05 introduces them (async extraction
+  alongside checkout/quote writers) and MUST add `SELECT … FOR UPDATE` or
+  a jsonb-merge update BEFORE enabling any parallel writer (also flagged
+  in lib/ai/tools/need-tools.ts and docs/AI_RUNTIME.md).
 - **Multi-line order need-profile enrichment** — checkout's ORDER_DATA
   enrichment reads only the first cart line; multi-line orders
   under-enrich the profile.
@@ -420,11 +520,14 @@ the 03.5 hardening pass (small blast radius, none block Session 04):
 
 ## Recommended next session
 
-**Session 04 — AI Provider Infrastructure + Tool Architecture** — run
-`prompts/04-ai-infrastructure.md`: `/lib/ai` provider abstraction
-(env-selected vendor), model router (LOW_COST/STANDARD/REASONING), typed
-tool registry (server-side, zod-validated, permission-scoped per agent),
-versioned prompts, AiUsage recording through the existing
-`lib/data/ai-usage-service` (+ budget caps via `aiUsageTotalsSince`),
-feature flags in `config/flags.ts` (all default OFF). No customer-facing
-chat yet. No prerequisite gaps surfaced during Session 03.
+**Session 05 — AI Sales Agent Core** — run `prompts/05-sales-agent.md`:
+the customer-facing "AI Packaging Expert" conversation on top of the S04
+runtime (AiRuntime.runToolConversation + createSalesToolRegistry), sales
+persona prompt in the registry, conversation/message persistence via
+lib/data/conversation-service, async LOW_COST need extraction, escalation
+paths, chat UI surface behind AI_RUNTIME_ENABLED + AI_SALES_ENABLED.
+PREREQUISITE FROM S03/S04 AUDITS: add CustomerNeedProfile row locking
+before enabling concurrent AI writers (see deferred debt). Remaining S05+
+sales tools: recommendProduct, createDraftQuote, addConfiguredProductToCart
+(server re-quote), getOrderStatus, requestHumanHelp; configurator tools
+land in S06 with the shared configuration store.

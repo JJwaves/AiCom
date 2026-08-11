@@ -69,6 +69,8 @@ BagDirect is evolving into an AI-native factory-direct commerce platform
 storefront above is the foundation and keeps working unchanged. Start with
 [CLAUDE.md](CLAUDE.md), then the doc set under [docs/](docs/):
 system audit, target architecture, database schema, AI agent architecture,
+AI runtime (Session 04 — provider layer, model router, budget guard, typed
+tool registry; off by default, no keys needed for dev/tests/build),
 guardrails, roadmap, and the owner's master spec. Development sessions are
 driven by the prompt files in [prompts/](prompts/).
 
@@ -97,8 +99,10 @@ Commands:
 
 See [.env.example](.env.example) — Shopify (public Storefront token +
 server-only Admin/webhook secrets), demo-pricing guard, GTM/GA4/Google Ads,
-Meta Pixel/CAPI, and the quote-intake webhook. **Never commit real values;
-never expose `META_ACCESS_TOKEN` or `SHOPIFY_ADMIN_API_TOKEN` to the client.**
+Meta Pixel/CAPI, the quote-intake webhook, and the AI runtime block
+(everything defaults off; `AI_RUNTIME_ENABLED=true` + `ANTHROPIC_API_KEY`
+enable it). **Never commit real values; never expose `META_ACCESS_TOKEN`,
+`SHOPIFY_ADMIN_API_TOKEN`, or any `*_API_KEY` to the client.**
 
 ## Shopify configuration
 

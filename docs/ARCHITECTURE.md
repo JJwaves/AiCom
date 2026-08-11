@@ -31,10 +31,15 @@ Browser
   │                    env-gated; catalog.ts read facade)
   ├─ modules/pricing  (sole pricing authority — engine + fail-closed cost model)
   ├─ lib/data         (SERVICE BOUNDARY — the only way anything touches the DB;
-  │                    zod-validated inputs; future AI tools call THESE)
+  │                    zod-validated inputs; AI tools call THESE)
   │    session · events · customer · need-profile (provenance) · configuration
   │    · conversation · order · quote · ai-usage · agent · insight ·
   │    experiment · privacy
+  ├─ lib/ai           (S04 — AI RUNTIME, server-only, OFF by default:
+  │                    provider abstraction [anthropic implemented], model
+  │                    router, versioned prompts, budget guard + AiUsage
+  │                    recording, typed permission-scoped tool registry with
+  │                    6 sales tools; no agents, no UI — see AI_RUNTIME.md)
   ├─ db/              (Drizzle schema + migrations + client)
   │    └─ Postgres: DATABASE_URL (node-postgres, explicit migrations)
   │                 or embedded PGlite dev/test (self-migrating);
@@ -106,11 +111,11 @@ Human Approval (/admin/ai-actions)  |  Guarded auto-execution (later)
 | `lib/analytics` | DONE (Session 03) | `track()` dual-writes: dataLayer unchanged + `first-party.ts` mapping → `/api/events`. |
 | `lib/attribution` | DONE (Session 03) | Same pure merge now also runs server-side; sessions carry immutable first-touch snapshots; orders/quotes carry attribution copies. |
 | `db/` + `lib/data/` | DONE (Session 03) | Postgres via Drizzle (PGlite dev/test, node-postgres prod), 20 tables, additive SQL migrations, zod-validated service boundary. See DATABASE_SCHEMA.md. |
-| `lib/ai/{providers,router,tools,schemas,prompts}` | ADD | Provider-agnostic; see AI_AGENT_ARCHITECTURE.md. |
-| `modules/guardrails` | ADD | Central `evaluateAgentAction`; see GUARDRAILS.md. |
+| `lib/ai/{providers,router,tools,schemas,prompts,usage}` | DONE (Session 04) | Provider-agnostic runtime: Anthropic adapter (openai/gemini interface-ready), workload router, versioned prompts, budget guard, permission-scoped tool registry (6 sales tools). See AI_RUNTIME.md. |
+| `modules/guardrails` | ADD | Central `evaluateAgentAction`; see GUARDRAILS.md. (S04's budget guard covers AI spend only.) |
 | `modules/customer-intelligence` | ADD (Stage D) | Aggregation over conversations/quotes/orders. |
 | `modules/ads/google`, `modules/ads/meta` | DEFER | Read-only first, much later. |
-| `config/flags.ts` | ADD | Feature flags; all AI features default OFF. |
+| `config/flags.ts` | DONE (Session 04) | Feature flags (`AI_RUNTIME`, `AI_SALES`, …); all default OFF, env-enabled (`*_ENABLED=true`). |
 | `app/admin/*` | ADD | Auth-gated; customer-intelligence, ai-actions, ai-usage. |
 
 ## Invariants (enforced across all future sessions)
@@ -203,3 +208,23 @@ Human Approval (/admin/ai-actions)  |  Guarded auto-execution (later)
   to float8, not int4 — budget-cap math survives >$2,147 windows — and
   customer deletion now removes the person's sessions/cross-session
   behavioral rows and redacts artwork filenames; see DATABASE_SCHEMA.md.)
+- **2026-08-10 (S04) · Official vendor SDK behind our own interface, one
+  implemented provider.** `@anthropic-ai/sdk` (typed errors, built-in
+  429/5xx retries, timeout) lives entirely inside
+  `lib/ai/providers/anthropic.ts`; the `AIProvider` interface exposes three
+  single-shot primitives and the agentic LOOP lives provider-agnostically in
+  `runtime.ts`. OpenAI/Gemini are interface-supported, deliberately not
+  implemented (no speculative adapters).
+- **2026-08-10 (S04) · AI spend fails closed.** Budget caps configured +
+  unpriced model ⇒ typed configuration error (a cap over unmeasurable spend
+  is unenforceable); budget-check infrastructure failure ⇒
+  `AI_BUDGET_EXCEEDED check_failed`, never an unlimited-spend window. Model
+  pricing follows the costs doctrine: `config/ai-pricing.ts` ships null
+  placeholders — no invented economics.
+- **2026-08-10 (S04) · Tool security is capability-based.** Permission
+  tiers (`READ`/`CUSTOMER_WRITE`/`COMMERCE`/`FINANCIAL_RESTRICTED`/
+  `ADMIN_RESTRICTED`) with a server-side agent→permissions map; the model
+  only sees permitted tools, contexts are server-minted, price-tool output
+  schemas structurally exclude cost/margin/floor fields, and the sales
+  registry refuses to construct with a restricted tool present. Injection
+  defenses are unit tests, not prompt wording.

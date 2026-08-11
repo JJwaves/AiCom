@@ -107,10 +107,16 @@ anyone invent them. Units: integer cents; rates in basis points (290 = 2.9%).
 
 ## AI & guardrail configuration (for the AI-platform roadmap)
 
+| Item | Where (now real — Session 04) |
+| --- | --- |
+| AI provider choice + API key | `.env` → `AI_PROVIDER` (default `anthropic`) + `ANTHROPIC_API_KEY` (server-only) |
+| AI runtime on/off | `.env` → `AI_RUNTIME_ENABLED` (default false; nothing runs until true) |
+| AI model routing per workload | `.env` → `AI_MODEL_LOW_COST` / `AI_MODEL_STANDARD` / `AI_MODEL_REASONING` (defaults in `lib/ai/config.ts`) |
+| AI daily / monthly budget caps | `.env` → `AI_DAILY_BUDGET_USD` / `AI_MONTHLY_BUDGET_USD` — **requires** model pricing below, else calls fail closed |
+| **AI model pricing (per 1M tokens)** | `config/ai-pricing.ts` — every value a `null` placeholder; copy current provider rates (file documents the procedure). Without it, per-call cost records stay null and budget caps cannot be enforced |
+
 | Item | Where (planned) |
 | --- | --- |
-| AI provider choice + API keys | `.env` (`AI_PROVIDER`, `AI_API_KEY_*`) |
-| AI daily / monthly budget caps | guardrail config |
 | `minimumAllowedPrice` / `minimumGrossMargin` / `minimumContributionMargin` | guardrail config |
 | `maximumDiscountPct` / `maximumPriceChangePct` | guardrail config |
 | High-value order threshold (forces human review) | guardrail config |

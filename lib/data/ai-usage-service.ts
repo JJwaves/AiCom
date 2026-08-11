@@ -25,6 +25,9 @@ export const aiUsageInputSchema = z.object({
   latencyMs: z.number().int().nonnegative().optional(),
   success: z.boolean(),
   errorCode: z.string().max(100).optional(),
+  /** Versioned prompt that produced this call (lib/ai/prompts registry). */
+  promptId: z.string().max(100).optional(),
+  promptVersion: z.string().max(20).optional(),
 });
 
 export type AiUsageRow = typeof aiUsage.$inferSelect;
@@ -48,6 +51,8 @@ export async function recordAiUsage(input: z.input<typeof aiUsageInputSchema>): 
       latencyMs: parsed.latencyMs ?? null,
       success: parsed.success,
       errorCode: parsed.errorCode ?? null,
+      promptId: parsed.promptId ?? null,
+      promptVersion: parsed.promptVersion ?? null,
     })
     .returning();
   return row;

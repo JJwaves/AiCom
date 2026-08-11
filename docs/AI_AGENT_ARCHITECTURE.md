@@ -2,12 +2,14 @@
 
 How AI is layered onto the commerce platform. This document binds future
 sessions. Implementation status: **the data substrate exists (Session 03)**
-— Conversations/Messages, CustomerNeedProfile (with source provenance),
-AiUsage, AgentDecision/Approval/AgentConfig, insights/experiments are live
-schema behind validated `lib/data/*` services, with `getAgentConfig()`
-defaulting to OBSERVE. **No provider layer, no tools, no agents run yet**
-(Session 04+). Tools specified below will call the `lib/data` services —
-never raw SQL — and `saveCustomerNeed` maps to
+and **the AI runtime foundation exists (Session 04 — see
+[AI_RUNTIME.md](AI_RUNTIME.md))**: provider abstraction with a working
+Anthropic adapter (OpenAI/Gemini interface-ready), model router, versioned
+prompt registry, AiUsage recording + budget guard, typed permission-scoped
+tool registry with the first six sales tools, and a FakeAiProvider test
+harness. **No agents run yet and there is no customer-facing AI surface**
+(Session 05+). Implemented tools call the `lib/data` services — never raw
+SQL — and `saveCustomerNeed` maps to
 `applyNeedProfileUpdate(…, "AI_INFERRED", { confidence })`, which
 structurally cannot overwrite USER_STATED/ORDER_DATA/CONFIGURATOR facts.
 
@@ -20,29 +22,31 @@ decided by a model. Business rules live in code (`modules/pricing`,
 
 ## Provider layer — `/lib/ai`
 
+Implemented in Session 04 (authoritative detail: [AI_RUNTIME.md](AI_RUNTIME.md)):
+
 ```
 lib/ai/
-  providers/     openai.ts · anthropic.ts · gemini.ts  (one interface)
-  router/        model routing by task class + per-agent config
-  tools/         typed tool registry (server-side only)
-  schemas/       zod schemas for every tool input/output & extraction
-  prompts/       versioned system prompts per agent
+  providers/     anthropic.ts IMPLEMENTED · openai/gemini interface-ready
+  router/        selectModel(workload) — LOW_COST/STANDARD/REASONING from env
+  tools/         typed registry + sales toolset (server-side only)
+  schemas/       structured-output validation + provider JSON-schema sanitizer
+  prompts/       versioned prompt registry (infra prompts only until S05)
+  usage/         cost model · AiUsage recording · budget guard
+  runtime.ts     AiRuntime facade; errors.ts normalized AiError codes
 ```
 
-```ts
-interface AIProvider {
-  generateText(req): Promise<TextResult>;
-  generateStructuredObject<T>(req, schema: ZodSchema<T>): Promise<T>;
-  runToolConversation(req, tools: ToolSet, opts): Promise<ConversationTurn>;
-}
-```
+The public facade (`AiRuntime`) exposes `generateText`,
+`generateStructuredObject` (zod-validated, conservative bounded retry) and
+`runToolConversation` (the loop with tool/model-call/duration limits);
+providers implement three minimal single-shot primitives underneath.
 
-- Provider selected by env (`AI_PROVIDER`, `AI_API_KEY_*`); switching
-  vendors is configuration, not code.
+- Provider selected by env (`AI_PROVIDER` + `ANTHROPIC_API_KEY` etc.);
+  switching vendors is configuration, not code.
 - Every call records an `AiUsage` row (provider, model, agent, tokens,
-  estimated cost, latency, success/error) and respects configurable daily/
-  monthly budget caps — exceeding a cap disables AI features gracefully
-  (commerce keeps working; flags §GUARDRAILS).
+  estimated cost, latency, success/error, prompt id+version) and the budget
+  guard checks configurable daily/monthly caps BEFORE each provider call —
+  exceeding a cap (or being unable to verify it) fails closed with a typed
+  error; commerce keeps working (flags §GUARDRAILS).
 
 ## Model router
 
@@ -70,19 +74,21 @@ Every tool:
 
 ### Sales Agent toolset (first agent)
 
+Status: ✅ = implemented in Session 04 (`lib/ai/tools/`), rest arrive S05/S06.
+
 | Tool | Backed by | Notes |
 | --- | --- | --- |
-| `searchProducts` / `getProductDetails` | `lib/commerce` | read-only |
-| `getCurrentConfiguration` | shared configurator state | read |
-| `updateConfiguration` | the same validated reducer the UI uses | writes go through identical validation — one source of truth |
-| `recommendProduct` | catalog + need profile | returns product + reason |
-| `calculatePrice` / `getQuantityPricing` | `modules/pricing` | AI may explain the result, never alter it |
-| `calculateShippingEstimate` | `config/shipping` | honest "checkout" mode preserved |
-| `saveCustomerNeed` | CustomerNeedProfile upsert | unknown stays unknown — extraction never fabricates |
-| `createDraftQuote` | Quote model | draft only |
-| `addConfiguredProductToCart` | cart via server re-quote | price recomputed server-side at add time |
-| `getOrderStatus` | order lookup | scoped to the session's own orders |
-| `requestHumanHelp` | escalation record + notification | includes conversation summary, requirements, config, contact |
+| ✅ `searchProducts` / `getProductDetails` | `lib/commerce/catalog` | read-only; details expose handle `confirmed` flags |
+| `getCurrentConfiguration` | shared configurator state | read — S06 (store doesn't exist yet) |
+| `updateConfiguration` | the same validated reducer the UI uses | writes go through identical validation — one source of truth (S06) |
+| `recommendProduct` | catalog + need profile | returns product + reason (S05) |
+| ✅ `calculatePrice` / `getQuantityPricing` | `modules/pricing` | AI may explain the result, never alter it; output schema structurally excludes cost/margin/floor fields |
+| ✅ `getShippingEstimate` | `config/shipping` | honest "checkout" mode preserved |
+| ✅ `saveCustomerNeed` | CustomerNeedProfile upsert (AI_INFERRED) | unknown stays unknown — extraction never fabricates; session id from server context |
+| `createDraftQuote` | Quote model | draft only (S05) |
+| `addConfiguredProductToCart` | cart via server re-quote | price recomputed server-side at add time (S05/S06) |
+| `getOrderStatus` | order lookup | scoped to the session's own orders (S05) |
+| `requestHumanHelp` | escalation record + notification | includes conversation summary, requirements, config, contact (S05) |
 
 Not exposed to any customer-facing agent, ever: pricing overrides, refunds,
 discounts beyond configured codes, admin operations, ad spend, secrets,

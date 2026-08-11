@@ -382,6 +382,9 @@ export const aiUsage = pgTable(
     latencyMs: integer("latency_ms"),
     success: boolean("success").notNull(),
     errorCode: text("error_code"),
+    /** Versioned prompt that produced this call (S04) — traces output → prompt+model. */
+    promptId: text("prompt_id"),
+    promptVersion: text("prompt_version"),
     createdAt: createdAt(),
   },
   (t) => [index("ai_usage_created_idx").on(t.createdAt), index("ai_usage_conversation_idx").on(t.conversationId)],
