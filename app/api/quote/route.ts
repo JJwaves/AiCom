@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { quoteSchema, type QuoteRequest } from "@/lib/validation/quote";
 import { validateArtworkFile, ARTWORK_MAX_BYTES } from "@/lib/validation/artwork";
+import { markConversationOutcomeForSession } from "@/lib/data/conversation-service";
 import { applyNeedProfileUpdate, type NeedProfileUpdate } from "@/lib/data/customer-need-service";
 import { ensureBusiness, linkCustomerBusiness, upsertCustomerByEmail } from "@/lib/data/customer-service";
 import { createQuote, recordArtwork } from "@/lib/data/quote-service";
@@ -177,6 +178,11 @@ async function persistQuote(
       customerId: customer.id,
       businessId: business.id,
     });
+
+    // A chat that led to a quote gets its outcome stamped (S06). Quotes keep
+    // their own embedded configuration payload — they never point at the
+    // session's LIVE configuration row, which keeps mutating afterwards.
+    await markConversationOutcomeForSession(session.id, "quote_started");
   } catch (err) {
     console.error("[quote] persistence failed — quote delivery unaffected", err);
   }

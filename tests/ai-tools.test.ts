@@ -109,12 +109,13 @@ describe("agent permission map", () => {
   });
 });
 
-describe("sales toolset (Session 04 base + Session 05 additions)", () => {
+describe("sales toolset (Session 04 base + Session 05/06 additions)", () => {
   const registry = createSalesToolRegistry();
 
   it("contains exactly the customer-safe sales tools", () => {
     expect(registry.names().sort()).toEqual([
       "calculatePrice",
+      "getCurrentConfiguration",
       "getProductDetails",
       "getQuantityPricing",
       "getShippingEstimate",
@@ -122,6 +123,8 @@ describe("sales toolset (Session 04 base + Session 05 additions)", () => {
       "requestHumanHelp",
       "saveCustomerNeed",
       "searchProducts",
+      "suggestConfigurationUpdate",
+      "updateConfiguration",
     ]);
   });
 

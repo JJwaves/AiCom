@@ -26,10 +26,11 @@ Customer message (UNTRUSTED)                    app/api/ai/chat  (POST)
   → runSalesAgentTurn                           lib/ai/agents/sales/agent.ts
       → conversation resolve/create             lib/data/conversation-service
       → persist user message (raw transcript)
-      → context assembly (profile + summary)    lib/ai/agents/sales/context.ts
-      → versioned prompt ai_sales_agent v1.0.0  lib/ai/prompts/registry.ts
+      → context assembly (profile + summary
+        + live shared configuration — S06)      lib/ai/agents/sales/context.ts
+      → versioned prompt ai_sales_agent v1.1.0  lib/ai/prompts/registry.ts
       → AiRuntime.runToolConversation (STANDARD workload, loop limits)
-          → sales tool registry (8 tools, READ/CUSTOMER_WRITE only)
+          → sales tool registry (11 tools, READ/CUSTOMER_WRITE only)
       → persist tool rows + assistant message
       → evidence-validated need extraction      lib/ai/agents/sales/extraction.ts  (LOW_COST, non-fatal)
       → threshold summarization                 lib/ai/agents/sales/summarize.ts   (LOW_COST, non-fatal)
@@ -49,6 +50,13 @@ whole stack with `FakeAiProvider` and zero network.
 | `saveCustomerNeed` | CUSTOMER_WRITE | need-profile write, hard-coded `AI_INFERRED` provenance |
 | `recommendProduct` (S05) | READ | catalog-validated recommendation → structured signal + `ai_product_recommended` event; hallucinated ids are rejected |
 | `requestHumanHelp` (S05) | CUSTOMER_WRITE | structured handoff record + conversation escalated + `human_handoff_requested` event |
+| `getCurrentConfiguration` (S06) | READ | the session's live shared configuration (labels, quantity, artwork status, revision, engine price) — customer-visible fields only |
+| `updateConfiguration` (S06) | CUSTOMER_WRITE | COMMIT a customer-requested partial patch through the shared validation path; structured rejection with alternatives; revision-checked (stale writes impossible); `ai_configuration_updated`/`_rejected` events |
+| `suggestConfigurationUpdate` (S06) | READ | PROPOSE a validated+priced change without committing — becomes an apply chip in the chat; `ai_configuration_proposed` event |
+
+Configuration tools are the AI's ONLY channel into the configuration and
+run through the exact server path the visual configurator uses — see
+AI_CONFIGURATOR_INTEGRATION.md (authoritative for the shared state).
 
 Not present in any customer-facing registry, ever: `modifyPrice`,
 `issueRefund`, `changeAdBudget`, `createAdCampaign`, `modifyMargin`,
@@ -68,9 +76,15 @@ capability-based and unit-tested (`tests/ai-sales-agent.test.ts`).
   reach client APIs** — GET history returns user/assistant rows only.
 - Escalation marks the conversation `status=escalated, outcome=escalated`
   WITHOUT ending it: the customer keeps chatting in the same thread while a
-  human follows up. `endConversation` remains the terminal transition
-  (outcome wiring for abandoned/checkout_started arrives with the sessions
-  that connect chat to cart/checkout).
+  human follows up. `endConversation` remains the terminal transition.
+- (S06) Commerce outcomes stamp WITHOUT ending:
+  `markConversationOutcomeForSession` sets `quote_started` /
+  `checkout_started` / `purchased` on the session's active sales
+  conversation from the quote/checkout routes; `purchased` never
+  downgrades and escalated outcomes are preserved. `abandoned` remains
+  unwired (needs a session-expiry sweep, future session).
+- (S06) Assistant messages carry `configSnapshotJson` — the shared
+  configuration as of each AI-committed configuration change.
 - First-party events: `ai_chat_started` (conversation creation),
   `ai_message_sent` (per turn, with status/tool-count props — never
   transcript content), `ai_product_recommended`, `human_handoff_requested`.
@@ -78,18 +92,31 @@ capability-based and unit-tested (`tests/ai-sales-agent.test.ts`).
 
 ## Sales prompt
 
-`ai_sales_agent` **v1.0.0** in `lib/ai/prompts/registry.ts` — identity,
+`ai_sales_agent` **v1.1.0** in `lib/ai/prompts/registry.ts` — identity,
 progressive-discovery sales behavior, truthfulness rules (confirmed-only
 capabilities, no fabricated materials/dimensions/certifications/dates/
 sustainability claims/reviews/prices, DEMO pricing labeled), pricing-tool
-authority, escalation triggers, and injection posture. One `{{context}}`
-variable carries the server-assembled customer context. Any semantic change
-bumps the version; AiUsage rows stamp prompt id+version on every call.
+authority, escalation triggers, and injection posture. v1.1.0 (S06) adds
+the shared-configuration rules: read before acting, COMMIT ("make it
+10,000") vs PREVIEW ("what would 10,000 cost?") distinction, apply small
+clearly-requested changes immediately but preview + propose
+(suggestConfigurationUpdate) for changes with substantial cost impact the
+customer hasn't confirmed, never change unrequested fields, relay
+structured rejection alternatives, reconcile on stale_revision, and
+artwork only via the configurator's uploader. One `{{context}}` variable
+carries the server-assembled customer context. Any semantic change bumps
+the version; AiUsage rows stamp prompt id+version on every call.
+
+Confirmation policy note: no owner-configured cost-impact thresholds exist
+yet, so the policy is behavioral (preview-first for clearly
+price-changing alternatives) — thresholds are a BUSINESS_CONFIG_TODO item.
 
 ## Customer context (what the model sees)
 
 `buildSalesContext` renders, bounded to ~2.4k chars: the conversation's
-product, the session's CustomerNeedProfile fields **with provenance labels**
+product, (S06) the session's LIVE shared configuration ("Current
+configuration (live, revision N): … — never ask them to repeat it"), the
+session's CustomerNeedProfile fields **with provenance labels**
 ("customer-stated" vs "our guess" — the model is told which facts are
 verified), and the rolling conversation summary. Structurally excluded:
 other sessions/customers, admin data, secrets, cost/margin figures,
@@ -161,7 +188,13 @@ configured, handoffs are queryable in the DB (`messages` where
   cookie; customerId/agentType/permissions/conversation are server-resolved;
   unknown body fields are ignored. Responses:
   `200 {ok, conversationId, reply, status, recommendedProductId?,
-  recommendedProductPath?, needsHuman, handoffReason?, conversationStatus}` ·
+  recommendedProductPath?, configurationUpdate?, suggestedActions?,
+  needsHuman, handoffReason?, conversationStatus}` — `configurationUpdate`
+  (S06) is the SERVER-VALIDATED committed configuration (config, revision,
+  changedFields, changeSummary, engine price) the client applies to the
+  shared store; `suggestedActions` are validated APPLY_CONFIGURATION_PATCH
+  proposals (label, patch, basedOnRevision, productPath, preview price) —
+  never model prose. ·
   `400/413/422` validation · `429 {code:RATE_LIMITED}` (+Retry-After) ·
   `503 {code:AI_UNAVAILABLE}` with fixed customer-safe copy for EVERY
   AI-side failure (flags off, no key, provider down/timeout/rate-limited,
@@ -189,6 +222,15 @@ prompts, loading/error/retry states, escalation banner, recommendation
 link chip ("Configure this bag →"), Escape-to-close, `role="log"`
 aria-live transcript, labeled input, mobile-width layout. Positioned as a
 packaging expert — never "AI chatbot".
+
+S06 additions: committed updates render a "✓ Configurator updated" chip
+(changeSummary + engine total, "(demo pricing)" labeled) and publish the
+server-validated payload on the configuration sync bus (the configurator
+applies, highlights, and announces via aria-live); proposals render apply
+chips that POST through `/api/configuration` (server revalidation; stale →
+honest "no longer matches" copy; off-page applies link to the
+configurator). When a configurator is mounted, the mobile launcher and
+panel lift above the sticky Add-to-Cart bar so the CTA is never covered.
 
 ## Failure behavior
 
@@ -221,21 +263,29 @@ fabrication, contradiction, over-infer resistance),
 recommendation/escalation signals, prompt injection, loop limits,
 disabled/failure/budget, summarization),
 `tests/ai-chat-route.test.ts` (validation, gating, rate limits, error
-normalization, history filtering), `tests/rate-limit.test.ts`.
+normalization, history filtering, S06 wire signals),
+`tests/rate-limit.test.ts`; S06 adds
+`tests/configuration-store.test.ts` (validation + reducer),
+`tests/configuration-route.test.ts` (sync/apply/restore/provenance),
+`tests/ai-configuration-tools.test.ts` (the three tools + security
+red-team), and the "shared configuration flow" suite in
+`tests/ai-sales-agent.test.ts` (commit/suggest/stale/red-team turns).
 All FakeAiProvider — zero credentials, zero network. The optional live
 check is `npm run ai:smoke` (credential-gated, verifies model ids via the
 provider's models API before any real call; never part of build/test).
 
 ## Limitations (known, deliberate)
 
-- No configurator synchronization (S06): the agent recommends and links to
-  the product page; it does not read or mutate configurator state.
-- No cart/checkout/quote/order tools (later sessions) — spec §32.
+- ~~No configurator synchronization~~ — RESOLVED in S06
+  (AI_CONFIGURATOR_INTEGRATION.md).
+- No cart/checkout/quote/order tools (later sessions) — spec §32. The AI
+  configures; the customer adds to cart and checks out manually.
 - Handoff records are stored, not yet delivered anywhere (owner must
   configure the escalation destination).
 - Extraction handles scalar fields only (painPoints/objections arrays are a
   later refinement); contact info in handoffs is not upserted into the
   customers table.
 - Rate limiting is per-instance; edge limiting is a launch requirement.
-- Sales conversations currently record outcome only for escalation;
-  abandoned/quote/checkout outcomes wire up with S06+.
+- Conversation outcomes: quote_started/checkout_started/purchased stamp
+  from their routes (S06); `abandoned` needs a session-expiry sweep
+  (future session).

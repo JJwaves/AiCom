@@ -5,6 +5,7 @@ import { checkoutRequestSchema, type CheckoutRequestLine } from "@/lib/validatio
 import { calculatePrice } from "@/modules/pricing";
 import { formatDimensions } from "@/lib/format";
 import { upsertActiveConfiguration } from "@/lib/data/configuration-service";
+import { markConversationOutcomeForSession } from "@/lib/data/conversation-service";
 import { applyNeedProfileUpdate } from "@/lib/data/customer-need-service";
 import { recordServerEvent } from "@/lib/data/event-service";
 import { createOrder } from "@/lib/data/order-service";
@@ -195,6 +196,12 @@ export async function POST(req: Request) {
 
     // Shopify redirect: the order exists only after payment on Shopify's
     // checkout — order rows arrive with order webhooks (future session).
+    if (sessionCtx) {
+      // A chat that led to checkout gets its outcome stamped (S06) — non-fatal.
+      await markConversationOutcomeForSession(sessionCtx.session.id, "checkout_started").catch((err) =>
+        console.error("[checkout] conversation outcome stamp failed", err),
+      );
+    }
     const res = NextResponse.json({ ok: true, result });
     if (sessionCtx) setSessionCookies(res, sessionCtx.session);
     return res;
@@ -267,6 +274,7 @@ async function persistMockOrder(
       },
     });
     await markConverted(session.id);
+    await markConversationOutcomeForSession(session.id, "purchased");
 
     // What the customer actually ordered is the strongest behavioral signal.
     const first = serverLines[0];

@@ -123,6 +123,7 @@ Human Approval (/admin/ai-actions)  |  Guarded auto-execution (later)
 | `db/` + `lib/data/` | DONE (Session 03) | Postgres via Drizzle (PGlite dev/test, node-postgres prod), 20 tables, additive SQL migrations, zod-validated service boundary. See DATABASE_SCHEMA.md. |
 | `lib/ai/{providers,router,tools,schemas,prompts,usage}` | DONE (Session 04) | Provider-agnostic runtime: Anthropic adapter (openai/gemini interface-ready), workload router, versioned prompts, budget guard, permission-scoped tool registry (8 sales tools). See AI_RUNTIME.md. |
 | `lib/ai/agents/sales` + `/api/ai/chat` + `components/ai` | DONE (Session 05) | AI Packaging Expert: conversation lifecycle, evidence-validated extraction, summarization, escalation, rate-limited chat API, flag-gated chat UI. See AI_SALES_AGENT.md. |
+| `lib/configuration` + `/api/configuration` | DONE (Session 06) | THE shared configuration state (invariant 1 realized): pure catalog validation + reducer, React provider with restore/debounced persistence, sync bus, one server application path (row-locked, revision-checked), 3 AI configuration tools. See AI_CONFIGURATOR_INTEGRATION.md. |
 | `modules/guardrails` | ADD | Central `evaluateAgentAction`; see GUARDRAILS.md. (S04's budget guard covers AI spend only.) |
 | `modules/customer-intelligence` | ADD (Stage D) | Aggregation over conversations/quotes/orders. |
 | `modules/ads/google`, `modules/ads/meta` | DEFER | Read-only first, much later. |
@@ -133,7 +134,12 @@ Human Approval (/admin/ai-actions)  |  Guarded auto-execution (later)
 
 1. **One configuration state.** The configurator state is the single source
    of truth; AI tools mutate it through the same validated reducer the UI
-   uses. Never two parallel states.
+   uses. Never two parallel states. *Enforced since Session 06:
+   `lib/configuration` (shared validation + reducer + one server
+   application path over the S03 `product_configurations` row, version =
+   revision); the AI's only channel is
+   getCurrentConfiguration/updateConfiguration/suggestConfigurationUpdate
+   through that same path — see AI_CONFIGURATOR_INTEGRATION.md.*
 2. **Server-priced checkout.** The browser proposes, the server re-quotes
    with the deterministic engine before any order/checkout is created.
    *Enforced since Session 02 (`/api/checkout`): price drift → 409
@@ -262,3 +268,40 @@ Human Approval (/admin/ai-actions)  |  Guarded auto-execution (later)
   infrastructure (no Redis for a single-instance store); the launch
   checklist requires platform/CDN rate limiting before real traffic, and
   the AI budget guard stays the hard spend backstop.
+- **2026-08-10 (S06) · The shared configuration state lives in the DB row,
+  not in a client store the server mirrors.** The S03
+  `product_configurations` row (session × product, version column) is the
+  cross-surface truth; the React store is its live view (restore on mount,
+  debounced sync back). Chosen over a client-first design because the AI
+  runs server-side turns and must read/commit without a browser present,
+  and over introducing a state library because one page consumes it —
+  useReducer + context (the repo's existing cart pattern) suffices.
+- **2026-08-10 (S06) · AI configuration writes are revision-checked
+  (`expectedRevision` against the row version) under a row lock; UI
+  snapshots are last-write-wins.** An AI update computed against revision N
+  never overwrites revision N+1 — it gets the current state back and
+  reconciles. The UI records what the customer currently sees, which
+  cannot be stale from their perspective. Client-side, locally-dirty
+  fields win field-wise over concurrent AI loads. Chosen over event
+  sourcing / CRDTs as the smallest strategy that makes silent clobbering
+  impossible.
+- **2026-08-10 (S06) · The UI applies only server-validated configuration
+  payloads — never model output.** SalesAgentResult.configurationUpdate is
+  lifted from the validated updateConfiguration TOOL OUTPUT (post catalog
+  validation + persistence), and suggestion chips POST their patch back
+  through /api/configuration where everything revalidates. Patch schemas
+  are STRICT zod objects over the five option fields, so price/artwork/
+  admin keys are loud validation errors, not silently-stripped keys —
+  injection attempts surface to the agent instead of half-succeeding.
+- **2026-08-10 (S06) · AI-committed changes record CONFIGURATOR-rank
+  need-profile evidence; USER_STATED still only comes from the evidence
+  extractor.** The tool records what the configuration now IS (a
+  configurator-state fact, same rank as manual clicks); when the
+  customer's words drove the change, the S05 extractor independently
+  grants USER_STATED from the actual message. Keeps zero model-writable
+  paths to top-rank provenance.
+- **2026-08-10 (S06) · Quotes never point at the live configuration row.**
+  The deferred S03 pointer question is decided: the live row keeps
+  mutating after submission and would misrepresent what was quoted;
+  quotes keep their embedded configuration payloads (orders already
+  snapshot per line).

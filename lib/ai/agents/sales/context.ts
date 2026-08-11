@@ -1,12 +1,15 @@
 import type { ConversationRow } from "@/lib/data/conversation-service";
 import type { NeedProfileRow } from "@/lib/data/customer-need-service";
 import { getCatalogProductById } from "@/lib/commerce/catalog";
+import { resolveCurrentConfiguration } from "@/lib/configuration/server";
 
 /**
  * Sales context assembly (Session 05 spec §12) — the agent receives useful,
  * MINIMAL context: this session's need profile (with provenance labels so
  * the model knows what is verified vs guessed), the rolling conversation
- * summary, and the product the conversation is about.
+ * summary, the product the conversation is about, and (Session 06) the
+ * session's LIVE shared configuration — manual configurator choices are
+ * visible to the agent without the customer repeating them.
  *
  * Structurally absent: other customers/sessions (services are keyed by this
  * session's ids), admin data, provider secrets, cost/margin figures (server-
@@ -53,12 +56,37 @@ const MAX_CONTEXT_CHARS = 2400;
 export async function buildSalesContext(opts: {
   profile: NeedProfileRow | null;
   conversation: ConversationRow;
+  /** Session id for the live-configuration lookup (S06). Omit = skip. */
+  sessionId?: string;
 }): Promise<string> {
   const lines: string[] = [];
 
   if (opts.conversation.productId) {
     const product = await getCatalogProductById(opts.conversation.productId);
     if (product) lines.push(`Conversation product: ${product.title} (${product.id}).`);
+  }
+
+  // The session's live shared configuration (visual configurator + AI both
+  // write it). Non-fatal: a read failure just omits the block.
+  if (opts.sessionId) {
+    try {
+      const current = await resolveCurrentConfiguration(opts.sessionId);
+      if (current && !("status" in current) && current.revision > 0) {
+        const d = current.description;
+        const price = current.price
+          ? `$${(current.price.totalCents / 100).toFixed(2)} total ($${(current.price.unitPriceCents / 100).toFixed(2)}/bag, ${current.price.pricingStatus} pricing)`
+          : "priced via custom quote";
+        lines.push(
+          `Current configuration (live, revision ${current.revision}): ${d.productTitle} (${d.productId}) — ` +
+            `size ${d.size.label}, material ${d.material.label}, color ${d.color.label}, printing ${d.printOption.label}, ` +
+            `quantity ${d.quantity.toLocaleString("en-US")}, artwork ${d.hasArtwork ? "uploaded" : "not uploaded"}; ${price}. ` +
+            `The customer sees this in the configurator right now — never ask them to repeat it; ` +
+            `verify with getCurrentConfiguration before committing changes.`,
+        );
+      }
+    } catch {
+      // Context stays useful without the configuration block.
+    }
   }
 
   const profile = opts.profile;

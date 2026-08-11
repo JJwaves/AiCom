@@ -115,6 +115,48 @@ describe("happy path", () => {
     const body = await res.json();
     expect(body).toMatchObject({ ok: true, needsHuman: true, handoffReason: "customer_requested_human", conversationStatus: "escalated" });
   });
+
+  it("carries server-validated configuration updates and suggestions on the wire (S06)", async () => {
+    const { PRODUCTS } = await import("@/config/products");
+    const p = PRODUCTS[0];
+    __setSalesTestProvider(
+      new FakeAiProvider([
+        {
+          kind: "toolCalls",
+          calls: [
+            { name: "updateConfiguration", input: { productId: p.id, patch: { colorId: "black", quantity: 5000 } } },
+            {
+              name: "suggestConfigurationUpdate",
+              input: { productId: p.id, patch: { quantity: 10_000 }, label: "Update to 10,000 bags" },
+            },
+          ],
+        },
+        reply("Done — 5,000 black bags. 10,000 would drop the unit price; want that instead?"),
+        NO_EXTRACTION,
+      ]),
+    );
+    const res = await POST(post({ message: "5,000 black bags please" }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.configurationUpdate).toMatchObject({
+      productId: p.id,
+      revision: expect.any(Number),
+      changedFields: expect.arrayContaining(["colorId", "quantity"]),
+    });
+    expect(body.configurationUpdate.config).toMatchObject({ colorId: "black", quantity: 5000 });
+    expect(body.suggestedActions).toHaveLength(1);
+    expect(body.suggestedActions[0]).toMatchObject({
+      type: "APPLY_CONFIGURATION_PATCH",
+      label: "Update to 10,000 bags",
+      patch: { quantity: 10_000 },
+      productPath: `/products/${p.slug}`,
+    });
+    // Cost/margin fields never cross the wire.
+    const json = JSON.stringify(body);
+    for (const forbidden of ["grossMargin", "contributionMargin", "minimumAllowedPrice", "costStatus", "\"costs\""]) {
+      expect(json).not.toContain(forbidden);
+    }
+  });
 });
 
 describe("failure normalization", () => {

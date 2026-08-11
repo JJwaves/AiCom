@@ -127,13 +127,14 @@ kept as originally audited.
    a durable session id minted server-side.
 5. **Anonymous config-file catalog.** Fine for now (KEEP), but product ids
    must remain stable once conversations/orders reference them.
-6. **Configurator state is component-local.** `ProductConfigurator` holds
+6. **Configurator state is component-local.** ~~`ProductConfigurator` holds
    size/material/color/print/quantity/artwork in six `useState` hooks
-   inside one client component. There is no shared, validated
-   configuration store an AI tool could read or mutate — the "ONE
-   authoritative configuration state" the AI-sales design requires does
-   not exist yet and must be extracted (a validated reducer/store with
-   the same rules the UI enforces) before chat ↔ configurator sync.
+   inside one client component.~~ **RESOLVED in Session 06:**
+   `lib/configuration` is the ONE shared validated state (pure reducer +
+   catalog validation + server application path over the S03
+   `product_configurations` row); the UI dispatches to it and the AI's
+   getCurrentConfiguration/updateConfiguration tools mutate the same
+   path — see docs/AI_CONFIGURATOR_INTEGRATION.md.
 7. **Catalog reads bypass the provider.** Product/landing/cart/sitemap
    code imports `config/products` directly (8 files) instead of calling
    `getCommerce()`. The abstraction is real at checkout but only nominal
@@ -167,11 +168,11 @@ kept as originally audited.
   owns that mapping explicitly; do not rename the GA4-facing events.
 - **Checkout** → server route validates cart lines against the engine
   before creating a checkout/order.
-- **Configurator state** → extract the component-local `useState` cluster
+- **Configurator state** → ~~extract the component-local `useState` cluster
   into one shared, validated configuration store (reducer semantics, same
-  option/quantity rules). The UI dispatches to it today; AI tools dispatch
-  to the *same* store in Stage C. Prerequisite for chat ↔ configurator
-  sync — never two parallel copies of configuration state.
+  option/quantity rules).~~ **DONE (Session 06):** `lib/configuration`
+  reducer/validation + `/api/configuration` persistence; UI and AI tools
+  share the exact path (docs/AI_CONFIGURATOR_INTEGRATION.md).
 - **Catalog reads** → route the 8 direct `config/products` imports through
   `getCommerce()` (or a thin server catalog module backed by it) so the
   provider switch actually switches the whole storefront, not just

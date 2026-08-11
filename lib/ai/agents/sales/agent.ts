@@ -1,4 +1,5 @@
 import { isFlagEnabled } from "@/config/flags";
+import type { ProductConfiguration } from "@/types/commerce";
 import {
   appendMessage,
   findActiveConversation,
@@ -48,6 +49,31 @@ export type SalesTurnInput = {
   message: string;
 };
 
+/** Server-validated configuration state attached to a chat response (S06). */
+export type ConfigurationUpdateSignal = {
+  productId: string;
+  productTitle: string;
+  config: ProductConfiguration;
+  revision: number;
+  changedFields: string[];
+  /** Human-readable "field → value" pairs for the confirmation chip. */
+  changeSummary: { field: string; value: string }[];
+  price: { unitPriceCents: number; totalCents: number; currency: string; pricingStatus: "DEMO" | "LIVE" } | null;
+  requiresCustomQuote: boolean;
+};
+
+/** A proposed (NOT committed) change the customer can apply with one tap (S06). */
+export type SuggestedConfigurationAction = {
+  type: "APPLY_CONFIGURATION_PATCH";
+  productId: string;
+  /** Configurator page for applying from outside the product page. */
+  productPath: string;
+  label: string;
+  patch: Record<string, string | number>;
+  basedOnRevision: number;
+  preview: { totalCents: number; unitPriceCents: number; currency: string; pricingStatus: "DEMO" | "LIVE" } | null;
+};
+
 /** Normalized response (spec §17) — the frontend never parses model prose for actions. */
 export type SalesAgentResult = {
   conversationId: string;
@@ -57,6 +83,10 @@ export type SalesAgentResult = {
   recommendedProductId?: string;
   /** Storefront path for the recommendation (from the validated tool output). */
   recommendedProductPath?: string;
+  /** Committed configuration change this turn (server-validated; the UI applies THIS, never model text). */
+  configurationUpdate?: ConfigurationUpdateSignal;
+  /** Proposed-but-uncommitted changes for structured apply chips. */
+  suggestedActions?: SuggestedConfigurationAction[];
   needsHuman: boolean;
   handoffReason?: string;
   conversationStatus: "active" | "escalated";
@@ -95,14 +125,78 @@ function toChatHistory(rows: { role: string; content: string }[]): AiChatMessage
 type RecommendData = { ok: boolean; productId?: string; configuratorPath?: string };
 type HandoffData = { escalated?: boolean };
 
+/** Shape of the validated updateConfiguration/suggestConfigurationUpdate tool outputs we lift into the result. */
+type ConfigViewData = {
+  productId: string;
+  productTitle: string;
+  size: { id: string; label: string };
+  material: { id: string; label: string };
+  color: { id: string; label: string };
+  printOption: { id: string; label: string };
+  quantity: number;
+  hasArtwork: boolean;
+  artworkFileName?: string;
+  revision: number;
+  requiresCustomQuote: boolean;
+  price: { unitPriceCents: number; totalCents: number; currency: string; pricingStatus: "DEMO" | "LIVE" } | null;
+};
+type UpdateConfigData = { status: string; configuration?: ConfigViewData; changedFields?: string[] };
+type SuggestConfigData = {
+  status: string;
+  label?: string;
+  patch?: Record<string, string | number>;
+  basedOnRevision?: number;
+  productPath?: string;
+  preview?: ConfigViewData;
+};
+
+const FIELD_LABELS: Record<string, (v: ConfigViewData) => { field: string; value: string }> = {
+  sizeId: (v) => ({ field: "Size", value: v.size.label }),
+  materialId: (v) => ({ field: "Material", value: v.material.label }),
+  colorId: (v) => ({ field: "Color", value: v.color.label }),
+  printOptionId: (v) => ({ field: "Printing", value: v.printOption.label }),
+  quantity: (v) => ({ field: "Quantity", value: v.quantity.toLocaleString("en-US") }),
+};
+
+function toConfigSignal(view: ConfigViewData, config: ProductConfiguration, changedFields: string[]): ConfigurationUpdateSignal {
+  return {
+    productId: view.productId,
+    productTitle: view.productTitle,
+    config,
+    revision: view.revision,
+    changedFields,
+    changeSummary: changedFields.flatMap((f) => (FIELD_LABELS[f] ? [FIELD_LABELS[f](view)] : [])),
+    price: view.price,
+    requiresCustomQuote: view.requiresCustomQuote,
+  };
+}
+
+/** Rebuild the ProductConfiguration from the customer-visible view (ids are all present). */
+function viewToConfig(view: ConfigViewData): ProductConfiguration {
+  return {
+    productId: view.productId,
+    sizeId: view.size.id,
+    materialId: view.material.id,
+    colorId: view.color.id,
+    printOptionId: view.printOption.id as ProductConfiguration["printOptionId"],
+    quantity: view.quantity,
+    // Artwork metadata stays server-side; the client store preserves its local artwork.
+    artwork: null,
+  };
+}
+
 function deriveSignals(executed: ToolCallResult[]): {
   recommendedProductId?: string;
   recommendedProductPath?: string;
+  configurationUpdate?: ConfigurationUpdateSignal;
+  suggestedActions?: SuggestedConfigurationAction[];
   needsHuman: boolean;
   handoffReason?: string;
 } {
   let recommendedProductId: string | undefined;
   let recommendedProductPath: string | undefined;
+  let configurationUpdate: ConfigurationUpdateSignal | undefined;
+  const suggestedActions: SuggestedConfigurationAction[] = [];
   let needsHuman = false;
   for (const call of executed) {
     if (!call.ok) continue;
@@ -113,11 +207,38 @@ function deriveSignals(executed: ToolCallResult[]): {
         recommendedProductPath = data.configuratorPath;
       }
     }
+    if (call.toolName === "updateConfiguration") {
+      const data = call.data as UpdateConfigData;
+      if (data.status === "applied" && data.configuration) {
+        // Last successful update wins (multiple updates in one turn end at one state).
+        configurationUpdate = toConfigSignal(data.configuration, viewToConfig(data.configuration), data.changedFields ?? []);
+      }
+    }
+    if (call.toolName === "suggestConfigurationUpdate") {
+      const data = call.data as SuggestConfigData;
+      if (data.status === "proposed" && data.label && data.patch && data.preview) {
+        suggestedActions.push({
+          type: "APPLY_CONFIGURATION_PATCH",
+          productId: data.preview.productId,
+          productPath: data.productPath ?? "/products",
+          label: data.label,
+          patch: data.patch,
+          basedOnRevision: data.basedOnRevision ?? 0,
+          preview: data.preview.price,
+        });
+      }
+    }
     if (call.toolName === "requestHumanHelp" && (call.data as HandoffData).escalated) {
       needsHuman = true;
     }
   }
-  return { recommendedProductId, recommendedProductPath, needsHuman };
+  return {
+    recommendedProductId,
+    recommendedProductPath,
+    configurationUpdate,
+    ...(suggestedActions.length > 0 ? { suggestedActions } : {}),
+    needsHuman,
+  };
 }
 
 export async function runSalesAgentTurn(
@@ -161,7 +282,7 @@ export async function runSalesAgentTurn(
     getNeedProfile(input.sessionId),
     listMessages(conversation.id),
   ]);
-  const context = await buildSalesContext({ profile, conversation });
+  const context = await buildSalesContext({ profile, conversation, sessionId: input.sessionId });
   const history = toChatHistory(transcript);
 
   // --- The model turn ----------------------------------------------------
@@ -217,8 +338,14 @@ export async function runSalesAgentTurn(
       toolCalls: turn.executedToolCalls.map((c) => `${c.toolName}:${c.ok ? "ok" : c.error.kind}`),
       promptId: "ai_sales_agent",
       ...(signals.recommendedProductId ? { recommendedProductId: signals.recommendedProductId } : {}),
+      ...(signals.configurationUpdate
+        ? { configurationRevision: signals.configurationUpdate.revision, configurationFields: signals.configurationUpdate.changedFields }
+        : {}),
       ...(signals.needsHuman ? { needsHuman: true } : {}),
     },
+    // Per-turn configuration snapshot (S03 groundwork column): what the
+    // shared configuration was when this reply was produced.
+    ...(signals.configurationUpdate ? { configSnapshot: signals.configurationUpdate.config } : {}),
   });
 
   try {
@@ -268,6 +395,8 @@ export async function runSalesAgentTurn(
     ...(signals.recommendedProductId
       ? { recommendedProductId: signals.recommendedProductId, recommendedProductPath: signals.recommendedProductPath }
       : {}),
+    ...(signals.configurationUpdate ? { configurationUpdate: signals.configurationUpdate } : {}),
+    ...(signals.suggestedActions ? { suggestedActions: signals.suggestedActions } : {}),
     needsHuman: signals.needsHuman,
     ...(signals.handoffReason ? { handoffReason: signals.handoffReason } : {}),
     conversationStatus: signals.needsHuman || conversation.status === "escalated" ? "escalated" : "active",

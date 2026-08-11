@@ -185,6 +185,7 @@ describe("runToolConversation — exit criteria", () => {
     const specs = (fake.requests[0].request as { tools: Array<{ name: string }> }).tools.map((t) => t.name).sort();
     expect(specs).toEqual([
       "calculatePrice",
+      "getCurrentConfiguration",
       "getProductDetails",
       "getQuantityPricing",
       "getShippingEstimate",
@@ -192,6 +193,8 @@ describe("runToolConversation — exit criteria", () => {
       "requestHumanHelp",
       "saveCustomerNeed",
       "searchProducts",
+      "suggestConfigurationUpdate",
+      "updateConfiguration",
     ]);
     // …and the second step got the tool result fed back.
     const secondMessages = fake.requests[1].request.messages;

@@ -8,8 +8,10 @@ import { estimateShipping } from "@/config/shipping";
 import { quoteConfiguration, requiresCustomQuote } from "@/modules/pricing";
 import { track } from "@/lib/analytics/track";
 import { useCart } from "@/lib/cart/cart-context";
+import { ConfigurationProvider, useConfiguration } from "@/lib/configuration/context";
+import type { TrackedField } from "@/lib/configuration/store";
 import { formatDimensions, formatMoney, formatPct, formatQty, formatUnitPrice } from "@/lib/format";
-import type { ArtworkRef, Product, ProductConfiguration } from "@/types/commerce";
+import type { Product } from "@/types/commerce";
 import { ArtworkUploader } from "./ArtworkUploader";
 import { TierPricingTable } from "./TierPricingTable";
 import { BagIllustration } from "./BagIllustration";
@@ -18,37 +20,45 @@ import { BagIllustration } from "./BagIllustration";
  * The product configurator — the primary conversion surface.
  * Order of controls mirrors the buying decision: size → color → printing →
  * artwork → quantity → price → shipping → add to cart.
+ *
+ * Session 06: selection state lives in the SHARED configuration store
+ * (lib/configuration) — the same validated state the AI Packaging Expert
+ * reads and updates. AI changes arrive server-validated over the sync bus,
+ * update these controls visibly (highlight + aria-live announcement), and
+ * re-price through the same engine call as manual changes.
  */
 export function ProductConfigurator({ product }: { product: Product }) {
+  return (
+    <ConfigurationProvider product={product}>
+      <ConfiguratorView product={product} />
+    </ConfigurationProvider>
+  );
+}
+
+const FIELD_ANNOUNCE_LABELS: Record<string, string> = {
+  sizeId: "size",
+  materialId: "material",
+  colorId: "color",
+  printOptionId: "printing",
+  quantity: "quantity",
+};
+
+function ConfiguratorView({ product }: { product: Product }) {
   const router = useRouter();
   const { addLine } = useCart();
+  const { state, config, setSize, setMaterial, setColor, setPrintOption, setQuantity, setArtwork, flushSync } =
+    useConfiguration();
   const startedRef = useRef(false);
 
-  const [sizeId, setSizeId] = useState(product.sizes[0]?.id ?? "");
-  const [materialId, setMaterialId] = useState(product.materials[0]?.id ?? "");
-  const [colorId, setColorId] = useState(product.colors[0]?.id ?? "");
-  const [printId, setPrintId] = useState<ProductConfiguration["printOptionId"]>(
-    product.printOptions.find((p) => p.id === "one-color")?.id ?? product.printOptions[0].id,
-  );
-  const [quantity, setQuantity] = useState(product.quantityPresets[1] ?? product.minQuantity);
   const [customQty, setCustomQty] = useState<string>("");
-  const [artwork, setArtwork] = useState<ArtworkRef | null>(null);
   const [postal, setPostal] = useState("");
   const [shippingMsg, setShippingMsg] = useState<{ text: string; tone: "ok" | "error" } | null>(null);
   const [added, setAdded] = useState(false);
+  /** Fields the Packaging Expert just changed — drives the brief highlight. */
+  const [aiFields, setAiFields] = useState<ReadonlySet<TrackedField>>(new Set());
+  const [announcement, setAnnouncement] = useState("");
 
-  const config: ProductConfiguration = useMemo(
-    () => ({
-      productId: product.id,
-      sizeId,
-      materialId,
-      colorId,
-      printOptionId: printId,
-      quantity,
-      artwork,
-    }),
-    [product.id, sizeId, materialId, colorId, printId, quantity, artwork],
-  );
+  const { sizeId, materialId, colorId, printOptionId: printId, quantity, artwork } = config;
 
   const quote = useMemo(() => quoteConfiguration(product, config), [product, config]);
   const needsQuote = requiresCustomQuote(product, config);
@@ -56,6 +66,53 @@ export function ProductConfigurator({ product }: { product: Product }) {
   const selectedSize = product.sizes.find((s) => s.id === sizeId);
   const selectedColor = product.colors.find((c) => c.id === colorId);
   const missingArtwork = Boolean(selectedPrint?.requiresArtwork) && !artwork;
+
+  // External (AI/restore) changes: reconcile the custom-quantity echo field,
+  // and for AI changes highlight the touched controls + announce politely.
+  // "Adjust state during render" pattern — reacts to store changes without
+  // an effect-render cascade.
+  const lastChange = state.lastChange;
+  const [prevChange, setPrevChange] = useState(lastChange);
+  if (lastChange !== prevChange) {
+    setPrevChange(lastChange);
+    if (lastChange && lastChange.source !== "user") {
+      if (lastChange.fields.includes("quantity")) {
+        setCustomQty(product.quantityPresets.includes(quantity) ? "" : String(quantity));
+      }
+      if (lastChange.source === "ai") {
+        setAiFields(new Set(lastChange.fields));
+        const parts = lastChange.fields
+          .filter((f) => f in FIELD_ANNOUNCE_LABELS)
+          .map((f) => {
+            if (f === "quantity") return `quantity to ${formatQty(quantity)}`;
+            if (f === "sizeId") return `size to ${product.sizes.find((s) => s.id === sizeId)?.label ?? sizeId}`;
+            if (f === "materialId") return `material to ${product.materials.find((m) => m.id === materialId)?.label ?? materialId}`;
+            if (f === "colorId") return `color to ${product.colors.find((c) => c.id === colorId)?.label ?? colorId}`;
+            return `printing to ${product.printOptions.find((p) => p.id === printId)?.label ?? printId}`;
+          });
+        if (parts.length > 0) {
+          setAnnouncement(`Packaging Expert updated ${parts.join(", ")}.`);
+        }
+      }
+    }
+  }
+
+  // Let the AI highlight fade after a few seconds (setState via timer is async — no cascade).
+  useEffect(() => {
+    if (aiFields.size === 0) return;
+    const timer = setTimeout(() => setAiFields(new Set()), 6000);
+    return () => clearTimeout(timer);
+  }, [aiFields]);
+
+  const aiTouched = (...fields: TrackedField[]) => fields.some((f) => aiFields.has(f));
+  const aiMark = (...fields: TrackedField[]) =>
+    aiTouched(...fields) ? (
+      <span className="ml-2 rounded bg-accent-soft px-1.5 py-0.5 font-mono text-[10px] normal-case tracking-normal text-accent">
+        Updated by Packaging Expert
+      </span>
+    ) : null;
+  const aiRing = (...fields: TrackedField[]) =>
+    aiTouched(...fields) ? "rounded-[10px] bg-accent-soft/60 outline outline-1 outline-accent/40 p-2 -m-2 transition-colors" : "transition-colors";
 
   const markStarted = () => {
     if (!startedRef.current) {
@@ -88,6 +145,8 @@ export function ProductConfigurator({ product }: { product: Product }) {
 
   const handleAdd = () => {
     if (!quote || missingArtwork || needsQuote) return;
+    // Persist the exact state the cart line is about to snapshot (non-blocking).
+    void flushSync();
     const optionSummary = [
       selectedSize ? `${selectedSize.label} (${formatDimensions(selectedSize.dimensions)})` : "",
       selectedColor?.label,
@@ -124,6 +183,11 @@ export function ProductConfigurator({ product }: { product: Product }) {
 
   return (
     <div className="grid gap-10 lg:grid-cols-[1.1fr_1fr]">
+      {/* Assistive announcements for AI-driven configuration changes. */}
+      <p aria-live="polite" role="status" className="sr-only">
+        {announcement}
+      </p>
+
       {/* LEFT — gallery */}
       <div className="lg:sticky lg:top-24 lg:self-start">
         <div className="surface flex items-center justify-center p-8">
@@ -176,8 +240,8 @@ export function ProductConfigurator({ product }: { product: Product }) {
         )}
 
         {/* 1 · Size */}
-        <fieldset className="mt-8">
-          <legend className="label-mono mb-2">1 · Size</legend>
+        <fieldset className={`mt-8 ${aiRing("sizeId")}`}>
+          <legend className="label-mono mb-2">1 · Size{aiMark("sizeId")}</legend>
           <div className="flex flex-wrap gap-2">
             {product.sizes.map((s) => (
               <button
@@ -186,7 +250,7 @@ export function ProductConfigurator({ product }: { product: Product }) {
                 className="chip"
                 aria-pressed={s.id === sizeId}
                 onClick={() => {
-                  setSizeId(s.id);
+                  setSize(s.id);
                   track({ name: "select_size", params: { product_id: product.id, size: s.label } });
                 }}
               >
@@ -205,8 +269,8 @@ export function ProductConfigurator({ product }: { product: Product }) {
 
         {/* 2 · Material */}
         {product.materials.length > 1 && (
-          <fieldset className="mt-6">
-            <legend className="label-mono mb-2">2 · Material weight</legend>
+          <fieldset className={`mt-6 ${aiRing("materialId")}`}>
+            <legend className="label-mono mb-2">2 · Material weight{aiMark("materialId")}</legend>
             <div className="flex flex-wrap gap-2">
               {product.materials.map((m) => (
                 <button
@@ -214,7 +278,7 @@ export function ProductConfigurator({ product }: { product: Product }) {
                   type="button"
                   className="chip"
                   aria-pressed={m.id === materialId}
-                  onClick={() => setMaterialId(m.id)}
+                  onClick={() => setMaterial(m.id)}
                 >
                   {m.label}
                   {m.priceDeltaCents > 0 && (
@@ -227,8 +291,10 @@ export function ProductConfigurator({ product }: { product: Product }) {
         )}
 
         {/* 3 · Color */}
-        <fieldset className="mt-6">
-          <legend className="label-mono mb-2">{product.materials.length > 1 ? "3" : "2"} · Bag color</legend>
+        <fieldset className={`mt-6 ${aiRing("colorId")}`}>
+          <legend className="label-mono mb-2">
+            {product.materials.length > 1 ? "3" : "2"} · Bag color{aiMark("colorId")}
+          </legend>
           <div className="flex flex-wrap gap-2">
             {product.colors.map((c) => (
               <button
@@ -237,7 +303,7 @@ export function ProductConfigurator({ product }: { product: Product }) {
                 className="chip"
                 aria-pressed={c.id === colorId}
                 onClick={() => {
-                  setColorId(c.id);
+                  setColor(c.id);
                   track({ name: "select_color", params: { product_id: product.id, color: c.label } });
                 }}
               >
@@ -259,8 +325,8 @@ export function ProductConfigurator({ product }: { product: Product }) {
         </fieldset>
 
         {/* 4 · Printing */}
-        <fieldset className="mt-6">
-          <legend className="label-mono mb-2">Printing</legend>
+        <fieldset className={`mt-6 ${aiRing("printOptionId")}`}>
+          <legend className="label-mono mb-2">Printing{aiMark("printOptionId")}</legend>
           <div className="grid gap-2">
             {product.printOptions.map((p) => (
               <button
@@ -269,7 +335,7 @@ export function ProductConfigurator({ product }: { product: Product }) {
                 className="chip w-full !justify-between text-left"
                 aria-pressed={p.id === printId}
                 onClick={() => {
-                  setPrintId(p.id);
+                  setPrintOption(p.id);
                   track({ name: "select_print_option", params: { product_id: product.id, print_option: p.id } });
                 }}
               >
@@ -289,7 +355,7 @@ export function ProductConfigurator({ product }: { product: Product }) {
         {selectedPrint?.requiresArtwork && (
           <div className="mt-6">
             <ArtworkUploader
-              value={artwork}
+              value={artwork ?? null}
               onChange={(ref) => {
                 setArtwork(ref);
                 if (ref) {
@@ -301,8 +367,8 @@ export function ProductConfigurator({ product }: { product: Product }) {
         )}
 
         {/* 6 · Quantity */}
-        <fieldset className="mt-6">
-          <legend className="label-mono mb-2">Quantity</legend>
+        <fieldset className={`mt-6 ${aiRing("quantity")}`}>
+          <legend className="label-mono mb-2">Quantity{aiMark("quantity")}</legend>
           <div className="flex flex-wrap gap-2">
             {product.quantityPresets.map((q) => (
               <button key={q} type="button" className="chip font-mono" aria-pressed={q === quantity && !customQty} onClick={() => setQty(q)}>

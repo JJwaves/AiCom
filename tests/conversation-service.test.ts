@@ -92,3 +92,41 @@ describe("conversation persistence", () => {
     expect(await db.select().from(messages).where(eq(messages.conversationId, conversation.id))).toHaveLength(0);
   });
 });
+
+describe("conversation outcome stamping (Session 06)", () => {
+  beforeEach(resetDb);
+
+  it("stamps checkout_started/purchased on the active sales conversation without ending it", async () => {
+    const { markConversationOutcomeForSession } = await import("@/lib/data/conversation-service");
+    const session = await makeSession();
+    const conversation = await startConversation({ sessionId: session.id });
+
+    await markConversationOutcomeForSession(session.id, "checkout_started");
+    let row = await getConversation(conversation.id);
+    expect(row?.outcome).toBe("checkout_started");
+    expect(row?.status).toBe("active"); // customer can keep chatting
+
+    await markConversationOutcomeForSession(session.id, "purchased");
+    row = await getConversation(conversation.id);
+    expect(row?.outcome).toBe("purchased");
+
+    // purchased is terminal-strength: a later checkout_started never downgrades it.
+    await markConversationOutcomeForSession(session.id, "checkout_started");
+    row = await getConversation(conversation.id);
+    expect(row?.outcome).toBe("purchased");
+  });
+
+  it("is a no-op without an active conversation and preserves escalated outcomes", async () => {
+    const { markConversationOutcomeForSession, markConversationEscalated } = await import(
+      "@/lib/data/conversation-service"
+    );
+    const session = await makeSession();
+    await expect(markConversationOutcomeForSession(session.id, "quote_started")).resolves.toBeUndefined();
+
+    const conversation = await startConversation({ sessionId: session.id });
+    await markConversationEscalated(conversation.id);
+    await markConversationOutcomeForSession(session.id, "checkout_started");
+    const row = await getConversation(conversation.id);
+    expect(row?.outcome).toBe("escalated"); // a handoff in motion outranks funnel stamps
+  });
+});

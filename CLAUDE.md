@@ -53,17 +53,20 @@ limits, refund authorization, agent autonomy, approvals.
 
 ## Current project stage
 
-**Session 05 "AI Sales Agent Core" COMPLETE (2026-08-10) — the AI
-Packaging Expert is implemented end-to-end (agent, extraction, escalation,
-chat API, storefront UI), OFF by default behind AI_RUNTIME_ENABLED +
-AI_SALES_ENABLED. Next milestone: Session 06 "AI Sales × Product
-Configurator".**
+**Session 06 "AI Sales × Product Configurator" COMPLETE (2026-08-10) —
+ONE shared authoritative configuration state (`lib/configuration` +
+`product_configurations` row, version = revision) drives both the visual
+configurator and the AI: chat "make it 10,000" visibly updates the
+configurator + price; manual choices are visible to the agent; stale AI
+writes are revision-blocked; the manual cart receives the same shared
+state. AI still OFF by default. Next milestone: Session 07 "AI Sales ×
+Cart / Checkout".**
 
-## Current architecture (2026-08-10, post-Session 05)
+## Current architecture (2026-08-10, post-Session 06)
 
 Working B2B storefront, verified end-to-end (see
 docs/CURRENT_SYSTEM_AUDIT.md + its Session-02 resolution note):
-- Next.js 16.3 App Router · React 19 · TS · Tailwind v4 · zod · vitest (116 tests)
+- Next.js 16.3 App Router · React 19 · TS · Tailwind v4 · zod · vitest (317 tests)
   · Drizzle ORM + Postgres (PGlite embedded dev/test, node-postgres prod).
 - **Database (Session 03):** `db/schema.ts` (20 tables: sessions, events,
   customers, businesses, orders+lines, quotes, artworks, configurations,
@@ -160,6 +163,39 @@ docs/CURRENT_SYSTEM_AUDIT.md + its Session-02 resolution note):
   human_handoff_requested. Optional `npm run ai:smoke` verifies configured
   model ids against the live account + one real LOW_COST call
   (credential-gated; never in tests/build).
+- **Shared configuration state (Session 06 —
+  docs/AI_CONFIGURATOR_INTEGRATION.md is authoritative):**
+  `lib/configuration/` = pure catalog validation + patch semantics
+  (validation.ts: 5 patchable fields — artwork/customDimensions
+  structurally excluded), pure reducer (store.ts: revision, dirtyFields
+  field-merge, lastChange), React provider (context.tsx: mount restore,
+  700ms debounced sync, flushSync before add-to-cart), sync bus
+  (chat↔configurator across React trees + configurator presence), ONE
+  server application path (server.ts) over the S03 row
+  (`product_configurations.version` = revision;
+  `updateConfigurationChecked` = SELECT…FOR UPDATE + expectedRevision).
+  `/api/configuration`: POST full-config sync (last-write-wins) or patch
+  apply (revalidated; 409 STALE_REVISION), GET session restore; strict
+  zod (unknown patch keys = loud 422, never stripped). Three new sales
+  tools (8→11): getCurrentConfiguration (READ, customer-visible view),
+  updateConfiguration (CUSTOMER_WRITE, partial patch, structured
+  rejections with alternatives, revision-checked), suggestConfigurationUpdate
+  (READ, validates+prices, writes nothing → apply chip).
+  SalesAgentResult now carries configurationUpdate (server-validated
+  config the UI applies — never model text) + suggestedActions; sales
+  context injects the live configuration each turn; assistant messages
+  stamp configSnapshotJson; prompt v1.1.0 adds COMMIT-vs-PREVIEW +
+  confirmation policy + no-artwork-fabrication rules. Both manual sync
+  and AI commits write CONFIGURATOR-rank need evidence
+  (needUpdateFromConfiguration mirrors checkout's ORDER_DATA mapping);
+  USER_STATED still only via the S05 evidence extractor. Events:
+  ai_configuration_proposed/updated/rejected (+ conversations.outcome now
+  stamps quote_started/checkout_started/purchased from their routes).
+  UI: configurator restores on reload, AI changes highlight ~6s
+  ("Updated by Packaging Expert") + aria-live announcements; chat shows
+  "✓ Configurator updated" chips + tappable suggestion chips; mobile
+  launcher/panel lift above the sticky Add-to-Cart bar when a
+  configurator is mounted.
 - `lib/commerce` — provider abstraction; `mock` active, `shopify`
   Storefront skeleton env-gated (variant mapping TODO, needs real store).
   **All catalog reads go through `lib/commerce/catalog.ts`** (provider-
@@ -493,6 +529,110 @@ default; commerce verified unaffected with every flag off.
     conversation semantics), BUSINESS_CONFIG_TODO (escalation delivery),
     LAUNCH_CHECKLIST (new AI section), README (ai:smoke), .env.example.
 
+## Completed in Session 06 (2026-08-10) — AI Sales × Product Configurator
+
+ONE shared authoritative configuration state — invariant 1 realized. The
+known issue "six useState hooks local to ProductConfigurator" is RESOLVED.
+
+1. **`lib/configuration/` domain layer** — validation.ts (pure, isomorphic:
+   `defaultConfiguration` shared by UI+server, `applyConfigurationPatch`
+   all-or-nothing partial patches with structured `PatchIssue[]`+available
+   alternatives, `validateFullConfiguration`, `describeConfiguration`;
+   below-MOQ + custom color stay LEGAL custom-quote states, matching the
+   UI's historical behavior), store.ts (pure reducer: SET_* actions,
+   LOAD_SERVER_CONFIGURATION with revision gate + field-level dirty merge
+   so a customer's in-flight click never gets visually clobbered,
+   SYNC_ACKNOWLEDGED value-compare, RESET), context.tsx (React provider:
+   GET restore on mount, 700ms debounced POST persistence that never
+   blocks clicks and silently retries, sync-bus subscription, flushSync
+   before add-to-cart), sync-bus.ts (typed pub/sub bridging the layout-
+   mounted chat and page-mounted configurator + presence registry).
+2. **Server application path** — server.ts `resolveCurrentConfiguration` /
+   `applyConfigurationPatchForSession` / `syncConfigurationForSession`
+   over configuration-service's new `updateConfigurationChecked`
+   (transaction + SELECT…FOR UPDATE + expectedRevision compare → stale
+   writes return current state, never clobber) and
+   `getLatestActiveConfiguration`. Prices via `sellPriceFor` — engine
+   sell side only. CONFIGURATOR-rank need evidence on every apply
+   (need-mapping.ts mirrors checkout's ORDER_DATA field mapping).
+3. **`/api/configuration`** — POST {productId, config} (UI snapshot sync,
+   deliberately last-write-wins) | {productId, patch, expectedRevision?}
+   (tapped suggestion; full revalidation; 409 STALE_REVISION with current
+   state; 422 UNSUPPORTED_OPTION with issues; 404 unknown product), GET
+   restore (no session minting). Strict zod patch schema — price/artwork/
+   admin keys are loud errors, not stripped.
+4. **ProductConfigurator refactor** — six useState hooks → the shared
+   store (UI-local state stays local: custom-qty echo, postal, shipping
+   msg, added-flash); behavior + analytics byte-identical; adds session
+   restore, AI-change highlight (~6s "Updated by Packaging Expert" badge
+   + accent ring), sr-only aria-live announcements ("Packaging Expert
+   updated quantity to 10,000."), flushSync on add-to-cart.
+5. **Three configuration tools (registry 8→11)** — getCurrentConfiguration
+   (READ; customer-visible view: labels, quantity, artwork status,
+   revision, engine price, requiresCustomQuote; cost/margin/floor/source
+   structurally excluded), updateConfiguration (CUSTOMER_WRITE; partial
+   patch of the 5 option fields ONLY — no artwork/customDimensions/price
+   inputs exist; applied|rejected(issues+alternatives)|stale_revision|
+   unknown_product), suggestConfigurationUpdate (READ; validates+prices a
+   hypothetical, writes nothing, returns label/patch/basedOnRevision/
+   productPath/preview for the apply chip). Events:
+   ai_configuration_updated/rejected/proposed (taxonomy +2).
+6. **Agent + chat wiring** — sales context injects the live configuration
+   ("Current configuration (live, revision N)… never ask them to repeat
+   it"); SalesAgentResult + /api/ai/chat carry configurationUpdate
+   (validated config+revision+changedFields+changeSummary+price) and
+   suggestedActions; assistant rows stamp configSnapshotJson; prompt
+   ai_sales_agent v1.1.0 (COMMIT vs PREVIEW: "make it 10,000" commits,
+   "what would 10,000 cost?" prices only; small clear changes apply
+   directly, substantial-cost changes preview+propose; never change
+   unrequested fields; relay rejection alternatives; reconcile on
+   stale_revision; artwork only via the uploader).
+7. **Chat UI** — publishes server-validated updates on the sync bus (the
+   configurator applies through the reducer), renders "✓ Configurator
+   updated" chips (changeSummary + engine total + "(demo pricing)") and
+   suggestion apply-chips (POST through /api/configuration; stale →
+   honest "no longer matches" copy; off-page → link to configurator);
+   mobile launcher bottom-24 + panel bottom-[9.5rem] when a configurator
+   is mounted so the sticky Add-to-Cart CTA is never covered.
+8. **Conversation outcomes (S03/S05 debt)** —
+   `markConversationOutcomeForSession` stamps quote_started/
+   checkout_started/purchased from the quote/checkout routes without
+   ending conversations; purchased never downgrades; escalated preserved.
+   Decided: quotes never point configurationId at the live row (it keeps
+   mutating) — embedded payloads remain the quote truth.
+9. **Tests 252 → 317** (all green; zero credentials/network):
+   configuration-store (validation rules, reducer, stale-revision gate,
+   field-merge race, artwork preservation), configuration-route (sync/
+   patch/restore/cross-session isolation/CONFIGURATOR-vs-USER_STATED
+   provenance/cart-consistency), ai-configuration-tools (all three tools,
+   partial-patch preservation, structured rejections, stale protection,
+   price/artwork injection red-team, event emission, provenance),
+   ai-sales-agent "shared configuration flow" (commit/suggest/stale/
+   red-team turns, context injection, configSnapshot), chat-route wire
+   signals, conversation outcome stamping.
+10. **Browser-verified (desktop + 375px mobile)** on `next dev` with a
+    scripted localhost mock of the provider Messages API
+    (ANTHROPIC_BASE_URL env; zero real credentials, zero app-code
+    changes, .env.local removed after): flags-off manual flow + no
+    launcher; "Make it 10,000 bags" → visible configurator update +
+    badge/ring highlight + aria-live + $3,700.00 re-price; suggestion
+    chip "Update to 25,000 bags · $8,250.00 (demo)" → tap → visible
+    update to 25,000/$8,250; manual click → agent sees it next turn;
+    reload restoration (incl. an S03-era row restored by cookie);
+    cart line = shared state (Large·Black·No logo·10,000×$0.37=$3,700);
+    provider-down → the one customer-safe sentence; mobile launcher/
+    panel clear the sticky CTA.
+11. **Docs** — new docs/AI_CONFIGURATOR_INTEGRATION.md (authoritative);
+    ARCHITECTURE (S06 module row, invariant 1 "enforced since S06", 5
+    decision-log entries), AI_SALES_AGENT (11 tools, v1.1.0 prompt, S06
+    result/UI/outcomes, limitations updated), AI_AGENT_ARCHITECTURE
+    (toolset ✅, flow + config sync), AI_RUNTIME (toolset table),
+    DATABASE_SCHEMA (revision semantics, live writers, outcome stamping,
+    configSnapshotJson, taxonomy +2), CURRENT_SYSTEM_AUDIT (risk 6 +
+    REFACTOR item RESOLVED), BUSINESS_CONFIG_TODO (confirmation
+    thresholds item). No schema/migration changes — S03's tables already
+    carried version/source/configSnapshotJson.
+
 ## Important decisions (and why)
 
 1. **Database is the first ADD** — every roadmap capability consumes
@@ -561,15 +701,44 @@ default; commerce verified unaffected with every flag off.
     testable) with delivery to email/Slack/CRM deferred to owner config;
     an unroutable escalation still exists and still shows the customer an
     honest "human will follow up" state.
+18. **(S06) The shared configuration truth is the DB row; the React store
+    is its live view** — the AI runs server-side and must read/commit
+    without a browser; restore-on-mount + debounced sync keep the UI
+    view live. No state library: useReducer+context matches the repo's
+    cart pattern.
+19. **(S06) AI writes are revision-checked under a row lock; UI snapshots
+    are last-write-wins; client-side, dirty fields win field-wise** — the
+    smallest strategy that makes silent clobbering impossible in every
+    direction (stale AI patch vs newer manual change; concurrent AI load
+    vs in-flight click). Chosen over event sourcing/CRDTs deliberately.
+20. **(S06) The UI applies only server-validated configuration payloads,
+    and patch schemas are STRICT** — configurationUpdate is lifted from
+    validated tool output (never model prose); suggestion chips re-POST
+    through /api/configuration for full revalidation; unknown patch keys
+    (price/artwork/admin) are loud validation errors, never silently
+    stripped — injection surfaces to the agent instead of half-working.
+21. **(S06) AI-committed configuration changes record CONFIGURATOR-rank
+    evidence** — the tool records what the configuration now IS; when the
+    customer's words drove it, the S05 evidence extractor independently
+    grants USER_STATED from the actual message. Still zero model-writable
+    paths to top-rank provenance.
 
 ## Known issues
 
-- Configurator state is six `useState` hooks local to
-  `ProductConfigurator` — the shared validated configuration store that
-  AI tools will mutate does not exist yet — Session 06. (Configurator
-  interactions DO reach the DB as `configurator_updated` events; the
-  configuration-row writer for source "configurator" wires in S06 —
-  today only checkout writes configuration rows.)
+- ~~Configurator state is six `useState` hooks local to
+  `ProductConfigurator`~~ — **RESOLVED in Session 06**: `lib/configuration`
+  shared store + `/api/configuration` writer (source "configurator"/"ai");
+  see docs/AI_CONFIGURATOR_INTEGRATION.md.
+- (S06) Configuration sync is debounced (700ms): a change made <1s before
+  closing the tab may not persist (the visible UI never lies — reload
+  falls back to the last-synced state). `/api/configuration` has no route
+  rate limit (same posture as `/api/events` — platform-edge limiting is
+  the LAUNCH_CHECKLIST item; payloads are strictly bounded).
+- (S06) The AI-change highlight/announcement lives in the mounted
+  configurator only — an updateConfiguration committed while the customer
+  is on another page is visible in chat ("✓ Configurator updated" chip)
+  and on next configurator mount (restore), with no page-level toast
+  elsewhere (deliberate, avoids cross-page notification noise).
 - Shopify variant mapping is `TODO(shopify)` pending a real store;
   `createCheckout` still ships a `REPLACE_ME` variant id. The catalog-read
   mock fallback in `lib/commerce/catalog.ts` must be REMOVED once the
@@ -608,11 +777,11 @@ default; commerce verified unaffected with every flag off.
 - (S05) Escalation handoffs are recorded (system message rows +
   human_handoff_requested events) but not yet DELIVERED anywhere — the
   destination is owner config (BUSINESS_CONFIG_TODO).
-- (S05) Sales conversation outcomes: only `escalated` is wired; abandoned/
-  quote_started/checkout_started/purchased stamp in the sessions that
-  connect chat to cart/checkout. Extraction covers scalar fields only
-  (painPoints/objections arrays deferred); in-chat contact info lands in
-  the handoff record, not the customers table.
+- (S05→S06) Sales conversation outcomes: quote_started/checkout_started/
+  purchased now stamp from their routes (S06); `abandoned` needs a
+  session-expiry sweep (future session). Extraction covers scalar fields
+  only (painPoints/objections arrays deferred); in-chat contact info lands
+  in the handoff record, not the customers table.
 - (S05) `messages` ordering uses createdAt (no per-conversation sequence
   column); same-millisecond rows in one turn could theoretically
   interleave in history reads — not observed in tests, revisit if turn
@@ -633,16 +802,19 @@ filled)**, guardrail thresholds, escalation destination.
 
 ## Deferred work
 
-Explicitly preserved for later sessions: **bidirectional AI ↔ Product
-Configurator synchronization** (S06 — the agent currently recommends and
-links, never touches configurator state), **AI-assisted checkout/cart
-integration** (later session — no cart/quote/order tools exist), **Customer
-Intelligence** (S08), **Pricing Agent** (S12), **CRO Agent** + experiment
-runtime (S11), **Google Ads Agent** (S13+), **Meta Ads Agent**, **CEO
-Agent** (S09). Also deferred: escalation delivery wiring (owner config),
-Shopify order webhooks → DB order rows, accounts/reorder, email
-automation, Merchant Center feed, admin surfaces, privacy portal UI.
-Order per `docs/AI_PLATFORM_ROADMAP.md`.
+Explicitly preserved for later sessions: **AI-assisted Add-to-Cart /
+checkout** (S07 — S06 deliberately stops at synchronized configuration:
+no cart/quote/order tools exist, the manual Add-to-Cart flow receives the
+shared state), **human escalation delivery** (owner config), **Customer
+Intelligence** (S08), **Business Intelligence / Guardrails Action Center**,
+**Pricing Agent/Intelligence** (S12), **CRO Agent** + experiment runtime
+(S11), **Google Ads Agent** (S13+), **Meta Ads Agent**, **CEO Agent**
+(S09), autonomous/background configuration actions (never — AI acts only
+on customer interaction). Also deferred: Shopify order webhooks → DB order
+rows, accounts/reorder, email automation, Merchant Center feed, admin
+surfaces, privacy portal UI, conversation `abandoned` outcome sweep,
+owner-configured confirmation thresholds (BUSINESS_CONFIG_TODO). Order per
+`docs/AI_PLATFORM_ROADMAP.md`.
 
 ### Deferred technical debt (Session 03 audit — accepted, not forgotten)
 
@@ -671,17 +843,18 @@ the 03.5 hardening pass (small blast radius, none block Session 04):
 
 ## Recommended next session
 
-**Session 06 — AI Sales × Product Configurator** — run
-`prompts/06-ai-configurator.md`: build the ONE shared validated
-configuration store (today the configurator is six `useState` hooks local
-to `ProductConfigurator` — the known issue at the top of that list), wire
-the configurator writer for configuration rows (source "configurator"),
-then give the Sales Agent `getCurrentConfiguration`/`updateConfiguration`
-tools that mutate the SAME validated reducer the UI uses (invariant 1:
-never two parallel states), with per-turn config snapshots on messages and
-`ai_configuration_updated` events. Also natural in S06: stamp conversation
-outcomes (abandoned/checkout_started) once chat and configurator/cart
-connect, and decide the quote → live-configuration pointer semantics
-(deferred S03 debt). The S05 groundwork already in place:
-recommendedProductId/Path signals, conversation product context, and the
-configSnapshotJson message column.
+**Session 07 — AI Sales × Cart / Checkout** — run
+`prompts/07-ai-checkout.md`:
+the end-to-end configuration system is stable (317 tests, browser-verified
+both directions), so the natural next milestone is letting the
+conversation carry through to commerce: an `addConfiguredProductToCart`
+tool that routes the SHARED configuration through the existing server
+re-quote (409 REPRICED semantics preserved — the AI never sets prices),
+customer-confirmed add-to-cart from chat (structured action, same
+suggestion-chip pattern as S06), cart visibility for the agent
+(getCartState READ tool), and the conversation outcome links
+(`aiAssisted` on orders + conversationId already exist on the schema).
+Hard boundaries staying: no checkout submission, no payment actions, no
+autonomous cart mutations — customer-confirmed actions only. Also
+available if preferred: Session 08 Customer Intelligence (the
+conversation/configuration/order corpus is now rich enough to aggregate).

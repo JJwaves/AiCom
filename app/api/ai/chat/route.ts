@@ -108,6 +108,10 @@ export async function POST(req: Request) {
       ...(result.recommendedProductId
         ? { recommendedProductId: result.recommendedProductId, recommendedProductPath: result.recommendedProductPath }
         : {}),
+      // Server-validated configuration signals (S06): the client applies
+      // THESE to the shared store — it never parses reply prose.
+      ...(result.configurationUpdate ? { configurationUpdate: result.configurationUpdate } : {}),
+      ...(result.suggestedActions ? { suggestedActions: result.suggestedActions } : {}),
       needsHuman: result.needsHuman,
       ...(result.handoffReason ? { handoffReason: result.handoffReason } : {}),
       conversationStatus: result.conversationStatus,

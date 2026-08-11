@@ -72,6 +72,15 @@ product_configurations
               priceSnapshotJson? (sell-side ONLY — never costs/margins) ·
               source (configurator|checkout|quote|ai) · timestamps
               UNIQUE(sessionId, productId) — one live row, versioned in place
+              S06: THE shared configuration state (UI + AI). version = the
+              configuration REVISION: writes go through
+              updateConfigurationChecked (SELECT…FOR UPDATE + optional
+              expectedRevision compare) so a stale AI patch can never
+              overwrite a newer manual change. Live writers: configurator
+              sync + tapped suggestions (source configurator), the AI
+              updateConfiguration tool (source ai), checkout (source
+              checkout). Quotes deliberately do NOT set configurationId to
+              this row (it keeps mutating; quotes embed their own payload).
 orders        id · sessionId?⇢ · customerId?⇢ · businessId?⇢ ·
               conversationId?⇢ · provider (mock|shopify) · providerOrderId? ·
               providerCheckoutRef? · currency · subtotalCents · totalCents ·
@@ -123,7 +132,8 @@ product_viewed · configurator_started · configurator_updated ·
 quantity_selected · artwork_uploaded · price_viewed ·
 shipping_estimate_requested · add_to_cart · checkout_started ·
 purchase_completed · quote_started · quote_submitted · ai_chat_started ·
-ai_message_sent · ai_product_recommended · ai_configuration_updated ·
+ai_message_sent · ai_product_recommended · ai_configuration_proposed (S06)
+· ai_configuration_updated · ai_configuration_rejected (S06) ·
 human_handoff_requested · experiment_exposed · reorder_started.
 
 Flow: `track()` (GA4-shaped dataLayer, unchanged) **dual-writes** through
@@ -150,11 +160,16 @@ conversations id · sessionId→sessions · customerId?⇢ · agentType (sales) 
               productId? · configurationId?⇢ · status (active|ended|escalated) ·
               outcome? (abandoned|quote_started|checkout_started|purchased|
               escalated) · summaryJson? · startedAt · endedAt? · timestamps
+              S06: quote_started/checkout_started/purchased stamp WITHOUT
+              ending (markConversationOutcomeForSession from the quote/
+              checkout routes; purchased never downgrades; escalated
+              outcomes preserved). abandoned still unwired.
 messages      id · conversationId→conversations · role (user|assistant|tool|
               system — system rows NEVER reach customer-facing APIs) ·
               content (raw transcript, preserved) · structuredJson? ·
               toolName? · toolCallId? · toolResultJson? · model? ·
-              configSnapshotJson? · createdAt
+              configSnapshotJson? (S06: written on assistant rows whose
+              turn committed a configuration change) · createdAt
 
 customer_need_profiles
               id · sessionId→sessionsᵁ · customerId?⇢ · businessId?⇢

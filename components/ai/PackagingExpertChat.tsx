@@ -1,24 +1,67 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  isConfiguratorMounted,
+  publishAiConfigurationUpdate,
+  subscribeToConfiguratorPresence,
+} from "@/lib/configuration/sync-bus";
+import type { ProductConfiguration } from "@/types/commerce";
 
 /**
- * AI Packaging Expert — customer-facing chat surface (Session 05).
+ * AI Packaging Expert — customer-facing chat surface (Session 05; shared-
+ * configuration integration in Session 06).
  *
  * Positioning: a packaging expert that makes buying easier — never "AI
  * chatbot" (AI_AGENT_ARCHITECTURE.md UX rules). The client renders ONLY
  * normalized server responses: reply text, an optional validated product
- * recommendation path, and the handoff state. It never parses model prose
- * for actions and never sends anything but the message text — identity is
- * the httpOnly session cookie.
+ * recommendation path, committed configuration updates, proposed apply
+ * actions, and the handoff state. It never parses model prose for actions
+ * and never sends anything but the message text — identity is the httpOnly
+ * session cookie.
+ *
+ * Configuration sync (S06): a committed update arrives as the server-
+ * validated configuration + revision and is published on the sync bus — the
+ * mounted configurator applies it through the shared reducer (highlight +
+ * aria-live there). Proposed changes render as apply chips; tapping one
+ * POSTs the patch to /api/configuration, where it is re-validated against
+ * the CURRENT state — a stale suggestion can never blindly overwrite newer
+ * manual changes.
  */
+
+type WireConfigurationUpdate = {
+  productId: string;
+  productTitle: string;
+  config: ProductConfiguration;
+  revision: number;
+  changedFields: string[];
+  changeSummary: { field: string; value: string }[];
+  price: { unitPriceCents: number; totalCents: number; currency: string; pricingStatus: "DEMO" | "LIVE" } | null;
+  requiresCustomQuote: boolean;
+};
+
+type WireSuggestedAction = {
+  type: "APPLY_CONFIGURATION_PATCH";
+  productId: string;
+  productPath: string;
+  label: string;
+  patch: Record<string, string | number>;
+  basedOnRevision: number;
+  preview: { totalCents: number; unitPriceCents: number; currency: string; pricingStatus: "DEMO" | "LIVE" } | null;
+};
+
+type SuggestionState = WireSuggestedAction & { status: "idle" | "applying" | "applied" | "stale" };
 
 type ChatMessage = {
   role: "user" | "assistant";
   content: string;
   /** Validated recommendation attached to an assistant reply. */
   productPath?: string;
+  /** Committed configuration change (server-validated) for the confirmation chip. */
+  configUpdate?: WireConfigurationUpdate;
+  /** Proposed-but-uncommitted changes the customer can apply. */
+  suggestions?: SuggestionState[];
   /** Local-only render hint for failure copy. */
   notice?: boolean;
 };
@@ -30,6 +73,8 @@ type ChatResponse = {
   retryAfterSeconds?: number;
   reply?: string;
   recommendedProductPath?: string;
+  configurationUpdate?: WireConfigurationUpdate;
+  suggestedActions?: WireSuggestedAction[];
   needsHuman?: boolean;
   conversationStatus?: "active" | "escalated";
 };
@@ -46,6 +91,9 @@ const QUICK_PROMPTS = [
 const NETWORK_ERROR_COPY =
   "Something went wrong sending that. Check your connection and try again — or configure your bags directly on any product page.";
 
+const money = (cents: number, currency: string) =>
+  new Intl.NumberFormat("en-US", { style: "currency", currency }).format(cents / 100);
+
 export function PackagingExpertChat() {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -57,6 +105,14 @@ export function PackagingExpertChat() {
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // A mounted configurator implies the sticky Add-to-Cart bar on mobile —
+  // lift the launcher and panel above it (spec: chat must not cover the CTA).
+  const configuratorPresent = useSyncExternalStore(
+    subscribeToConfiguratorPresence,
+    () => isConfiguratorMounted(),
+    () => false,
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -115,9 +171,24 @@ export function PackagingExpertChat() {
         });
         const data = (await res.json()) as ChatResponse;
         if (data.ok && data.reply) {
+          if (data.configurationUpdate) {
+            // Server-validated state → the shared store (no-op when the
+            // product's configurator isn't mounted; the DB row is synced).
+            publishAiConfigurationUpdate({
+              productId: data.configurationUpdate.productId,
+              config: data.configurationUpdate.config,
+              revision: data.configurationUpdate.revision,
+            });
+          }
           setMessages((prev) => [
             ...prev,
-            { role: "assistant", content: data.reply as string, productPath: data.recommendedProductPath },
+            {
+              role: "assistant",
+              content: data.reply as string,
+              productPath: data.recommendedProductPath,
+              configUpdate: data.configurationUpdate,
+              suggestions: data.suggestedActions?.map((s) => ({ ...s, status: "idle" as const })),
+            },
           ]);
           if (data.needsHuman || data.conversationStatus === "escalated") setEscalated(true);
         } else if (data.code === "RATE_LIMITED") {
@@ -140,6 +211,44 @@ export function PackagingExpertChat() {
     [busy],
   );
 
+  /** Apply a proposed configuration change — server re-validates against CURRENT state. */
+  const applySuggestion = useCallback(async (messageIndex: number, actionIndex: number, action: SuggestionState) => {
+    const setStatus = (status: SuggestionState["status"]) =>
+      setMessages((prev) =>
+        prev.map((m, mi) =>
+          mi === messageIndex && m.suggestions
+            ? { ...m, suggestions: m.suggestions.map((s, si) => (si === actionIndex ? { ...s, status } : s)) }
+            : m,
+        ),
+      );
+    if (action.status === "applying" || action.status === "applied") return;
+    setStatus("applying");
+    try {
+      const res = await fetch("/api/configuration", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ productId: action.productId, patch: action.patch }),
+      });
+      const data = (await res.json()) as {
+        ok: boolean;
+        configuration?: { config: ProductConfiguration; revision: number } | null;
+      };
+      if (res.ok && data.ok && data.configuration) {
+        publishAiConfigurationUpdate({
+          productId: action.productId,
+          config: data.configuration.config,
+          revision: data.configuration.revision,
+        });
+        setStatus("applied");
+      } else {
+        setStatus("stale");
+      }
+    } catch {
+      setStatus("idle");
+      setNotice(NETWORK_ERROR_COPY);
+    }
+  }, []);
+
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     const text = input;
@@ -154,7 +263,9 @@ export function PackagingExpertChat() {
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-controls="packaging-expert-panel"
-        className="fixed bottom-4 right-4 z-40 inline-flex items-center gap-2 rounded-full bg-accent px-4 py-3 font-display text-sm font-semibold text-accent-ink shadow-lg transition-colors hover:bg-accent-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        className={`fixed right-4 z-40 inline-flex items-center gap-2 rounded-full bg-accent px-4 py-3 font-display text-sm font-semibold text-accent-ink shadow-lg transition-colors hover:bg-accent-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+          configuratorPresent ? "bottom-24 lg:bottom-4" : "bottom-4"
+        }`}
       >
         <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
@@ -166,7 +277,11 @@ export function PackagingExpertChat() {
         <section
           id="packaging-expert-panel"
           aria-label="Packaging Expert chat"
-          className="fixed bottom-20 right-2 z-40 flex max-h-[min(75vh,600px)] w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-md border border-rule-2 bg-paper shadow-2xl sm:right-4 sm:w-[380px]"
+          className={`fixed right-2 z-40 flex w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-md border border-rule-2 bg-paper shadow-2xl sm:right-4 sm:w-[380px] ${
+            configuratorPresent
+              ? "bottom-[9.5rem] max-h-[min(60vh,600px)] lg:bottom-20 lg:max-h-[min(75vh,600px)]"
+              : "bottom-20 max-h-[min(75vh,600px)]"
+          }`}
         >
           <header className="flex items-center justify-between border-b border-rule bg-paper-2 px-4 py-3">
             <div>
@@ -229,6 +344,57 @@ export function PackagingExpertChat() {
                   }
                 >
                   <p className="whitespace-pre-wrap">{m.content}</p>
+
+                  {m.configUpdate && (
+                    <div className="mt-2 rounded-sm border border-rule bg-ok-soft px-2.5 py-1.5 text-xs text-ink" role="status">
+                      <p className="font-medium">
+                        ✓ Configurator updated
+                        {!isConfiguratorMounted(m.configUpdate.productId) && ` — ${m.configUpdate.productTitle}`}
+                      </p>
+                      <p className="mt-0.5 text-ink-2">
+                        {m.configUpdate.changeSummary.map((c) => `${c.field} → ${c.value}`).join(" · ")}
+                        {m.configUpdate.price &&
+                          ` · ${money(m.configUpdate.price.totalCents, m.configUpdate.price.currency)} total${
+                            m.configUpdate.price.pricingStatus === "DEMO" ? " (demo pricing)" : ""
+                          }`}
+                        {m.configUpdate.requiresCustomQuote && " · priced via custom quote"}
+                      </p>
+                    </div>
+                  )}
+
+                  {m.suggestions?.map((s, si) => (
+                    <div key={si} className="mt-2">
+                      {s.status === "applied" ? (
+                        <p className="inline-block rounded-sm bg-ok-soft px-2.5 py-1 text-xs font-medium text-ink" role="status">
+                          ✓ Applied
+                          {!isConfiguratorMounted(s.productId) && (
+                            <>
+                              {" — "}
+                              <Link href={s.productPath} className="text-accent underline">
+                                view in configurator →
+                              </Link>
+                            </>
+                          )}
+                        </p>
+                      ) : s.status === "stale" ? (
+                        <p className="inline-block rounded-sm bg-error-soft px-2.5 py-1 text-xs text-ink-2" role="status">
+                          That suggestion no longer matches your configuration — ask me to refresh it.
+                        </p>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={s.status === "applying"}
+                          onClick={() => void applySuggestion(i, si, s)}
+                          className="inline-block rounded-sm bg-accent px-2.5 py-1 text-xs font-semibold text-accent-ink transition-colors hover:bg-accent-hover focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:cursor-wait disabled:opacity-60"
+                        >
+                          {s.status === "applying" ? "Applying…" : s.label}
+                          {s.preview &&
+                            ` · ${money(s.preview.totalCents, s.preview.currency)}${s.preview.pricingStatus === "DEMO" ? " (demo)" : ""}`}
+                        </button>
+                      )}
+                    </div>
+                  ))}
+
                   {m.productPath && (
                     <Link
                       href={m.productPath}

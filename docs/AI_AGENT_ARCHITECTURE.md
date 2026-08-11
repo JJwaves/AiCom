@@ -78,20 +78,21 @@ Every tool:
 
 ### Sales Agent toolset (first agent)
 
-Status: ✅ = implemented (`lib/ai/tools/` — S04 base + S05 additions).
+Status: ✅ = implemented (`lib/ai/tools/` — S04 base + S05/S06 additions).
 
 | Tool | Backed by | Notes |
 | --- | --- | --- |
 | ✅ `searchProducts` / `getProductDetails` | `lib/commerce/catalog` | read-only; details expose handle `confirmed` flags |
-| `getCurrentConfiguration` | shared configurator state | read — S06 (store doesn't exist yet) |
-| `updateConfiguration` | the same validated reducer the UI uses | writes go through identical validation — one source of truth (S06) |
+| ✅ `getCurrentConfiguration` (S06) | the shared configuration state (`lib/configuration`) | customer-visible view + revision; defaults at revision 0 |
+| ✅ `updateConfiguration` (S06) | the same validated path the UI uses (`applyConfigurationPatchForSession`) | partial patch, all-or-nothing catalog validation, revision-checked — one source of truth |
+| ✅ `suggestConfigurationUpdate` (S06) | validation + engine preview, no write | structured apply-chip proposal |
 | ✅ `recommendProduct` (S05) | catalog validation | structured recommendation signal + event; hallucinated product ids rejected |
 | ✅ `calculatePrice` / `getQuantityPricing` | `modules/pricing` | AI may explain the result, never alter it; output schema structurally excludes cost/margin/floor fields |
 | ✅ `getShippingEstimate` | `config/shipping` | honest "checkout" mode preserved |
 | ✅ `saveCustomerNeed` | CustomerNeedProfile upsert (AI_INFERRED) | unknown stays unknown — extraction never fabricates; session id from server context |
 | ✅ `requestHumanHelp` (S05) | escalation record on the conversation | structured handoff: reason, requirement summary, profile snapshot, voluntary contact; delivery destination = owner config |
 | `createDraftQuote` | Quote model | draft only (later session) |
-| `addConfiguredProductToCart` | cart via server re-quote | price recomputed server-side at add time (S06+) |
+| `addConfiguredProductToCart` | cart via server re-quote | price recomputed server-side at add time (S07+ — S06 deliberately stops at synchronized configuration; the manual Add-to-Cart receives the shared state) |
 | `getOrderStatus` | order lookup | scoped to the session's own orders (later session) |
 
 Not exposed to any customer-facing agent, ever: pricing overrides, refunds,
@@ -210,25 +211,31 @@ remains server-only.
 | Guardrails | Same per-domain limits as the specialists it summarizes; its recommendations inherit the *strictest* applicable guardrail. |
 | Audit | Every review stored with sources; AiUsage; decision/approval trail for anything it proposes. |
 
-## Conversation flow (Sales) — IMPLEMENTED S05 (config sync = S06)
+## Conversation flow (Sales) — IMPLEMENTED S05 + S06 config sync
 
 ```
 customer msg (UNTRUSTED)
   → /api/ai/chat: size/shape caps + session cookie + rate buckets
   → conversation resolved server-side · raw user Message row persisted
   → context: need profile (provenance-labeled) + rolling summary
+    + live shared configuration (S06)
   → router picks STANDARD model → runToolConversation(tools=salesToolset)
   → tool calls validated + permission-checked server-side
-  → tool + assistant Message rows persisted → normalized JSON to the UI
+    (configuration commits are revision-checked against the shared row)
+  → tool + assistant Message rows persisted (+ configSnapshotJson on
+    configuration-committing turns) → normalized JSON to the UI
+    (reply + recommendation + configurationUpdate + suggestedActions)
+  → chat widget publishes server-validated config on the sync bus
+    → the visible configurator applies/highlights/announces (S06)
   → LOW_COST evidence-validated extraction → CustomerNeedProfile
     (USER_STATED only with verified evidence; else AI_INFERRED; non-fatal)
   → LOW_COST summary every 6 messages → conversations.summaryJson
   → escalation ⇒ conversation escalated + structured handoff record
 ```
-Config snapshots per turn and chat↔configurator sync arrive with the S06
-shared configuration store; conversation outcomes beyond `escalated`
-(abandoned / checkout_started / purchased) wire up with the cart/checkout
-integration sessions.
+Conversation outcomes quote_started / checkout_started / purchased stamp
+from their commerce routes (S06); `abandoned` needs a session-expiry
+sweep (future). See AI_CONFIGURATOR_INTEGRATION.md for the shared
+configuration architecture.
 
 ## Prompt-injection posture
 

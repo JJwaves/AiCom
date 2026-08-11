@@ -149,6 +149,28 @@ export async function findActiveConversation(
 }
 
 /**
+ * Stamp a commerce outcome on the session's active sales conversation
+ * WITHOUT ending it (S06): a customer who starts checkout or a quote after
+ * chatting can keep chatting. Escalated conversations keep their escalated
+ * outcome (a handoff in motion outranks a funnel stamp). No-op when the
+ * session has no live conversation.
+ */
+export async function markConversationOutcomeForSession(
+  sessionId: string,
+  outcome: Extract<(typeof CONVERSATION_OUTCOMES)[number], "quote_started" | "checkout_started" | "purchased">,
+): Promise<void> {
+  const conversation = await findActiveConversation(sessionId, "sales");
+  if (!conversation || conversation.status === "escalated") return;
+  // purchased outranks checkout_started; never downgrade.
+  if (conversation.outcome === "purchased" && outcome !== "purchased") return;
+  const db = await getDb();
+  await db
+    .update(conversations)
+    .set({ outcome, updatedAt: new Date() })
+    .where(eq(conversations.id, conversation.id));
+}
+
+/**
  * Human-handoff state: the conversation is marked escalated but NOT ended —
  * the customer can keep talking while a human follows up. endConversation
  * remains the terminal transition.

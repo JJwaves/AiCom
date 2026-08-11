@@ -178,7 +178,7 @@ the tools its context permits.
 conversation ids, requestId) is minted exclusively by server code
 (`createToolContext`) — the LLM cannot invent authorization context.
 
-### Sales toolset (S04 base + S05 additions)
+### Sales toolset (S04 base + S05/S06 additions)
 
 | Tool | Permission | Backed by |
 | --- | --- | --- |
@@ -190,12 +190,16 @@ conversation ids, requestId) is minted exclusively by server code
 | `saveCustomerNeed` | CUSTOMER_WRITE | `applyNeedProfileUpdate(…, "AI_INFERRED")` — provenance rank gate; session id from context |
 | `recommendProduct` (S05) | READ | catalog-validated recommendation → structured signal + `ai_product_recommended` event; unknown ids rejected |
 | `requestHumanHelp` (S05) | CUSTOMER_WRITE | structured handoff record (system message) + conversation escalated + `human_handoff_requested` event |
+| `getCurrentConfiguration` (S06) | READ | `lib/configuration/server.resolveCurrentConfiguration` — the shared configuration state, customer-visible view only |
+| `updateConfiguration` (S06) | CUSTOMER_WRITE | `applyConfigurationPatchForSession` — catalog-validated partial patch, revision-checked row write, CONFIGURATOR need evidence, `ai_configuration_updated`/`_rejected` events |
+| `suggestConfigurationUpdate` (S06) | READ | validates + prices a hypothetical patch, writes nothing; `ai_configuration_proposed` event |
 
 Deliberately absent from any customer-facing toolset, forever:
 `modifyPrice`, `issueRefund`, `changeAdBudget`, `createAdCampaign`,
 `modifyMargin`, `modifyProductManufacturingRules`, `adminDatabaseQuery`.
-Deferred to S06+: configuration tools (shared store doesn't exist yet),
-cart/checkout/draft-quote/order-status tools.
+Deferred to later sessions: cart/checkout/draft-quote/order-status tools.
+See AI_CONFIGURATOR_INTEGRATION.md for the shared-configuration
+architecture the S06 tools operate on.
 
 ### Tool loop
 
