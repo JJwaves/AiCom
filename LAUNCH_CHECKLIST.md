@@ -17,6 +17,13 @@ take real traffic until they pass.
 - [ ] `npm run db:seed` never pointed at production (it writes DEMO-labeled data and refuses external databases unless forced — leave it that way)
 - [ ] Database backups/point-in-time recovery enabled on the production Postgres
 
+## AI Packaging Expert (only if enabling AI_SALES for customers)
+- [ ] ⛔ Edge/platform rate limiting in front of `/api/ai/chat` — the built-in token buckets are per-instance application guards, not a distributed limiter (docs/AI_SALES_AGENT.md)
+- [ ] ⛔ AI budget caps set (`AI_DAILY_BUDGET_USD` / `AI_MONTHLY_BUDGET_USD`) AND `config/ai-pricing.ts` filled with current provider rates — caps over unpriced models fail closed and block every call
+- [ ] ⛔ Model ids verified against the live account: `npm run ai:smoke` (model names age; the defaults are not guaranteed valid forever)
+- [ ] ⛔ Escalation delivery wired to a real destination (BUSINESS_CONFIG_TODO) — today handoffs are recorded in the DB, not sent anywhere
+- [ ] Chat verified end-to-end on the production build with flags on, and verified ABSENT (no UI, 503 API) with flags off
+
 ## Commerce
 - [ ] ⛔ Shopify production credentials in env (`NEXT_PUBLIC_SHOPIFY_*`)
 - [ ] ⛔ Variant mapping complete in `lib/commerce/shopify.ts` (no `REPLACE_ME` ids)

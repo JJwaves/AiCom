@@ -39,7 +39,17 @@ Browser
   │                    provider abstraction [anthropic implemented], model
   │                    router, versioned prompts, budget guard + AiUsage
   │                    recording, typed permission-scoped tool registry with
-  │                    6 sales tools; no agents, no UI — see AI_RUNTIME.md)
+  │                    8 sales tools — see AI_RUNTIME.md)
+  │    └─ agents/sales (S05 — AI SALES AGENT "AI Packaging Expert":
+  │                    conversation orchestration, evidence-validated need
+  │                    extraction [USER_STATED requires verified quotes],
+  │                    threshold summaries, structured escalation — see
+  │                    AI_SALES_AGENT.md; UI = components/ai/* behind
+  │                    AI_RUNTIME+AI_SALES flags)
+  ├─ /api/ai/chat     (S05 — customer chat endpoint: bd_sid-resolved trust,
+  │                    body/message caps, per-session+per-IP token buckets,
+  │                    normalized customer-safe errors; GET history returns
+  │                    user/assistant rows only)
   ├─ db/              (Drizzle schema + migrations + client)
   │    └─ Postgres: DATABASE_URL (node-postgres, explicit migrations)
   │                 or embedded PGlite dev/test (self-migrating);
@@ -111,7 +121,8 @@ Human Approval (/admin/ai-actions)  |  Guarded auto-execution (later)
 | `lib/analytics` | DONE (Session 03) | `track()` dual-writes: dataLayer unchanged + `first-party.ts` mapping → `/api/events`. |
 | `lib/attribution` | DONE (Session 03) | Same pure merge now also runs server-side; sessions carry immutable first-touch snapshots; orders/quotes carry attribution copies. |
 | `db/` + `lib/data/` | DONE (Session 03) | Postgres via Drizzle (PGlite dev/test, node-postgres prod), 20 tables, additive SQL migrations, zod-validated service boundary. See DATABASE_SCHEMA.md. |
-| `lib/ai/{providers,router,tools,schemas,prompts,usage}` | DONE (Session 04) | Provider-agnostic runtime: Anthropic adapter (openai/gemini interface-ready), workload router, versioned prompts, budget guard, permission-scoped tool registry (6 sales tools). See AI_RUNTIME.md. |
+| `lib/ai/{providers,router,tools,schemas,prompts,usage}` | DONE (Session 04) | Provider-agnostic runtime: Anthropic adapter (openai/gemini interface-ready), workload router, versioned prompts, budget guard, permission-scoped tool registry (8 sales tools). See AI_RUNTIME.md. |
+| `lib/ai/agents/sales` + `/api/ai/chat` + `components/ai` | DONE (Session 05) | AI Packaging Expert: conversation lifecycle, evidence-validated extraction, summarization, escalation, rate-limited chat API, flag-gated chat UI. See AI_SALES_AGENT.md. |
 | `modules/guardrails` | ADD | Central `evaluateAgentAction`; see GUARDRAILS.md. (S04's budget guard covers AI spend only.) |
 | `modules/customer-intelligence` | ADD (Stage D) | Aggregation over conversations/quotes/orders. |
 | `modules/ads/google`, `modules/ads/meta` | DEFER | Read-only first, much later. |
@@ -228,3 +239,26 @@ Human Approval (/admin/ai-actions)  |  Guarded auto-execution (later)
   schemas structurally exclude cost/margin/floor fields, and the sales
   registry refuses to construct with a restricted tool present. Injection
   defenses are unit tests, not prompt wording.
+- **2026-08-10 (S05) · CustomerNeedProfile writes serialize via
+  transaction + `SELECT … FOR UPDATE`** — over optimistic version-retry
+  (same guarantee plus a retry loop on a low-contention per-session row)
+  and over pure-SQL jsonb merging (would fork the tested TS provenance
+  rank-gate into SQL). Without it, S05's concurrent writers (extraction
+  alongside tool/checkout/quote writes) could lose fields AND provenance
+  entries in read-merge-write races. PGlite serializes transactions on its
+  single connection — same guarantee in dev/test.
+- **2026-08-10 (S05) · USER_STATED provenance must be EARNED through
+  server-verified evidence.** The model cannot label facts USER_STATED:
+  the saveCustomerNeed tool is hard-coded AI_INFERRED, and the extraction
+  pipeline grants USER_STATED only when the model's quoted evidence occurs
+  verbatim in the customer's actual message AND the value is consistent
+  with it (complete-number match for quantities; hedged numbers demote).
+  Fabricated quotes are dropped entirely — hallucinated direct statements
+  must not survive even as guesses. Judgment enums
+  (priceSensitivity/purchaseIntent) are permanently AI_INFERRED.
+- **2026-08-10 (S05) · Chat abuse control = in-process token buckets +
+  budget guard; distributed limiting belongs at the edge.** Per-session and
+  per-IP buckets bound the endpoint's direct API cost without new
+  infrastructure (no Redis for a single-instance store); the launch
+  checklist requires platform/CDN rate limiting before real traffic, and
+  the AI budget guard stays the hard spend backstop.

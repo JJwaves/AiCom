@@ -134,7 +134,16 @@ creation — authoritative, ad-blocker-proof; the client `purchase` event is
 deliberately dataLayer-only). Attribution reference = `sessionId` (the
 session rows carry the touch snapshots; events don't duplicate them).
 
-## Conversations & need profile (implemented; AI arrives Session 04+)
+## Conversations & need profile (implemented; live with the S05 Sales Agent)
+
+Session 05 semantics: one ACTIVE sales conversation per session — status
+`active` or `escalated` resumes on the next message; `escalated` does NOT
+set `endedAt` (the customer keeps chatting while a human follows up), and
+`ended` is terminal. Human handoffs persist as `system` message rows
+(`structuredJson.kind = "human_handoff"`), which never reach customer
+APIs. `summaryJson` holds the rolling LOW_COST summary
+(`{text, coveredMessages, promptVersion, updatedAt}`) — a derived view,
+never a substitute for the raw rows.
 
 ```
 conversations id · sessionId→sessions · customerId?⇢ · agentType (sales) ·
@@ -176,9 +185,20 @@ fields are never fabricated — e.g. the quote form's "about 5000" quantity
 is NOT parsed into a number). Raw transcript and extracted profile are
 separate: extraction never deletes messages.
 
+**Concurrency (Session 05):** `applyNeedProfileUpdate` runs in a
+transaction that locks the profile row (`SELECT … FOR UPDATE`) before
+merging — concurrent writers serialize per profile, so no update or
+provenance decision is ever lost to a read-merge-write race; creation
+races resolve via the sessionId unique index + `ON CONFLICT DO NOTHING` +
+re-lock (no schema change — tested in
+`tests/need-profile-concurrency.test.ts`).
+
 Live writers today: quote form (USER_STATED), mock-order checkout
-(ORDER_DATA). Configurator (CONFIGURATOR) wires in Session 06; AI
-extraction (AI_INFERRED) in Session 04+.
+(ORDER_DATA), and the S05 AI Sales Agent — the `saveCustomerNeed` tool
+(always AI_INFERRED) plus the server-side evidence-validated extractor,
+the ONLY path that can grant USER_STATED (quoted evidence must occur in
+the customer's actual message; see docs/AI_SALES_AGENT.md). Configurator
+(CONFIGURATOR) wires in Session 06.
 
 ## AI operations (implemented — empty until agents exist)
 

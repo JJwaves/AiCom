@@ -4,12 +4,17 @@ import { searchProductsTool, getProductDetailsTool } from "./catalog-tools";
 import { calculatePriceTool, getQuantityPricingTool } from "./pricing-tools";
 import { getShippingEstimateTool } from "./shipping-tools";
 import { saveCustomerNeedTool } from "./need-tools";
+import { recommendProductTool } from "./recommend-tools";
+import { requestHumanHelpTool } from "./escalation-tools";
 import type { AnyToolDefinition } from "./types";
 
 /**
  * Sales toolset — the ONLY tools a customer-facing sales conversation can
- * ever reach. Session 04 ships the low-risk set that proves the
- * architecture; cart/quote/config tools arrive with S05/S06.
+ * ever reach. Session 04 shipped the low-risk read/record set; Session 05
+ * adds recommendProduct (catalog-validated recommendations) and
+ * requestHumanHelp (structured escalation). Configuration tools arrive in
+ * S06 with the shared configurator store; cart/quote/order tools with the
+ * sessions that grant commerce authority.
  *
  * Deliberately absent, forever, from any customer-facing toolset:
  * modifyPrice, issueRefund, changeAdBudget, createAdCampaign, modifyMargin,
@@ -25,6 +30,8 @@ const SALES_TOOLS: AnyToolDefinition[] = [
   getQuantityPricingTool,
   getShippingEstimateTool,
   saveCustomerNeedTool,
+  recommendProductTool,
+  requestHumanHelpTool,
 ];
 
 /** Hard structural invariant: customer-facing toolsets never contain restricted tools. */

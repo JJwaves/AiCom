@@ -39,3 +39,5 @@ export {
 } from "./tools/types";
 export { assertWithinAiBudget } from "./usage/budget-guard";
 export { estimateCostMicros, isModelPriced } from "./usage/cost";
+export { runSalesAgentTurn, __setSalesTestProvider } from "./agents/sales";
+export type { SalesAgentResult, SalesTurnInput } from "./agents/sales";

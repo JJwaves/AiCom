@@ -91,9 +91,10 @@ Commands:
 | `npm run dev` | dev server |
 | `npm run build` | production build |
 | `npm run start` | serve the build |
-| `npm test` | vitest unit tests (pricing, attribution, validation, shipping) |
+| `npm test` | vitest unit tests (pricing, attribution, validation, shipping, AI — no network/credentials) |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run lint` | eslint |
+| `npm run ai:smoke` | OPTIONAL live AI check: verifies configured model ids + one real call; skips cleanly without `ANTHROPIC_API_KEY` (never part of tests/build) |
 
 ## Environment variables
 

@@ -16,13 +16,15 @@ import type { ToolDefinition } from "./types";
  *   the model cannot name a session to write to.
  * - Unknown stays unknown: omit fields you are not confident about; never
  *   guess numbers from vague statements ("about 5000" is NOT quantity:5000).
+ * - This tool NEVER writes USER_STATED. The only path that can is the
+ *   server-side evidence-validated extractor
+ *   (lib/ai/agents/sales/extraction.ts), which verifies the quoted evidence
+ *   against the customer's actual message before granting that rank.
  *
- * CONCURRENCY (deferred, documented): applyNeedProfileUpdate is
- * read-merge-write without row locking. Session 04 introduces no concurrent
- * AI writers (tool calls in a turn run sequentially; no agent runtime), so
- * per the S03 audit this stays deferred — SESSION 05 MUST add row locking
- * (SELECT … FOR UPDATE or jsonb-merge) BEFORE running async extraction or
- * any parallel writer against this profile.
+ * CONCURRENCY: resolved in Session 05 — applyNeedProfileUpdate now runs in
+ * a transaction holding SELECT … FOR UPDATE on the profile row, so this
+ * tool, the async extractor, and checkout/quote writers serialize safely
+ * (tests/need-profile-concurrency.test.ts).
  */
 
 const saveNeedInput = z.object({

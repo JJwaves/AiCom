@@ -1,4 +1,4 @@
-import { asc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db/client";
 import { conversations, messages } from "@/db/schema";
@@ -120,6 +120,57 @@ export async function endConversation(input: {
       updatedAt: new Date(),
     })
     .where(eq(conversations.id, input.conversationId));
+}
+
+/**
+ * The session's current conversation for an agent: the most recent one that
+ * is still `active` — or `escalated`, so a customer keeps chatting in the
+ * same thread after a human handoff instead of silently forking a new one.
+ * `ended` conversations are never resumed.
+ */
+export async function findActiveConversation(
+  sessionId: string,
+  agentType = "sales",
+): Promise<ConversationRow | null> {
+  const db = await getDb();
+  const [row] = await db
+    .select()
+    .from(conversations)
+    .where(
+      and(
+        eq(conversations.sessionId, sessionId),
+        eq(conversations.agentType, agentType),
+        inArray(conversations.status, ["active", "escalated"]),
+      ),
+    )
+    .orderBy(desc(conversations.startedAt))
+    .limit(1);
+  return row ?? null;
+}
+
+/**
+ * Human-handoff state: the conversation is marked escalated but NOT ended —
+ * the customer can keep talking while a human follows up. endConversation
+ * remains the terminal transition.
+ */
+export async function markConversationEscalated(conversationId: string): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(conversations)
+    .set({ status: "escalated", outcome: "escalated", updatedAt: new Date() })
+    .where(eq(conversations.id, conversationId));
+}
+
+/** Derived rolling summary — never a substitute for raw messages (they are kept verbatim). */
+export async function updateConversationSummary(
+  conversationId: string,
+  summary: Record<string, unknown>,
+): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(conversations)
+    .set({ summaryJson: summary, updatedAt: new Date() })
+    .where(eq(conversations.id, conversationId));
 }
 
 export async function getConversation(id: string): Promise<ConversationRow | null> {

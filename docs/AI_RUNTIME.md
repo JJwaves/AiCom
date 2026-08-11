@@ -94,9 +94,11 @@ the agents that need them.
 
 `lib/ai/prompts/registry.ts` — each prompt has a stable `id`, semver
 `version`, `purpose`, `template` ({{var}} placeholders, strict rendering:
-missing OR unused variables throw). Session 04 ships only infra prompts
-(`runtime_smoke_test`, `structured_output_retry`); the sales persona is
-Session 05. Every runtime call made with a registry prompt stamps
+missing OR unused variables throw). Registered: the S04 infra prompts
+(`runtime_smoke_test`, `structured_output_retry`) plus the Session 05
+sales prompts (`ai_sales_agent` — the AI Packaging Expert persona,
+`ai_sales_need_extraction`, `ai_sales_summary`).
+Every runtime call made with a registry prompt stamps
 `prompt_id` + `prompt_version` onto its AiUsage row, so any output can be
 traced to the exact prompt+model that produced it.
 
@@ -176,7 +178,7 @@ the tools its context permits.
 conversation ids, requestId) is minted exclusively by server code
 (`createToolContext`) — the LLM cannot invent authorization context.
 
-### Session 04 sales toolset
+### Sales toolset (S04 base + S05 additions)
 
 | Tool | Permission | Backed by |
 | --- | --- | --- |
@@ -186,12 +188,14 @@ conversation ids, requestId) is minted exclusively by server code
 | `getQuantityPricing` | READ | engine over the preset quantity ladder |
 | `getShippingEstimate` | READ | `config/shipping` honest estimator |
 | `saveCustomerNeed` | CUSTOMER_WRITE | `applyNeedProfileUpdate(…, "AI_INFERRED")` — provenance rank gate; session id from context |
+| `recommendProduct` (S05) | READ | catalog-validated recommendation → structured signal + `ai_product_recommended` event; unknown ids rejected |
+| `requestHumanHelp` (S05) | CUSTOMER_WRITE | structured handoff record (system message) + conversation escalated + `human_handoff_requested` event |
 
 Deliberately absent from any customer-facing toolset, forever:
 `modifyPrice`, `issueRefund`, `changeAdBudget`, `createAdCampaign`,
 `modifyMargin`, `modifyProductManufacturingRules`, `adminDatabaseQuery`.
-Deferred to S05/S06: configuration tools (shared store doesn't exist yet),
-cart/checkout/draft-quote/order-status/escalation tools.
+Deferred to S06+: configuration tools (shared store doesn't exist yet),
+cart/checkout/draft-quote/order-status tools.
 
 ### Tool loop
 
@@ -243,11 +247,16 @@ engine-delegation equality + cost-field exclusion), `ai-runtime`
 (FakeAiProvider end-to-end: exit criteria, injection cases, limits, budget
 wiring, usage recording). `FakeAiProvider` is exported for S05+ tests.
 
-## Concurrency note (deferred, binding for S05)
+## Concurrency note (RESOLVED in Session 05)
 
-`applyNeedProfileUpdate` remains read-merge-write without row locking.
-Session 04 introduces no concurrent AI writers (tool calls execute
-sequentially; no agent runtime). **Session 05 must add locking
-(`SELECT … FOR UPDATE` or jsonb-merge) before async extraction or any
-parallel writer runs against CustomerNeedProfile.** Documented in
-`lib/ai/tools/need-tools.ts` and CLAUDE.md.
+`applyNeedProfileUpdate` now runs in a transaction holding
+`SELECT … FOR UPDATE` on the profile row — concurrent writers (AI
+extraction, the saveCustomerNeed tool, checkout/quote enrichment)
+serialize per profile, and every merge sees the previous writer's
+committed fields AND provenance map. Creation races resolve via the
+sessionId unique index + `ON CONFLICT DO NOTHING` + re-lock. Decision
+rationale in `lib/data/customer-need-service.ts` and
+docs/AI_SALES_AGENT.md; proven by `tests/need-profile-concurrency.test.ts`.
+
+The first agent consuming this runtime is live: the Session 05 AI Sales
+Agent — see [AI_SALES_AGENT.md](AI_SALES_AGENT.md).

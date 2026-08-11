@@ -188,6 +188,8 @@ describe("runToolConversation — exit criteria", () => {
       "getProductDetails",
       "getQuantityPricing",
       "getShippingEstimate",
+      "recommendProduct",
+      "requestHumanHelp",
       "saveCustomerNeed",
       "searchProducts",
     ]);

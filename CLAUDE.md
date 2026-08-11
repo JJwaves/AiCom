@@ -53,11 +53,13 @@ limits, refund authorization, agent autonomy, approvals.
 
 ## Current project stage
 
-**Session 04 "AI Provider Infrastructure + Tool Architecture" COMPLETE
-(2026-08-10; Stage B data foundation completed+hardened 2026-08-09) — next
-milestone: Session 05 "AI Sales Agent Core".**
+**Session 05 "AI Sales Agent Core" COMPLETE (2026-08-10) — the AI
+Packaging Expert is implemented end-to-end (agent, extraction, escalation,
+chat API, storefront UI), OFF by default behind AI_RUNTIME_ENABLED +
+AI_SALES_ENABLED. Next milestone: Session 06 "AI Sales × Product
+Configurator".**
 
-## Current architecture (2026-08-10, post-Session 04)
+## Current architecture (2026-08-10, post-Session 05)
 
 Working B2B storefront, verified end-to-end (see
 docs/CURRENT_SYSTEM_AUDIT.md + its Session-02 resolution note):
@@ -116,14 +118,48 @@ docs/CURRENT_SYSTEM_AUDIT.md + its Session-02 resolution note):
   permission tiers READ/CUSTOMER_WRITE/COMMERCE/FINANCIAL_RESTRICTED/
   ADMIN_RESTRICTED, server-minted ToolExecutionContext, zod in+out
   validation, sha256-hashed audit logs, loop limits (tool calls/model
-  calls/duration end turns with a status). Sales toolset (6):
+  calls/duration end turns with a status). Sales toolset (8 after S05):
   searchProducts, getProductDetails, calculatePrice + getQuantityPricing
   (engine delegation — output schemas structurally exclude cost/margin/
   floor), getShippingEstimate (honest), saveCustomerNeed (AI_INFERRED
-  provenance, session from context). `config/flags.ts` all-default-OFF;
-  `config/ai-pricing.ts` null placeholders (budgets unenforceable until
-  filled — documented). FakeAiProvider ships for tests; no credentials or
-  network in tests/build.
+  provenance, session from context), recommendProduct (catalog-validated,
+  S05), requestHumanHelp (structured escalation, S05). `config/flags.ts`
+  all-default-OFF; `config/ai-pricing.ts` null placeholders (budgets
+  unenforceable until filled — documented). FakeAiProvider ships for
+  tests; no credentials or network in tests/build.
+- **AI Sales Agent "AI Packaging Expert" (Session 05 — OFF by default;
+  docs/AI_SALES_AGENT.md is authoritative):** `lib/ai/agents/sales/`
+  orchestrates: active-conversation resolve (active OR escalated resumes;
+  ended never) → raw transcript persistence → provenance-labeled context
+  (profile + rolling summary, ≤2.4k chars) → versioned `ai_sales_agent`
+  v1.0.0 prompt → runToolConversation (STANDARD) → tool+assistant rows →
+  LOW_COST evidence-validated extraction → LOW_COST summary every 6
+  messages (derived view on conversations.summaryJson) → normalized
+  SalesAgentResult (reply + recommendedProductId/Path + needsHuman +
+  handoffReason + conversationStatus; frontend never parses prose).
+  USER_STATED is EARNED: only the server extractor grants it, requiring
+  model-quoted evidence verbatim in the customer's actual message +
+  value-evidence consistency (numbers must match a complete number;
+  hedged "about 5,000" demotes to AI_INFERRED; fabricated quotes DROPPED;
+  priceSensitivity/purchaseIntent always AI_INFERRED). Escalation =
+  structured handoff (reason enum, requirement summary, voluntary contact,
+  profile snapshot) persisted as a system message row + conversation
+  escalated (NOT ended) + human_handoff_requested event; delivery
+  destination is owner config (recorded, not yet sent anywhere).
+  `/api/ai/chat`: POST {message} only (identity = bd_sid cookie; body
+  ≤16KB, message ≤2000 chars), per-session (6/min) + per-IP (20/min)
+  in-memory token buckets (`lib/rate-limit.ts`; per-instance — edge
+  limiting is a LAUNCH_CHECKLIST item), every AI failure → 503 fixed
+  customer-safe copy (codes only in server logs); GET history returns
+  user/assistant rows only (system/tool rows never leak). UI:
+  `components/ai/PackagingExpertLauncher` (server gate: both flags + key
+  or renders NOTHING) → `PackagingExpertChat` (floating widget, history,
+  quick prompts, loading/error/retry, escalation banner, recommendation
+  chip, a11y log/labels/Escape, mobile width). Events: ai_chat_started,
+  ai_message_sent (props only, never transcript), ai_product_recommended,
+  human_handoff_requested. Optional `npm run ai:smoke` verifies configured
+  model ids against the live account + one real LOW_COST call
+  (credential-gated; never in tests/build).
 - `lib/commerce` — provider abstraction; `mock` active, `shopify`
   Storefront skeleton env-gated (variant mapping TODO, needs real store).
   **All catalog reads go through `lib/commerce/catalog.ts`** (provider-
@@ -378,6 +414,85 @@ server-minted).
 10. **Docs** — new docs/AI_RUNTIME.md; AI_AGENT_ARCHITECTURE +
     ARCHITECTURE + BUSINESS_CONFIG_TODO + .env.example updated.
 
+## Completed in Session 05 (2026-08-10) — AI Sales Agent Core
+
+The first customer-facing AI capability, built on the S04 runtime. OFF by
+default; commerce verified unaffected with every flag off.
+
+1. **PREREQUISITE FIX — CustomerNeedProfile concurrency** (S03/S04 audit
+   debt): `applyNeedProfileUpdate` now wraps read-merge-write in a
+   transaction holding `SELECT … FOR UPDATE` on the profile row; creation
+   races resolve via the sessionId unique index + ON CONFLICT DO NOTHING +
+   re-lock; added per-field confidence support. Chosen over optimistic
+   version-retry (same guarantee + a retry loop for a low-contention row)
+   and over SQL jsonb-merge (would fork the tested TS rank gate into SQL).
+   Concurrent disjoint writers, provenance-under-concurrency (both arrival
+   orders), and creation races are tested
+   (tests/need-profile-concurrency.test.ts). No schema change.
+2. **Sales Agent runtime** — `lib/ai/agents/sales/` (agent/context/
+   extraction/summarize), provider-independent (FakeAiProvider in every
+   test), normalized SalesAgentResult; conversation lifecycle on the S03
+   conversation service (+ findActiveConversation,
+   markConversationEscalated — escalated conversations stay open,
+   updateConversationSummary).
+3. **Versioned sales persona** — `ai_sales_agent` v1.0.0 in the prompt
+   registry ({{context}} var): progressive discovery, confirmed-only
+   capability claims, no fabricated materials/dates/certifications/prices,
+   DEMO pricing labeled, pricing-tool authority, escalation triggers,
+   injection posture. Plus `ai_sales_need_extraction` and
+   `ai_sales_summary` v1.0.0 (LOW_COST tier). AiUsage rows trace every
+   call to prompt+version.
+4. **Evidence-validated extraction (USER_STATED vs AI_INFERRED)** — model
+   proposes {field, value, kind, evidence, confidence}; SERVER validates:
+   USER_STATED only when quoted evidence occurs verbatim in the actual
+   message AND the value is consistent with it (complete-number match for
+   numerics — "5,000" states 5000 never 500; topic keyword for booleans;
+   substring for strings). Fabricated quotes dropped entirely; honest
+   interpretations + hedged numbers demote to AI_INFERRED;
+   priceSensitivity/purchaseIntent permanently AI_INFERRED; per-candidate confidence
+   stored per field. saveCustomerNeed tool remains hard-coded AI_INFERRED —
+   the model has NO path to claim USER_STATED.
+5. **Two new tools (toolset 6→8)** — recommendProduct (READ,
+   catalog-validated; hallucinated ids rejected; ai_product_recommended
+   event) and requestHumanHelp (CUSTOMER_WRITE; structured handoff with
+   reason enum/requirement summary/customer question/voluntary contact/
+   profile snapshot persisted as a system message; conversation
+   escalated-not-ended; human_handoff_requested event; delivery = owner
+   config, deferred).
+6. **Chat API `/api/ai/chat`** — POST {message} only; server-resolved
+   bd_sid identity (client cannot supply customerId/agentType/price);
+   413/400/422 validation; per-session + per-IP token buckets
+   (lib/rate-limit.ts, in-memory, documented per-instance limitation +
+   LAUNCH_CHECKLIST edge requirement); every AI failure → 503 with ONE
+   fixed customer-safe sentence (provider internals never cross); GET
+   history filters to user/assistant rows (system handoffs + tool rows
+   never reach clients); rolling cookies preserved.
+7. **AI Packaging Expert UI** — server-gated launcher (both flags + key or
+   nothing renders) + client widget: history restore, quick prompts,
+   loading/error/retry, escalation banner, "Configure this bag →"
+   recommendation chip, aria-live log + labels + Escape, mobile layout,
+   Hallmark Cobalt tokens. Mounted in app/layout.tsx.
+8. **Events & metrics groundwork** — ai_chat_started / ai_message_sent
+   (bounded props, never transcript content) / ai_product_recommended /
+   human_handoff_requested; AiUsage rows carry conversationId+agentType →
+   per-conversation cost is computable once ai-pricing is filled. No
+   dashboard, no invented conversion attribution.
+9. **Tests 198 → 252** (all green; zero credentials/network): concurrency
+   (6), extraction evidence/adversarial/contradiction (13), agent
+   end-to-end incl. injection red-team + loop limits + failure modes (19),
+   chat route validation/gating/rate/leak checks (12), rate limiter (4);
+   S04 toolset assertions updated for the two new tools.
+10. **Optional live smoke** — `npm run ai:smoke` (scripts/ai-smoke-test.ts):
+    skips cleanly without credentials; verifies all three configured model
+    ids via the provider models API (404 ⇒ actionable error + account model
+    list) before ONE real LOW_COST call; never part of npm test / build.
+11. **Docs** — new docs/AI_SALES_AGENT.md (authoritative); AI_RUNTIME
+    (concurrency RESOLVED, 8 tools, sales prompts), AI_AGENT_ARCHITECTURE
+    (status, toolset, implemented conversation flow), ARCHITECTURE (S05
+    layer + 3 decision-log entries), DATABASE_SCHEMA (locking + S05
+    conversation semantics), BUSINESS_CONFIG_TODO (escalation delivery),
+    LAUNCH_CHECKLIST (new AI section), README (ai:smoke), .env.example.
+
 ## Important decisions (and why)
 
 1. **Database is the first ADD** — every roadmap capability consumes
@@ -425,6 +540,27 @@ server-minted).
     rather than silently spending. Pricing config ships null (no invented
     economics), so budget caps are unenforceable until the owner fills
     config/ai-pricing.ts — deliberate.
+14. **(S05) Need-profile writes serialize with row locks, not versions or
+    SQL merges** — `SELECT … FOR UPDATE` in a transaction preserves the
+    tested TS provenance logic byte-for-byte and gives real-Postgres row
+    granularity; PGlite serializes whole transactions (same guarantee).
+    Optimistic retry adds loops for a low-contention row; SQL jsonb-merge
+    forks the rank gate into a second implementation.
+15. **(S05) USER_STATED must be earned through server-verified evidence** —
+    no model-writable path to top-rank provenance exists: the tool is
+    hard-coded AI_INFERRED and the extractor grants USER_STATED only after
+    verifying the quoted evidence against the customer's actual message
+    (fabricated quotes die entirely; hedged numbers demote). The rank gate
+    stays the final authority beneath both paths.
+16. **(S05) One safe sentence for every AI failure at the chat boundary** —
+    all AiError codes map to the same 503 customer copy; codes/details go
+    to server logs. Customers never see provider internals, and the
+    storefront's manual paths are always the stated fallback.
+17. **(S05) Escalations are recorded before they are routed** — the
+    structured handoff persists in conversation storage (queryable,
+    testable) with delivery to email/Slack/CRM deferred to owner config;
+    an unroutable escalation still exists and still shows the customer an
+    honest "human will follow up" state.
 
 ## Known issues
 
@@ -465,6 +601,22 @@ server-minted).
   through the cart context) — pre-existing cosmetic quirk from Session 01.
 - `next dev` regenerates `AGENTS.md` (Next 16 breaking-changes notice) —
   keep it committed, keep the `@AGENTS.md` import at the top of this file.
+- (S05) Chat rate limiting is per-instance in-memory token buckets — a
+  deliberate application guard, not a distributed limiter; platform-edge
+  limiting is a ⛔ LAUNCH_CHECKLIST item before enabling AI_SALES on real
+  traffic.
+- (S05) Escalation handoffs are recorded (system message rows +
+  human_handoff_requested events) but not yet DELIVERED anywhere — the
+  destination is owner config (BUSINESS_CONFIG_TODO).
+- (S05) Sales conversation outcomes: only `escalated` is wired; abandoned/
+  quote_started/checkout_started/purchased stamp in the sessions that
+  connect chat to cart/checkout. Extraction covers scalar fields only
+  (painPoints/objections arrays deferred); in-chat contact info lands in
+  the handoff record, not the customers table.
+- (S05) `messages` ordering uses createdAt (no per-conversation sequence
+  column); same-millisecond rows in one turn could theoretically
+  interleave in history reads — not observed in tests, revisit if turn
+  transcripts ever misorder.
 
 ## Business configuration still needed
 
@@ -481,13 +633,16 @@ filled)**, guardrail thresholds, escalation destination.
 
 ## Deferred work
 
-Explicitly preserved for later sessions (data structures exist, no
-runtime): **AI Sales Agent** (S05), **AI Configurator integration** (S06),
-**Customer Intelligence** (S08), **Pricing Agent** (S12), **CRO Agent** +
-experiment runtime (S11), **Google Ads Agent** (S13+), **Meta Ads Agent**,
-**CEO Agent** (S09). Also deferred: Shopify order webhooks → DB order
-rows, accounts/reorder, email automation, Merchant Center feed, admin
-surfaces, privacy portal UI. Order per `docs/AI_PLATFORM_ROADMAP.md`.
+Explicitly preserved for later sessions: **bidirectional AI ↔ Product
+Configurator synchronization** (S06 — the agent currently recommends and
+links, never touches configurator state), **AI-assisted checkout/cart
+integration** (later session — no cart/quote/order tools exist), **Customer
+Intelligence** (S08), **Pricing Agent** (S12), **CRO Agent** + experiment
+runtime (S11), **Google Ads Agent** (S13+), **Meta Ads Agent**, **CEO
+Agent** (S09). Also deferred: escalation delivery wiring (owner config),
+Shopify order webhooks → DB order rows, accounts/reorder, email
+automation, Merchant Center feed, admin surfaces, privacy portal UI.
+Order per `docs/AI_PLATFORM_ROADMAP.md`.
 
 ### Deferred technical debt (Session 03 audit — accepted, not forgotten)
 
@@ -498,15 +653,11 @@ the 03.5 hardening pass (small blast radius, none block Session 04):
   413s payloads but has no per-session/IP rate limit; add one before
   real traffic (pairs with the launch checklist, likely at the platform
   edge or in the route).
-- **CustomerNeedProfile concurrent-writer locking — S05 MUST FIX FIRST** —
-  `applyNeedProfileUpdate` does read-merge-write without row locking;
-  two simultaneous writers can lose one side's fields. Session 04 kept
-  this deferred deliberately: its `saveCustomerNeed` tool runs tool calls
-  sequentially and no agent runtime exists, so there are still no
-  concurrent AI writers. Session 05 introduces them (async extraction
-  alongside checkout/quote writers) and MUST add `SELECT … FOR UPDATE` or
-  a jsonb-merge update BEFORE enabling any parallel writer (also flagged
-  in lib/ai/tools/need-tools.ts and docs/AI_RUNTIME.md).
+- ~~**CustomerNeedProfile concurrent-writer locking**~~ — **RESOLVED in
+  Session 05** (the mandated prerequisite): transaction +
+  `SELECT … FOR UPDATE` in `applyNeedProfileUpdate`, creation race via
+  unique index + ON CONFLICT + re-lock; tested in
+  tests/need-profile-concurrency.test.ts.
 - **Multi-line order need-profile enrichment** — checkout's ORDER_DATA
   enrichment reads only the first cart line; multi-line orders
   under-enrich the profile.
@@ -520,14 +671,17 @@ the 03.5 hardening pass (small blast radius, none block Session 04):
 
 ## Recommended next session
 
-**Session 05 — AI Sales Agent Core** — run `prompts/05-sales-agent.md`:
-the customer-facing "AI Packaging Expert" conversation on top of the S04
-runtime (AiRuntime.runToolConversation + createSalesToolRegistry), sales
-persona prompt in the registry, conversation/message persistence via
-lib/data/conversation-service, async LOW_COST need extraction, escalation
-paths, chat UI surface behind AI_RUNTIME_ENABLED + AI_SALES_ENABLED.
-PREREQUISITE FROM S03/S04 AUDITS: add CustomerNeedProfile row locking
-before enabling concurrent AI writers (see deferred debt). Remaining S05+
-sales tools: recommendProduct, createDraftQuote, addConfiguredProductToCart
-(server re-quote), getOrderStatus, requestHumanHelp; configurator tools
-land in S06 with the shared configuration store.
+**Session 06 — AI Sales × Product Configurator** — run
+`prompts/06-ai-configurator.md`: build the ONE shared validated
+configuration store (today the configurator is six `useState` hooks local
+to `ProductConfigurator` — the known issue at the top of that list), wire
+the configurator writer for configuration rows (source "configurator"),
+then give the Sales Agent `getCurrentConfiguration`/`updateConfiguration`
+tools that mutate the SAME validated reducer the UI uses (invariant 1:
+never two parallel states), with per-turn config snapshots on messages and
+`ai_configuration_updated` events. Also natural in S06: stamp conversation
+outcomes (abandoned/checkout_started) once chat and configurator/cart
+connect, and decide the quote → live-configuration pointer semantics
+(deferred S03 debt). The S05 groundwork already in place:
+recommendedProductId/Path signals, conversation product context, and the
+configSnapshotJson message column.

@@ -3,6 +3,7 @@ import { Inter, JetBrains_Mono, Space_Grotesk } from "next/font/google";
 import { BUSINESS } from "@/config/business";
 import { CartProvider } from "@/lib/cart/cart-context";
 import { AnalyticsProvider } from "@/components/analytics/AnalyticsProvider";
+import { PackagingExpertLauncher } from "@/components/ai/PackagingExpertLauncher";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
 import "./globals.css";
@@ -55,6 +56,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
             <Header />
             <main id="main">{children}</main>
             <Footer />
+            <PackagingExpertLauncher />
           </CartProvider>
         </AnalyticsProvider>
       </body>

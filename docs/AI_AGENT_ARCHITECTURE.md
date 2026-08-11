@@ -1,17 +1,21 @@
 # AI_AGENT_ARCHITECTURE
 
 How AI is layered onto the commerce platform. This document binds future
-sessions. Implementation status: **the data substrate exists (Session 03)**
-and **the AI runtime foundation exists (Session 04 — see
-[AI_RUNTIME.md](AI_RUNTIME.md))**: provider abstraction with a working
-Anthropic adapter (OpenAI/Gemini interface-ready), model router, versioned
-prompt registry, AiUsage recording + budget guard, typed permission-scoped
-tool registry with the first six sales tools, and a FakeAiProvider test
-harness. **No agents run yet and there is no customer-facing AI surface**
-(Session 05+). Implemented tools call the `lib/data` services — never raw
-SQL — and `saveCustomerNeed` maps to
-`applyNeedProfileUpdate(…, "AI_INFERRED", { confidence })`, which
-structurally cannot overwrite USER_STATED/ORDER_DATA/CONFIGURATOR facts.
+sessions. Implementation status: **the data substrate exists (Session
+03)**, **the AI runtime foundation exists (Session 04 — see
+[AI_RUNTIME.md](AI_RUNTIME.md))**, and **the first agent is live: the AI
+Sales Agent / "AI Packaging Expert" (Session 05 — see
+[AI_SALES_AGENT.md](AI_SALES_AGENT.md))**, feature-flagged OFF by default
+(`AI_RUNTIME_ENABLED` + `AI_SALES_ENABLED`). The sales conversation runs on
+the S04 runtime with an 8-tool permission-scoped registry, persisted
+transcripts, evidence-validated need extraction, threshold summarization,
+structured human escalation, a rate-limited chat API, and a storefront chat
+surface. Implemented tools call the `lib/data` services — never raw SQL —
+and the model has NO path to write USER_STATED provenance: the
+`saveCustomerNeed` tool is hard-coded `AI_INFERRED`, and only the
+server-side extractor may grant USER_STATED after verifying quoted evidence
+against the customer's actual message. All other agents remain future
+sessions.
 
 ## Governing rule
 
@@ -74,21 +78,21 @@ Every tool:
 
 ### Sales Agent toolset (first agent)
 
-Status: ✅ = implemented in Session 04 (`lib/ai/tools/`), rest arrive S05/S06.
+Status: ✅ = implemented (`lib/ai/tools/` — S04 base + S05 additions).
 
 | Tool | Backed by | Notes |
 | --- | --- | --- |
 | ✅ `searchProducts` / `getProductDetails` | `lib/commerce/catalog` | read-only; details expose handle `confirmed` flags |
 | `getCurrentConfiguration` | shared configurator state | read — S06 (store doesn't exist yet) |
 | `updateConfiguration` | the same validated reducer the UI uses | writes go through identical validation — one source of truth (S06) |
-| `recommendProduct` | catalog + need profile | returns product + reason (S05) |
+| ✅ `recommendProduct` (S05) | catalog validation | structured recommendation signal + event; hallucinated product ids rejected |
 | ✅ `calculatePrice` / `getQuantityPricing` | `modules/pricing` | AI may explain the result, never alter it; output schema structurally excludes cost/margin/floor fields |
 | ✅ `getShippingEstimate` | `config/shipping` | honest "checkout" mode preserved |
 | ✅ `saveCustomerNeed` | CustomerNeedProfile upsert (AI_INFERRED) | unknown stays unknown — extraction never fabricates; session id from server context |
-| `createDraftQuote` | Quote model | draft only (S05) |
-| `addConfiguredProductToCart` | cart via server re-quote | price recomputed server-side at add time (S05/S06) |
-| `getOrderStatus` | order lookup | scoped to the session's own orders (S05) |
-| `requestHumanHelp` | escalation record + notification | includes conversation summary, requirements, config, contact (S05) |
+| ✅ `requestHumanHelp` (S05) | escalation record on the conversation | structured handoff: reason, requirement summary, profile snapshot, voluntary contact; delivery destination = owner config |
+| `createDraftQuote` | Quote model | draft only (later session) |
+| `addConfiguredProductToCart` | cart via server re-quote | price recomputed server-side at add time (S06+) |
+| `getOrderStatus` | order lookup | scoped to the session's own orders (later session) |
 
 Not exposed to any customer-facing agent, ever: pricing overrides, refunds,
 discounts beyond configured codes, admin operations, ad spend, secrets,
@@ -206,18 +210,25 @@ remains server-only.
 | Guardrails | Same per-domain limits as the specialists it summarizes; its recommendations inherit the *strictest* applicable guardrail. |
 | Audit | Every review stored with sources; AiUsage; decision/approval trail for anything it proposes. |
 
-## Conversation flow (Sales)
+## Conversation flow (Sales) — IMPLEMENTED S05 (config sync = S06)
 
 ```
 customer msg (UNTRUSTED)
-  → sanitize/limit → conversation history + current config snapshot
+  → /api/ai/chat: size/shape caps + session cookie + rate buckets
+  → conversation resolved server-side · raw user Message row persisted
+  → context: need profile (provenance-labeled) + rolling summary
   → router picks STANDARD model → runToolConversation(tools=salesToolset)
   → tool calls validated + permission-checked server-side
-  → reply streamed to UI · config changes reflected in the configurator
-  → Message rows persisted (raw transcript, tool calls, config snapshots)
-  → async LOW_COST extraction → CustomerNeedProfile upsert
-  → outcome recorded on Conversation (abandoned / checkout_started / …)
+  → tool + assistant Message rows persisted → normalized JSON to the UI
+  → LOW_COST evidence-validated extraction → CustomerNeedProfile
+    (USER_STATED only with verified evidence; else AI_INFERRED; non-fatal)
+  → LOW_COST summary every 6 messages → conversations.summaryJson
+  → escalation ⇒ conversation escalated + structured handoff record
 ```
+Config snapshots per turn and chat↔configurator sync arrive with the S06
+shared configuration store; conversation outcomes beyond `escalated`
+(abandoned / checkout_started / purchased) wire up with the cart/checkout
+integration sessions.
 
 ## Prompt-injection posture
 
