@@ -1,5 +1,6 @@
 import type { z } from "zod";
 import type { AgentAction } from "@/lib/data/agent-service";
+import type { PrintOption } from "@/types/commerce";
 
 /**
  * Typed tool architecture — tools are the ONLY way an agent touches the
@@ -30,7 +31,8 @@ export type ToolPermission = (typeof TOOL_PERMISSIONS)[number];
 
 /** Agent-type → granted permissions. Server-side authority; models never mint this. */
 export const AGENT_TOOL_PERMISSIONS: Record<AgentAction["agentType"], readonly ToolPermission[]> = {
-  sales: ["READ", "CUSTOMER_WRITE"],
+  /** COMMERCE granted in Session 07: validated cart preparation + checkout handoff — never payments. */
+  sales: ["READ", "CUSTOMER_WRITE", "COMMERCE"],
   customer_intelligence: ["READ"],
   pricing: ["READ"],
   cro: ["READ"],
@@ -38,6 +40,27 @@ export const AGENT_TOOL_PERMISSIONS: Record<AgentAction["agentType"], readonly T
   meta_ads: [],
   ceo: ["READ"],
 };
+
+/**
+ * One cart line as reported by the customer's browser (Session 07). The cart
+ * itself lives client-side (bd_cart_v1); this snapshot is the ONLY window the
+ * server-side agent has into it. It is UNTRUSTED client state: it carries no
+ * prices (the engine re-prices for display) and /api/checkout re-quotes
+ * authoritatively before any order exists — exactly the trust level of the
+ * localStorage cart it mirrors.
+ */
+export type CartSnapshotLine = {
+  lineId: string;
+  productId: string;
+  sizeId: string;
+  materialId: string;
+  colorId: string;
+  printOptionId: PrintOption["id"];
+  quantity: number;
+  hasArtwork: boolean;
+};
+
+export type CartSnapshot = { lines: CartSnapshotLine[] };
 
 /**
  * Execution context — constructed by server-side application code only
@@ -50,6 +73,12 @@ export type ToolExecutionContext = {
   sessionId?: string;
   customerId?: string;
   conversationId?: string;
+  /**
+   * Validated snapshot of the customer's client-side cart for this turn
+   * (S07) — server-minted from the chat request, never from model output.
+   * Absent when the client didn't report one.
+   */
+  cartSnapshot?: CartSnapshot;
   /** Correlates all audit-log lines of one AI turn. */
   requestId: string;
 };

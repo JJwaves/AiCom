@@ -184,7 +184,9 @@ describe("runToolConversation — exit criteria", () => {
     // The model only ever saw permitted tools…
     const specs = (fake.requests[0].request as { tools: Array<{ name: string }> }).tools.map((t) => t.name).sort();
     expect(specs).toEqual([
+      "addConfiguredProductToCart",
       "calculatePrice",
+      "getCartSummary",
       "getCurrentConfiguration",
       "getProductDetails",
       "getQuantityPricing",
@@ -193,6 +195,8 @@ describe("runToolConversation — exit criteria", () => {
       "requestHumanHelp",
       "saveCustomerNeed",
       "searchProducts",
+      "startCheckout",
+      "suggestAddToCart",
       "suggestConfigurationUpdate",
       "updateConfiguration",
     ]);

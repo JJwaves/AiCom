@@ -98,8 +98,8 @@ describe("tool registry mechanics", () => {
 });
 
 describe("agent permission map", () => {
-  it("sales gets READ + CUSTOMER_WRITE; ads agents get nothing; nobody gets restricted tiers", () => {
-    expect(AGENT_TOOL_PERMISSIONS.sales).toEqual(["READ", "CUSTOMER_WRITE"]);
+  it("sales gets READ + CUSTOMER_WRITE + COMMERCE (S07); ads agents get nothing; nobody gets restricted tiers", () => {
+    expect(AGENT_TOOL_PERMISSIONS.sales).toEqual(["READ", "CUSTOMER_WRITE", "COMMERCE"]);
     expect(AGENT_TOOL_PERMISSIONS.google_ads).toEqual([]);
     expect(AGENT_TOOL_PERMISSIONS.meta_ads).toEqual([]);
     for (const permissions of Object.values(AGENT_TOOL_PERMISSIONS)) {
@@ -114,7 +114,9 @@ describe("sales toolset (Session 04 base + Session 05/06 additions)", () => {
 
   it("contains exactly the customer-safe sales tools", () => {
     expect(registry.names().sort()).toEqual([
+      "addConfiguredProductToCart",
       "calculatePrice",
+      "getCartSummary",
       "getCurrentConfiguration",
       "getProductDetails",
       "getQuantityPricing",
@@ -123,6 +125,8 @@ describe("sales toolset (Session 04 base + Session 05/06 additions)", () => {
       "requestHumanHelp",
       "saveCustomerNeed",
       "searchProducts",
+      "startCheckout",
+      "suggestAddToCart",
       "suggestConfigurationUpdate",
       "updateConfiguration",
     ]);
@@ -137,7 +141,14 @@ describe("sales toolset (Session 04 base + Session 05/06 additions)", () => {
       "modifyMargin",
       "modifyProductManufacturingRules",
       "adminDatabaseQuery",
+      // S07 grants a checkout HANDOFF (startCheckout) — direct provider
+      // checkout construction, payments, and price levers still have no tool.
       "createCheckout",
+      "applyDiscount",
+      "markOrderPaid",
+      "capturePayment",
+      "setShippingCost",
+      "setTax",
     ]) {
       expect(registry.get(name)).toBeUndefined();
     }

@@ -2,6 +2,8 @@ import type { ConversationRow } from "@/lib/data/conversation-service";
 import type { NeedProfileRow } from "@/lib/data/customer-need-service";
 import { getCatalogProductById } from "@/lib/commerce/catalog";
 import { resolveCurrentConfiguration } from "@/lib/configuration/server";
+import { quoteConfiguration, requiresCustomQuote } from "@/modules/pricing";
+import type { CartSnapshot } from "../../tools/types";
 
 /**
  * Sales context assembly (Session 05 spec §12) — the agent receives useful,
@@ -51,13 +53,41 @@ const CONTEXT_FIELDS: { key: keyof NeedProfileRow; label: string; money?: boolea
   { key: "purchaseIntent", label: "purchase intent" },
 ];
 
-const MAX_CONTEXT_CHARS = 2400;
+// Raised 2400 → 3200 in S07: the cart block must not truncate the summary.
+const MAX_CONTEXT_CHARS = 3200;
+
+/** Compact cart line for the context block — engine-priced, never client prices. */
+async function describeCartLine(line: CartSnapshot["lines"][number]): Promise<string> {
+  const product = await getCatalogProductById(line.productId);
+  if (!product) return `unrecognized product "${line.productId}" × ${line.quantity}`;
+  const size = product.sizes.find((s) => s.id === line.sizeId)?.label ?? line.sizeId;
+  const color = product.colors.find((c) => c.id === line.colorId)?.label ?? line.colorId;
+  const print = product.printOptions.find((p) => p.id === line.printOptionId)?.label ?? line.printOptionId;
+  const config = {
+    productId: product.id,
+    sizeId: line.sizeId,
+    materialId: line.materialId,
+    colorId: line.colorId,
+    printOptionId: line.printOptionId,
+    quantity: line.quantity,
+    artwork: null,
+  };
+  const price = requiresCustomQuote(product, config) ? null : quoteConfiguration(product, config);
+  const priceText = price
+    ? `$${(price.totalCents / 100).toFixed(2)} (${product.pricingStatus} pricing)`
+    : "needs custom quote";
+  return `${product.title} — ${size}, ${color}, ${print}, qty ${line.quantity.toLocaleString("en-US")}, artwork ${
+    line.hasArtwork ? "uploaded" : "none"
+  }; ${priceText}`;
+}
 
 export async function buildSalesContext(opts: {
   profile: NeedProfileRow | null;
   conversation: ConversationRow;
   /** Session id for the live-configuration lookup (S06). Omit = skip. */
   sessionId?: string;
+  /** Route-validated client cart snapshot (S07). Omit = cart unknown. */
+  cartSnapshot?: CartSnapshot;
 }): Promise<string> {
   const lines: string[] = [];
 
@@ -86,6 +116,24 @@ export async function buildSalesContext(opts: {
       }
     } catch {
       // Context stays useful without the configuration block.
+    }
+  }
+
+  // The customer's cart as their browser reported it this turn (S07) —
+  // engine-priced for display; checkout re-quotes authoritatively.
+  if (opts.cartSnapshot) {
+    if (opts.cartSnapshot.lines.length === 0) {
+      lines.push("Cart: empty.");
+    } else {
+      try {
+        const described = await Promise.all(opts.cartSnapshot.lines.map(describeCartLine));
+        lines.push(
+          `Cart (${opts.cartSnapshot.lines.length} line${opts.cartSnapshot.lines.length === 1 ? "" : "s"}, prices are current engine prices):`,
+        );
+        lines.push(...described.map((d, i) => `- ${i + 1}. ${d}`));
+      } catch {
+        // Context stays useful without the cart block.
+      }
     }
   }
 

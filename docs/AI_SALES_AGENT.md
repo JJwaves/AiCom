@@ -27,10 +27,11 @@ Customer message (UNTRUSTED)                    app/api/ai/chat  (POST)
       → conversation resolve/create             lib/data/conversation-service
       → persist user message (raw transcript)
       → context assembly (profile + summary
-        + live shared configuration — S06)      lib/ai/agents/sales/context.ts
-      → versioned prompt ai_sales_agent v1.1.0  lib/ai/prompts/registry.ts
+        + live shared configuration — S06
+        + engine-priced cart snapshot — S07)    lib/ai/agents/sales/context.ts
+      → versioned prompt ai_sales_agent v1.2.0  lib/ai/prompts/registry.ts
       → AiRuntime.runToolConversation (STANDARD workload, loop limits)
-          → sales tool registry (11 tools, READ/CUSTOMER_WRITE only)
+          → sales tool registry (15 tools, READ/CUSTOMER_WRITE/COMMERCE)
       → persist tool rows + assistant message
       → evidence-validated need extraction      lib/ai/agents/sales/extraction.ts  (LOW_COST, non-fatal)
       → threshold summarization                 lib/ai/agents/sales/summarize.ts   (LOW_COST, non-fatal)
@@ -53,17 +54,27 @@ whole stack with `FakeAiProvider` and zero network.
 | `getCurrentConfiguration` (S06) | READ | the session's live shared configuration (labels, quantity, artwork status, revision, engine price) — customer-visible fields only |
 | `updateConfiguration` (S06) | CUSTOMER_WRITE | COMMIT a customer-requested partial patch through the shared validation path; structured rejection with alternatives; revision-checked (stale writes impossible); `ai_configuration_updated`/`_rejected` events |
 | `suggestConfigurationUpdate` (S06) | READ | PROPOSE a validated+priced change without committing — becomes an apply chip in the chat; `ai_configuration_proposed` event |
+| `addConfiguredProductToCart` (S07) | COMMERCE | add the AUTHORITATIVE configuration to the cart on explicit customer request; server re-validates + re-prices; `price_changed`/`stale_configuration`/`artwork_required`/`custom_quote_required` are structured; `ai_add_to_cart_requested` event + `cart_added` outcome |
+| `suggestAddToCart` (S07) | READ | offer an "Add to cart" button at the validated current price; the tap re-validates via `/api/cart/line`; `ai_add_to_cart_proposed` event |
+| `getCartSummary` (S07) | READ | engine-priced view of the client-reported cart snapshot (lines, subtotal, per-line issues, checkout readiness) — honest "unavailable" without a snapshot |
+| `startCheckout` (S07) | COMMERCE | validate cart readiness and surface a customer-confirmed "Continue to checkout" action; empty strict input — no contents/amounts/URLs can be constructed; `ai_checkout_requested` event |
 
 Configuration tools are the AI's ONLY channel into the configuration and
 run through the exact server path the visual configurator uses — see
 AI_CONFIGURATOR_INTEGRATION.md (authoritative for the shared state).
+Cart/checkout tools are intent-only and covered by
+AI_COMMERCE_INTEGRATION.md (authoritative for the commerce boundary).
+Sales permissions since S07: READ + CUSTOMER_WRITE + COMMERCE.
 
 Not present in any customer-facing registry, ever: `modifyPrice`,
 `issueRefund`, `changeAdBudget`, `createAdCampaign`, `modifyMargin`,
-`modifyProductManufacturingRules`, `adminDatabaseQuery`.
+`modifyProductManufacturingRules`, `adminDatabaseQuery`, `createCheckout`
+(direct provider checkout construction), `applyDiscount`, `markOrderPaid`,
+`capturePayment`, `setShippingCost`, `setTax`.
 `createSalesToolRegistry()` refuses to construct with a
 FINANCIAL_RESTRICTED/ADMIN_RESTRICTED tool present. Injection defenses are
-capability-based and unit-tested (`tests/ai-sales-agent.test.ts`).
+capability-based and unit-tested (`tests/ai-sales-agent.test.ts`,
+`tests/ai-cart-tools.test.ts`).
 
 ## Conversation lifecycle
 
@@ -77,22 +88,26 @@ capability-based and unit-tested (`tests/ai-sales-agent.test.ts`).
 - Escalation marks the conversation `status=escalated, outcome=escalated`
   WITHOUT ending it: the customer keeps chatting in the same thread while a
   human follows up. `endConversation` remains the terminal transition.
-- (S06) Commerce outcomes stamp WITHOUT ending:
-  `markConversationOutcomeForSession` sets `quote_started` /
-  `checkout_started` / `purchased` on the session's active sales
-  conversation from the quote/checkout routes; `purchased` never
-  downgrades and escalated outcomes are preserved. `abandoned` remains
-  unwired (needs a session-expiry sweep, future session).
+- (S06/S07) Commerce outcomes stamp WITHOUT ending:
+  `markConversationOutcomeForSession` sets `quote_started` / `cart_added`
+  (S07) / `checkout_started` / `purchased` on the session's active sales
+  conversation; funnel ranking (`purchased` > `checkout_started` >
+  `cart_added`/`quote_started`) prevents downgrades and escalated
+  outcomes are preserved. `abandoned` remains unwired (needs a
+  session-expiry sweep, future session).
 - (S06) Assistant messages carry `configSnapshotJson` — the shared
-  configuration as of each AI-committed configuration change.
+  configuration as of each AI-committed configuration change; (S07) their
+  `structuredJson` also flags `cartAdded`/`checkoutProposed` turns.
 - First-party events: `ai_chat_started` (conversation creation),
   `ai_message_sent` (per turn, with status/tool-count props — never
-  transcript content), `ai_product_recommended`, `human_handoff_requested`.
-  Raw chat stays in Conversation/Message persistence, not analytics props.
+  transcript content), `ai_product_recommended`, `human_handoff_requested`,
+  (S07) `ai_add_to_cart_proposed` / `ai_add_to_cart_requested` /
+  `ai_checkout_requested`. Raw chat stays in Conversation/Message
+  persistence, not analytics props.
 
 ## Sales prompt
 
-`ai_sales_agent` **v1.1.0** in `lib/ai/prompts/registry.ts` — identity,
+`ai_sales_agent` **v1.2.0** in `lib/ai/prompts/registry.ts` — identity,
 progressive-discovery sales behavior, truthfulness rules (confirmed-only
 capabilities, no fabricated materials/dimensions/certifications/dates/
 sustainability claims/reviews/prices, DEMO pricing labeled), pricing-tool
@@ -103,9 +118,16 @@ clearly-requested changes immediately but preview + propose
 (suggestConfigurationUpdate) for changes with substantial cost impact the
 customer hasn't confirmed, never change unrequested fields, relay
 structured rejection alternatives, reconcile on stale_revision, and
-artwork only via the configurator's uploader. One `{{context}}` variable
-carries the server-assembled customer context. Any semantic change bumps
-the version; AiUsage rows stamp prompt id+version on every call.
+artwork only via the configurator's uploader. v1.2.0 (S07) adds the cart &
+checkout contract: explicit-intent-only for `addConfiguredProductToCart` /
+`startCheckout` (with counted examples and non-examples), reprice
+confirmation before any retry, stale reconciliation, artwork/custom-quote
+routing, "add it and take me to checkout" as dual intent, cart questions
+via `getCartSummary` (never guessed), duplicate-add honesty, and
+"shipping and taxes are calculated at checkout" as the only permitted
+shipping/tax language. One `{{context}}` variable carries the
+server-assembled customer context. Any semantic change bumps the version;
+AiUsage rows stamp prompt id+version on every call.
 
 Confirmation policy note: no owner-configured cost-impact thresholds exist
 yet, so the policy is behavioral (preview-first for clearly
@@ -113,14 +135,16 @@ price-changing alternatives) — thresholds are a BUSINESS_CONFIG_TODO item.
 
 ## Customer context (what the model sees)
 
-`buildSalesContext` renders, bounded to ~2.4k chars: the conversation's
-product, (S06) the session's LIVE shared configuration ("Current
-configuration (live, revision N): … — never ask them to repeat it"), the
-session's CustomerNeedProfile fields **with provenance labels**
-("customer-stated" vs "our guess" — the model is told which facts are
-verified), and the rolling conversation summary. Structurally excluded:
-other sessions/customers, admin data, secrets, cost/margin figures,
-provider credentials.
+`buildSalesContext` renders, bounded to ~3.2k chars (raised from 2.4k in
+S07 for the cart block): the conversation's product, (S06) the session's
+LIVE shared configuration ("Current configuration (live, revision N): … —
+never ask them to repeat it"), (S07) the client-reported cart snapshot
+re-priced by the engine ("Cart (N lines): …" / "Cart: empty." — never
+client-sent prices), the session's CustomerNeedProfile fields **with
+provenance labels** ("customer-stated" vs "our guess" — the model is told
+which facts are verified), and the rolling conversation summary.
+Structurally excluded: other sessions/customers, admin data, secrets,
+cost/margin figures, provider credentials.
 
 ## CustomerNeedProfile extraction — USER_STATED vs AI_INFERRED
 
@@ -183,18 +207,23 @@ configured, handoffs are queryable in the DB (`messages` where
 
 ## Chat API (`app/api/ai/chat`)
 
-- **POST** `{message}` (1–2000 chars; body ≤16 KB). The client supplies
-  NOTHING else authoritative — session identity is the httpOnly `bd_sid`
-  cookie; customerId/agentType/permissions/conversation are server-resolved;
-  unknown body fields are ignored. Responses:
+- **POST** `{message, cart?}` (message 1–2000 chars; body ≤16 KB). The
+  client supplies NOTHING else authoritative — session identity is the
+  httpOnly `bd_sid` cookie; customerId/agentType/permissions/conversation
+  are server-resolved. `cart` (S07) is the STRICT, bounded, price-free
+  snapshot of the client-side cart (ids + quantities + hasArtwork, ≤50
+  lines) — client-sent prices are a loud 422; the server re-prices with
+  the engine. Responses:
   `200 {ok, conversationId, reply, status, recommendedProductId?,
   recommendedProductPath?, configurationUpdate?, suggestedActions?,
-  needsHuman, handoffReason?, conversationStatus}` — `configurationUpdate`
-  (S06) is the SERVER-VALIDATED committed configuration (config, revision,
-  changedFields, changeSummary, engine price) the client applies to the
-  shared store; `suggestedActions` are validated APPLY_CONFIGURATION_PATCH
-  proposals (label, patch, basedOnRevision, productPath, preview price) —
-  never model prose. ·
+  cartAdd?, checkoutAction?, needsHuman, handoffReason?,
+  conversationStatus}` — `configurationUpdate` (S06) is the
+  SERVER-VALIDATED committed configuration the client applies to the
+  shared store; `suggestedActions` are validated
+  APPLY_CONFIGURATION_PATCH / ADD_TO_CART proposals; `cartAdd` (S07) is
+  the server-validated engine-priced cart line the client adds through
+  `useCart().addLine`; `checkoutAction` (S07) is the validated
+  CONTINUE_TO_CHECKOUT offer the customer confirms — never model prose. ·
   `400/413/422` validation · `429 {code:RATE_LIMITED}` (+Retry-After) ·
   `503 {code:AI_UNAVAILABLE}` with fixed customer-safe copy for EVERY
   AI-side failure (flags off, no key, provider down/timeout/rate-limited,
@@ -232,6 +261,17 @@ honest "no longer matches" copy; off-page applies link to the
 configurator). When a configurator is mounted, the mobile launcher and
 panel lift above the sticky Add-to-Cart bar so the CTA is never covered.
 
+S07 additions: server-validated `cartAdd` payloads apply through the SAME
+`useCart().addLine` the manual configurator uses and render a "✓ Added to
+your cart" chip (line summary, engine total, demo label, View cart link);
+"Add to cart" offer chips re-validate at tap time via `/api/cart/line`
+with visible repriced ("Price updated … Add at $Y") / stale / blocked
+states; the "Continue to checkout · $X" action runs the shared
+`submitCartCheckout` path and shows the REPRICED confirmation ("Prices
+were updated … Confirm & continue at $Y") before any resubmission. Every
+chip is a real button with loading/disabled states and `role="status"`
+announcements. Details: AI_COMMERCE_INTEGRATION.md.
+
 ## Failure behavior
 
 | Failure | Customer experience |
@@ -250,9 +290,12 @@ Countable today: conversations (`conversations`), conversations reaching
 recommendation/pricing (events `ai_product_recommended` / tool rows for
 `calculatePrice`), handoffs (`human_handoff_requested` + escalated
 conversations), per-conversation AI cost (`ai_usage.conversationId`,
-priced once `config/ai-pricing.ts` is filled). AI-assisted cart/checkout
-attribution deliberately does NOT exist yet — no invented conversion
-attribution before the cart/checkout integration sessions.
+priced once `config/ai-pricing.ts` is filled). S07 adds real AI-assisted
+commerce attribution: `orders.aiAssisted` + `orders.conversationId` under
+the conservative material-assistance definition
+(AI_COMMERCE_INTEGRATION.md), the `ai_add_to_cart_*` /
+`ai_checkout_requested` funnel events, and `cart_added` conversation
+outcomes. Still no dashboard — deliberate.
 
 ## Testing
 
@@ -269,7 +312,11 @@ normalization, history filtering, S06 wire signals),
 `tests/configuration-route.test.ts` (sync/apply/restore/provenance),
 `tests/ai-configuration-tools.test.ts` (the three tools + security
 red-team), and the "shared configuration flow" suite in
-`tests/ai-sales-agent.test.ts` (commit/suggest/stale/red-team turns).
+`tests/ai-sales-agent.test.ts` (commit/suggest/stale/red-team turns); S07
+adds `tests/cart-line.test.ts` (server cart-line preparation, `/api/cart/
+line`, outcome ranking, aiAssisted attribution) and
+`tests/ai-cart-tools.test.ts` (four commerce tools + injection red-team,
+§44 conversational flow, chat-route wire).
 All FakeAiProvider — zero credentials, zero network. The optional live
 check is `npm run ai:smoke` (credential-gated, verifies model ids via the
 provider's models API before any real call; never part of build/test).
@@ -278,14 +325,21 @@ provider's models API before any real call; never part of build/test).
 
 - ~~No configurator synchronization~~ — RESOLVED in S06
   (AI_CONFIGURATOR_INTEGRATION.md).
-- No cart/checkout/quote/order tools (later sessions) — spec §32. The AI
-  configures; the customer adds to cart and checks out manually.
+- ~~No cart/checkout tools~~ — RESOLVED in S07
+  (AI_COMMERCE_INTEGRATION.md): validated add-to-cart + checkout handoff.
+  Still none of: quote tools (`createDraftQuote` is future work — the AI
+  points at /request-quote), order mutation, payment anything.
+- Explicit-intent classification is prompt-enforced (v1.2.0) with the
+  structural backstops (customer-confirmed chips, reprice/stale guards,
+  checkout tap) — there is no separate deterministic intent classifier;
+  weak-language turns are covered by tests only at the plumbing level.
 - Handoff records are stored, not yet delivered anywhere (owner must
   configure the escalation destination).
 - Extraction handles scalar fields only (painPoints/objections arrays are a
   later refinement); contact info in handoffs is not upserted into the
   customers table.
-- Rate limiting is per-instance; edge limiting is a launch requirement.
-- Conversation outcomes: quote_started/checkout_started/purchased stamp
-  from their routes (S06); `abandoned` needs a session-expiry sweep
-  (future session).
+- Rate limiting is per-instance; edge limiting is a launch requirement
+  (now also covering `/api/cart/line`).
+- Conversation outcomes: quote_started/cart_added/checkout_started/
+  purchased stamp from their routes (S06/S07); `abandoned` needs a
+  session-expiry sweep (future session).

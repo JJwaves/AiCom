@@ -38,8 +38,33 @@ export const runtime = "nodejs";
 
 const MAX_BODY_BYTES = 16_000;
 
+/**
+ * Optional client cart snapshot (S07): the cart lives client-side, so the
+ * browser reports its SHAPE (ids + quantities only — the schema is STRICT,
+ * so client-sent prices are a loud 422, never data). The server re-prices
+ * with the engine for the agent's view; /api/checkout re-quotes before any
+ * order exists. Same trust level as the localStorage cart it mirrors.
+ */
+const cartSnapshotSchema = z.strictObject({
+  lines: z
+    .array(
+      z.strictObject({
+        lineId: z.string().trim().min(1).max(64),
+        productId: z.string().trim().min(1).max(100),
+        sizeId: z.string().trim().min(1).max(100),
+        materialId: z.string().trim().min(1).max(100),
+        colorId: z.string().trim().min(1).max(100),
+        printOptionId: z.enum(["none", "one-color", "two-color", "full-custom"]),
+        quantity: z.number().int().positive().max(1_000_000),
+        hasArtwork: z.boolean(),
+      }),
+    )
+    .max(50),
+});
+
 const bodySchema = z.object({
   message: z.string().trim().min(1).max(MAX_MESSAGE_CHARS),
+  cart: cartSnapshotSchema.optional(),
 });
 
 function aiUnavailable(status = 503): NextResponse {
@@ -97,6 +122,7 @@ export async function POST(req: Request) {
       sessionId: ctx.session.id,
       customerId: ctx.session.customerId,
       message: parsed.data.message,
+      cart: parsed.data.cart,
     });
     // Wire shape: the reply travels as `reply` (`message` is the error-copy
     // field on failure responses); everything else is the normalized result.
@@ -112,6 +138,11 @@ export async function POST(req: Request) {
       // THESE to the shared store — it never parses reply prose.
       ...(result.configurationUpdate ? { configurationUpdate: result.configurationUpdate } : {}),
       ...(result.suggestedActions ? { suggestedActions: result.suggestedActions } : {}),
+      // S07 commerce signals: the client applies/renders THESE server-
+      // validated payloads — cart lines and checkout handoffs never come
+      // from model prose.
+      ...(result.cartAdd ? { cartAdd: result.cartAdd } : {}),
+      ...(result.checkoutAction ? { checkoutAction: result.checkoutAction } : {}),
       needsHuman: result.needsHuman,
       ...(result.handoffReason ? { handoffReason: result.handoffReason } : {}),
       conversationStatus: result.conversationStatus,

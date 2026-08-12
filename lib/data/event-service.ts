@@ -1,3 +1,4 @@
+import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db/client";
 import { events } from "@/db/schema";
@@ -35,6 +36,9 @@ export const PLATFORM_EVENT_NAMES = [
   "ai_configuration_proposed",
   "ai_configuration_updated",
   "ai_configuration_rejected",
+  "ai_add_to_cart_proposed",
+  "ai_add_to_cart_requested",
+  "ai_checkout_requested",
   "human_handoff_requested",
   "experiment_exposed",
   "reorder_started",
@@ -86,6 +90,22 @@ export async function recordEvents(
     .onConflictDoNothing({ target: events.clientEventId })
     .returning({ id: events.id });
   return rows.length;
+}
+
+/**
+ * Does this session have at least one of the given events? Used by the
+ * AI-assistance attribution check (lib/data/ai-assistance.ts) — a bounded
+ * existence probe, never an analytics query surface.
+ */
+export async function sessionHasAnyEvent(sessionId: string, names: readonly PlatformEventName[]): Promise<boolean> {
+  if (names.length === 0) return false;
+  const db = await getDb();
+  const [row] = await db
+    .select({ id: events.id })
+    .from(events)
+    .where(and(eq(events.sessionId, sessionId), inArray(events.name, [...names])))
+    .limit(1);
+  return row !== undefined;
 }
 
 /** Server-emitted platform event (purchase_completed, session_started, …) with entity links. */

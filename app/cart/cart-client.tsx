@@ -4,25 +4,20 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useCart } from "@/lib/cart/cart-context";
+import { persistMockOrderPayload, submitCartCheckout } from "@/lib/cart/checkout-client";
 import { quoteConfiguration } from "@/modules/pricing";
-import { attributionToMetadata, readAttribution } from "@/lib/attribution/attribution";
 import { track } from "@/lib/analytics/track";
 import { formatMoney, formatQty, formatUnitPrice } from "@/lib/format";
-import type { Cart, Product } from "@/types/commerce";
+import type { Product } from "@/types/commerce";
 
 /**
  * Cart client. Quantity chips re-price optimistically with the shared
- * engine for instant feedback; checkout always goes through /api/checkout,
- * where the server re-quotes every line (browser prices are proposals,
- * never authority). A 409 REPRICED response updates the cart to the
- * server's numbers and asks the user to confirm again.
+ * engine for instant feedback; checkout always goes through the shared
+ * submitCartCheckout path → /api/checkout, where the server re-quotes every
+ * line (browser prices are proposals, never authority). A REPRICED result
+ * updates the cart to the server's numbers and asks the user to confirm
+ * again.
  */
-
-type CheckoutResponse =
-  | { ok: true; result: { kind: "mock"; orderId: string }; order: { cart: Cart; createdAt: string } }
-  | { ok: true; result: { kind: "redirect"; url: string } }
-  | { ok: false; code: "REPRICED"; lines: { lineId: string; quantity: number; unitPriceCents: number }[] }
-  | { ok: false; code: string; error?: string; errors?: { lineId: string; reason: string }[] };
 
 export function CartClient({ products }: { products: Product[] }) {
   const router = useRouter();
@@ -61,48 +56,28 @@ export function CartClient({ products }: { products: Product[] }) {
   const checkout = async () => {
     setBusy(true);
     setError(null);
-    try {
-      track({ name: "begin_checkout", params: { items, value: subtotalCents / 100, currency: cart.currency } });
-      const attribution = attributionToMetadata(readAttribution());
-      const res = await fetch("/api/checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          lines: cart.lines.map((l) => ({
-            lineId: l.lineId,
-            config: l.config,
-            proposedUnitPriceCents: l.unitPriceCents,
-            proposedTotalCents: l.totalCents,
-          })),
-          attribution,
-        }),
-      });
-      const data = (await res.json()) as CheckoutResponse;
+    track({ name: "begin_checkout", params: { items, value: subtotalCents / 100, currency: cart.currency } });
+    const result = await submitCartCheckout(cart.lines);
 
-      if (data.ok) {
-        if ("order" in data) {
-          // Persist the SERVER-priced order for the demo confirmation page.
-          sessionStorage.setItem(`order:${data.result.orderId}`, JSON.stringify(data.order));
-          router.push(`/order-status?order=${data.result.orderId}&placed=1`);
-        } else {
-          window.location.href = data.result.url;
-        }
+    switch (result.kind) {
+      case "mock-order":
+        // Persist the SERVER-priced order for the demo confirmation page.
+        persistMockOrderPayload(result.orderId, result.order);
+        router.push(`/order-status?order=${result.orderId}&placed=1`);
         return;
-      }
-
-      if (data.code === "REPRICED" && "lines" in data) {
-        for (const l of data.lines) updateQuantity(l.lineId, l.quantity, l.unitPriceCents);
+      case "redirect":
+        window.location.href = result.url;
+        return;
+      case "repriced":
+        for (const l of result.lines) updateQuantity(l.lineId, l.quantity, l.unitPriceCents);
         setError("Prices were updated to current values — review your cart and press Checkout again.");
-      } else if (data.code === "INVALID" && "errors" in data && data.errors?.length) {
-        setError(`${data.errors[0].reason}. Remove or adjust that line to continue.`);
-      } else {
-        setError("Checkout is temporarily unavailable. Nothing was charged — try again in a moment.");
-      }
-      setBusy(false);
-    } catch {
-      setError("Checkout is temporarily unavailable. Nothing was charged — try again in a moment.");
-      setBusy(false);
+        break;
+      case "invalid":
+      case "error":
+        setError(result.message);
+        break;
     }
+    setBusy(false);
   };
 
   if (count === 0) {

@@ -21,11 +21,11 @@ Rules that apply to every session:
 | [01-audit-migration.md](01-audit-migration.md) | System audit + architecture docs | A | ✅ 2026-08-08 |
 | [02-commerce-pricing.md](02-commerce-pricing.md) | Server-authoritative pricing + cost model | A | ✅ 2026-08-08 |
 | [03-data-foundation.md](03-data-foundation.md) | DB, sessions, events, profiles, conversations | B | ✅ 2026-08-09 |
-| [04-ai-infrastructure.md](04-ai-infrastructure.md) | AI provider layer, router, tools, usage tracking | B | next |
-| [05-ai-sales.md](05-ai-sales.md) | AI Packaging Expert core | C | |
-| [06-ai-configurator.md](06-ai-configurator.md) | Chat ↔ configurator shared state | C | |
-| [07-ai-checkout.md](07-ai-checkout.md) | AI-assisted checkout end-to-end (§44) | C | |
-| [08-customer-intelligence.md](08-customer-intelligence.md) | Insight aggregation + admin dashboard | D | |
+| [04-ai-infrastructure.md](04-ai-infrastructure.md) | AI provider layer, router, tools, usage tracking | B | ✅ 2026-08-10 |
+| [05-ai-sales.md](05-ai-sales.md) | AI Packaging Expert core | C | ✅ 2026-08-10 |
+| [06-ai-configurator.md](06-ai-configurator.md) | Chat ↔ configurator shared state | C | ✅ 2026-08-10 |
+| [07-ai-checkout.md](07-ai-checkout.md) | AI-assisted checkout end-to-end (§44) | C | ✅ 2026-08-11 |
+| [08-customer-intelligence.md](08-customer-intelligence.md) | Insight aggregation + admin dashboard | D | next |
 | [09-business-intelligence.md](09-business-intelligence.md) | Contribution profit + CEO agent | E | |
 | [10-guardrails.md](10-guardrails.md) | Guardrail engine + AI Action Center | E | |
 | [11-cro.md](11-cro.md) | Experiment engine + CRO agent | F | |

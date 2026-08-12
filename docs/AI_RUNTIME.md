@@ -178,7 +178,7 @@ the tools its context permits.
 conversation ids, requestId) is minted exclusively by server code
 (`createToolContext`) — the LLM cannot invent authorization context.
 
-### Sales toolset (S04 base + S05/S06 additions)
+### Sales toolset (S04 base + S05/S06/S07 additions)
 
 | Tool | Permission | Backed by |
 | --- | --- | --- |
@@ -193,13 +193,21 @@ conversation ids, requestId) is minted exclusively by server code
 | `getCurrentConfiguration` (S06) | READ | `lib/configuration/server.resolveCurrentConfiguration` — the shared configuration state, customer-visible view only |
 | `updateConfiguration` (S06) | CUSTOMER_WRITE | `applyConfigurationPatchForSession` — catalog-validated partial patch, revision-checked row write, CONFIGURATOR need evidence, `ai_configuration_updated`/`_rejected` events |
 | `suggestConfigurationUpdate` (S06) | READ | validates + prices a hypothetical patch, writes nothing; `ai_configuration_proposed` event |
+| `addConfiguredProductToCart` (S07) | COMMERCE | `lib/commerce/cart-line.prepareCartLineFromConfiguration` — server re-validates + re-prices the authoritative configuration; reprice/stale outcomes require fresh customer confirmation; `ai_add_to_cart_requested` event + `cart_added` outcome |
+| `suggestAddToCart` (S07) | READ | validates + prices the current configuration, writes nothing — "Add to cart" button; `ai_add_to_cart_proposed` event |
+| `getCartSummary` (S07) | READ | engine re-pricing of the server-minted client cart snapshot (`ctx.cartSnapshot`) — customer-visible fields only |
+| `startCheckout` (S07) | COMMERCE | cart-readiness validation → customer-confirmed checkout handoff; EMPTY strict input (no contents/amounts/URLs); `ai_checkout_requested` event |
 
+Sales permissions since S07: READ + CUSTOMER_WRITE + COMMERCE.
 Deliberately absent from any customer-facing toolset, forever:
 `modifyPrice`, `issueRefund`, `changeAdBudget`, `createAdCampaign`,
-`modifyMargin`, `modifyProductManufacturingRules`, `adminDatabaseQuery`.
-Deferred to later sessions: cart/checkout/draft-quote/order-status tools.
+`modifyMargin`, `modifyProductManufacturingRules`, `adminDatabaseQuery`,
+`createCheckout` (direct provider construction), `applyDiscount`,
+`markOrderPaid`, `capturePayment`, `setShippingCost`, `setTax`.
+Deferred to later sessions: draft-quote/order-status tools.
 See AI_CONFIGURATOR_INTEGRATION.md for the shared-configuration
-architecture the S06 tools operate on.
+architecture the S06 tools operate on and AI_COMMERCE_INTEGRATION.md for
+the S07 commerce boundary.
 
 ### Tool loop
 

@@ -4,6 +4,7 @@ import { getCatalogProductById } from "@/lib/commerce/catalog";
 import { checkoutRequestSchema, type CheckoutRequestLine } from "@/lib/validation/checkout";
 import { calculatePrice } from "@/modules/pricing";
 import { formatDimensions } from "@/lib/format";
+import { getAiAssistanceForSession } from "@/lib/data/ai-assistance";
 import { upsertActiveConfiguration } from "@/lib/data/configuration-service";
 import { markConversationOutcomeForSession } from "@/lib/data/conversation-service";
 import { applyNeedProfileUpdate } from "@/lib/data/customer-need-service";
@@ -229,10 +230,20 @@ async function persistMockOrder(
   providerOrderId: string,
 ): Promise<void> {
   try {
+    // AI-assisted attribution (S07): conservative material-assistance check —
+    // aiAssisted only when the chat demonstrably touched commerce; the latest
+    // sales conversation is linked either way for intelligence. Non-fatal.
+    const assistance = await getAiAssistanceForSession(session.id).catch((err) => {
+      console.error("[checkout] AI-assistance lookup failed (order proceeds unattributed)", err);
+      return { aiAssisted: false, conversationId: null };
+    });
+
     const { order } = await createOrder({
       sessionId: session.id,
       customerId: session.customerId ?? undefined,
       businessId: session.businessId ?? undefined,
+      conversationId: assistance.conversationId ?? undefined,
+      aiAssisted: assistance.aiAssisted,
       provider: "mock",
       providerOrderId,
       currency: cart.currency,
@@ -271,6 +282,7 @@ async function persistMockOrder(
         currency: order.currency,
         lines: serverLines.length,
         providerOrderId,
+        aiAssisted: assistance.aiAssisted,
       },
     });
     await markConverted(session.id);

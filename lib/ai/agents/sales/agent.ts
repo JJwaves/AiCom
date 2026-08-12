@@ -16,7 +16,7 @@ import type { AIProvider, AiChatMessage } from "../../providers/types";
 import { selectModel } from "../../router";
 import { AiRuntime, type ToolConversationStatus } from "../../runtime";
 import { createSalesToolRegistry, createToolContext } from "../../tools";
-import type { ToolCallResult } from "../../tools/types";
+import type { CartSnapshot, ToolCallResult } from "../../tools/types";
 import { buildSalesContext } from "./context";
 import { runNeedExtraction } from "./extraction";
 import { maybeSummarizeConversation } from "./summarize";
@@ -47,6 +47,12 @@ export type SalesTurnInput = {
   customerId?: string | null;
   /** The customer's message, already length/shape-validated by the caller. */
   message: string;
+  /**
+   * Route-validated snapshot of the customer's client-side cart (S07).
+   * Untrusted client state, price-free by schema — the engine re-prices it
+   * for the agent's view and /api/checkout re-quotes it before any order.
+   */
+  cart?: CartSnapshot;
 };
 
 /** Server-validated configuration state attached to a chat response (S06). */
@@ -74,6 +80,48 @@ export type SuggestedConfigurationAction = {
   preview: { totalCents: number; unitPriceCents: number; currency: string; pricingStatus: "DEMO" | "LIVE" } | null;
 };
 
+/** An offered (NOT executed) add-to-cart the customer can accept with one tap (S07). */
+export type SuggestedCartAction = {
+  type: "ADD_TO_CART";
+  productId: string;
+  label: string;
+  /** Revision + price the offer is based on — the tap re-validates server-side. */
+  basedOnRevision: number;
+  price: { unitPriceCents: number; totalCents: number; currency: string; pricingStatus: "DEMO" | "LIVE" };
+  summary: string;
+};
+
+export type SuggestedAction = SuggestedConfigurationAction | SuggestedCartAction;
+
+/**
+ * A cart line the server validated and priced from the AUTHORITATIVE shared
+ * configuration (S07). The client adds EXACTLY this line through the same
+ * useCart().addLine the manual configurator uses — never model text.
+ */
+export type CartAddSignal = {
+  productId: string;
+  productTitle: string;
+  line: {
+    config: ProductConfiguration;
+    unitPriceCents: number;
+    totalCents: number;
+    title: string;
+    optionSummary: string;
+  };
+  revision: number;
+  currency: string;
+  pricingStatus: "DEMO" | "LIVE";
+};
+
+/** A validated checkout handoff offer (S07) — the CUSTOMER confirms it; the client then runs the standard /api/checkout flow. */
+export type CheckoutActionSignal = {
+  type: "CONTINUE_TO_CHECKOUT";
+  lineCount: number;
+  subtotalCents: number;
+  currency: string;
+  pricingStatus: "DEMO" | "LIVE";
+};
+
 /** Normalized response (spec §17) — the frontend never parses model prose for actions. */
 export type SalesAgentResult = {
   conversationId: string;
@@ -85,8 +133,12 @@ export type SalesAgentResult = {
   recommendedProductPath?: string;
   /** Committed configuration change this turn (server-validated; the UI applies THIS, never model text). */
   configurationUpdate?: ConfigurationUpdateSignal;
-  /** Proposed-but-uncommitted changes for structured apply chips. */
-  suggestedActions?: SuggestedConfigurationAction[];
+  /** Proposed-but-uncommitted actions for structured chips (config patches + add-to-cart offers). */
+  suggestedActions?: SuggestedAction[];
+  /** Server-validated cart line the client adds this turn (explicit customer intent — S07). */
+  cartAdd?: CartAddSignal;
+  /** Validated checkout handoff offer — rendered as a customer-confirmed action (S07). */
+  checkoutAction?: CheckoutActionSignal;
   needsHuman: boolean;
   handoffReason?: string;
   conversationStatus: "active" | "escalated";
@@ -124,6 +176,31 @@ function toChatHistory(rows: { role: string; content: string }[]): AiChatMessage
 
 type RecommendData = { ok: boolean; productId?: string; configuratorPath?: string };
 type HandoffData = { escalated?: boolean };
+
+/** Shapes of the validated S07 cart/checkout tool outputs we lift into the result. */
+type AddToCartData = {
+  status: string;
+  productId?: string;
+  productTitle?: string;
+  line?: CartAddSignal["line"];
+  revision?: number;
+  price?: { unitPriceCents: number; totalCents: number; currency: string; pricingStatus: "DEMO" | "LIVE" };
+};
+type SuggestAddData = {
+  status: string;
+  label?: string;
+  productId?: string;
+  basedOnRevision?: number;
+  price?: { unitPriceCents: number; totalCents: number; currency: string; pricingStatus: "DEMO" | "LIVE" };
+  summary?: string;
+};
+type StartCheckoutData = {
+  status: string;
+  lineCount?: number;
+  subtotalCents?: number;
+  currency?: string;
+  pricingStatus?: "DEMO" | "LIVE";
+};
 
 /** Shape of the validated updateConfiguration/suggestConfigurationUpdate tool outputs we lift into the result. */
 type ConfigViewData = {
@@ -189,14 +266,18 @@ function deriveSignals(executed: ToolCallResult[]): {
   recommendedProductId?: string;
   recommendedProductPath?: string;
   configurationUpdate?: ConfigurationUpdateSignal;
-  suggestedActions?: SuggestedConfigurationAction[];
+  suggestedActions?: SuggestedAction[];
+  cartAdd?: CartAddSignal;
+  checkoutAction?: CheckoutActionSignal;
   needsHuman: boolean;
   handoffReason?: string;
 } {
   let recommendedProductId: string | undefined;
   let recommendedProductPath: string | undefined;
   let configurationUpdate: ConfigurationUpdateSignal | undefined;
-  const suggestedActions: SuggestedConfigurationAction[] = [];
+  const suggestedActions: SuggestedAction[] = [];
+  let cartAdd: CartAddSignal | undefined;
+  let checkoutAction: CheckoutActionSignal | undefined;
   let needsHuman = false;
   for (const call of executed) {
     if (!call.ok) continue;
@@ -228,6 +309,45 @@ function deriveSignals(executed: ToolCallResult[]): {
         });
       }
     }
+    if (call.toolName === "addConfiguredProductToCart") {
+      const data = call.data as AddToCartData;
+      if (data.status === "added" && data.productId && data.productTitle && data.line && data.price) {
+        // Last successful add wins for the confirmation chip; each add is its own line client-side.
+        cartAdd = {
+          productId: data.productId,
+          productTitle: data.productTitle,
+          line: data.line,
+          revision: data.revision ?? 0,
+          currency: data.price.currency,
+          pricingStatus: data.price.pricingStatus,
+        };
+      }
+    }
+    if (call.toolName === "suggestAddToCart") {
+      const data = call.data as SuggestAddData;
+      if (data.status === "proposed" && data.label && data.productId && data.price) {
+        suggestedActions.push({
+          type: "ADD_TO_CART",
+          productId: data.productId,
+          label: data.label,
+          basedOnRevision: data.basedOnRevision ?? 0,
+          price: data.price,
+          summary: data.summary ?? "",
+        });
+      }
+    }
+    if (call.toolName === "startCheckout") {
+      const data = call.data as StartCheckoutData;
+      if (data.status === "ready" && data.subtotalCents !== undefined && data.currency) {
+        checkoutAction = {
+          type: "CONTINUE_TO_CHECKOUT",
+          lineCount: data.lineCount ?? 0,
+          subtotalCents: data.subtotalCents,
+          currency: data.currency,
+          pricingStatus: data.pricingStatus ?? "DEMO",
+        };
+      }
+    }
     if (call.toolName === "requestHumanHelp" && (call.data as HandoffData).escalated) {
       needsHuman = true;
     }
@@ -237,6 +357,8 @@ function deriveSignals(executed: ToolCallResult[]): {
     recommendedProductPath,
     configurationUpdate,
     ...(suggestedActions.length > 0 ? { suggestedActions } : {}),
+    ...(cartAdd ? { cartAdd } : {}),
+    ...(checkoutAction ? { checkoutAction } : {}),
     needsHuman,
   };
 }
@@ -282,7 +404,12 @@ export async function runSalesAgentTurn(
     getNeedProfile(input.sessionId),
     listMessages(conversation.id),
   ]);
-  const context = await buildSalesContext({ profile, conversation, sessionId: input.sessionId });
+  const context = await buildSalesContext({
+    profile,
+    conversation,
+    sessionId: input.sessionId,
+    cartSnapshot: input.cart,
+  });
   const history = toChatHistory(transcript);
 
   // --- The model turn ----------------------------------------------------
@@ -291,6 +418,7 @@ export async function runSalesAgentTurn(
     sessionId: input.sessionId,
     customerId: input.customerId ?? undefined,
     conversationId: conversation.id,
+    cartSnapshot: input.cart,
   });
   const turn = await runtime.runToolConversation({
     workload: "STANDARD",
@@ -341,6 +469,8 @@ export async function runSalesAgentTurn(
       ...(signals.configurationUpdate
         ? { configurationRevision: signals.configurationUpdate.revision, configurationFields: signals.configurationUpdate.changedFields }
         : {}),
+      ...(signals.cartAdd ? { cartAdded: true, cartAddTotalCents: signals.cartAdd.line.totalCents } : {}),
+      ...(signals.checkoutAction ? { checkoutProposed: true } : {}),
       ...(signals.needsHuman ? { needsHuman: true } : {}),
     },
     // Per-turn configuration snapshot (S03 groundwork column): what the
@@ -397,6 +527,8 @@ export async function runSalesAgentTurn(
       : {}),
     ...(signals.configurationUpdate ? { configurationUpdate: signals.configurationUpdate } : {}),
     ...(signals.suggestedActions ? { suggestedActions: signals.suggestedActions } : {}),
+    ...(signals.cartAdd ? { cartAdd: signals.cartAdd } : {}),
+    ...(signals.checkoutAction ? { checkoutAction: signals.checkoutAction } : {}),
     needsHuman: signals.needsHuman,
     ...(signals.handoffReason ? { handoffReason: signals.handoffReason } : {}),
     conversationStatus: signals.needsHuman || conversation.status === "escalated" ? "escalated" : "active",

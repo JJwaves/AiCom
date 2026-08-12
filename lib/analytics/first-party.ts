@@ -90,12 +90,24 @@ const GA4_TO_PLATFORM: { [K in AnalyticsEvent["name"]]: Mapper<K> | null } = {
   add_to_cart: (e) => ({
     name: "add_to_cart",
     productId: firstItemId(e.params.items),
-    props: { value: e.params.value, currency: e.params.currency, quantity: e.params.items?.[0]?.quantity ?? null },
+    props: {
+      value: e.params.value,
+      currency: e.params.currency,
+      quantity: e.params.items?.[0]?.quantity ?? null,
+      // AI-assistance metadata on the GENERIC commerce event (S07) —
+      // preferred over a parallel ai_* copy; absent for manual adds.
+      ...(e.params.added_via ? { addedVia: e.params.added_via } : {}),
+    },
   }),
   view_cart: null,
   begin_checkout: (e) => ({
     name: "checkout_started",
-    props: { value: e.params.value, currency: e.params.currency, lines: e.params.items?.length ?? 0 },
+    props: {
+      value: e.params.value,
+      currency: e.params.currency,
+      lines: e.params.items?.length ?? 0,
+      ...(e.params.trigger ? { trigger: e.params.trigger } : {}),
+    },
   }),
   add_shipping_info: null,
   add_payment_info: null,

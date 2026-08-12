@@ -146,6 +146,11 @@ Decided S03 debt: quotes do NOT point `configurationId` at the live row —
 the live row keeps mutating after submission and would misrepresent what
 was quoted; quotes keep their embedded payload copies.
 
+Session 07 builds on this state for commerce: the AI add-to-cart path
+(`lib/commerce/cart-line.ts`) reads the SAME authoritative row at an
+expected revision and turns it into a server-validated cart line — see
+AI_COMMERCE_INTEGRATION.md.
+
 ## CustomerNeedProfile provenance
 
 - Manual configurator changes AND AI-committed changes write

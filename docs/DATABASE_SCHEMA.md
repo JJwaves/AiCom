@@ -86,6 +86,14 @@ orders        id · sessionId?⇢ · customerId?⇢ · businessId?⇢ ·
               providerCheckoutRef? · currency · subtotalCents · totalCents ·
               status (created→paid→artwork_review→in_production→shipped→
               delivered, additive) · aiAssisted · attributionJson? · timestamps
+              S07: aiAssisted + conversationId are LIVE at order creation —
+              aiAssisted true only under the conservative material-
+              assistance check (lib/data/ai-assistance.ts: a sales
+              conversation exists AND ≥1 of ai_product_recommended /
+              ai_configuration_updated / ai_add_to_cart_requested /
+              ai_checkout_requested); conversationId links the latest
+              sales conversation whenever one exists. Detail breakdown
+              stays derivable from ai_* events (no duplicate columns).
 order_lines   id · orderId→orders · productId · quantity · unitPriceCents ·
               totalCents · title · optionSummary? · configJson (IMMUTABLE
               snapshot — reproducible after config-file changes) ·
@@ -134,7 +142,15 @@ shipping_estimate_requested · add_to_cart · checkout_started ·
 purchase_completed · quote_started · quote_submitted · ai_chat_started ·
 ai_message_sent · ai_product_recommended · ai_configuration_proposed (S06)
 · ai_configuration_updated · ai_configuration_rejected (S06) ·
-human_handoff_requested · experiment_exposed · reorder_started.
+ai_add_to_cart_proposed · ai_add_to_cart_requested ·
+ai_checkout_requested (S07) · human_handoff_requested ·
+experiment_exposed · reorder_started.
+
+S07 notes: `ai_add_to_cart_requested` carries `{via: conversation|chip,
+outcome}` props; completions ride the GENERIC events with AI metadata —
+`add_to_cart` may carry `addedVia: "ai_chat"` and `checkout_started` a
+`trigger: "ai_chat"` prop. `purchase_completed` now carries an
+`aiAssisted` prop mirroring the order row.
 
 Flow: `track()` (GA4-shaped dataLayer, unchanged) **dual-writes** through
 the explicit GA4→platform mapping table in `lib/analytics/first-party.ts`
@@ -158,12 +174,15 @@ never a substitute for the raw rows.
 ```
 conversations id · sessionId→sessions · customerId?⇢ · agentType (sales) ·
               productId? · configurationId?⇢ · status (active|ended|escalated) ·
-              outcome? (abandoned|quote_started|checkout_started|purchased|
-              escalated) · summaryJson? · startedAt · endedAt? · timestamps
-              S06: quote_started/checkout_started/purchased stamp WITHOUT
-              ending (markConversationOutcomeForSession from the quote/
-              checkout routes; purchased never downgrades; escalated
-              outcomes preserved). abandoned still unwired.
+              outcome? (abandoned|quote_started|cart_added|checkout_started|
+              purchased|escalated) · summaryJson? · startedAt · endedAt? ·
+              timestamps
+              S06/S07: commerce outcomes stamp WITHOUT ending
+              (markConversationOutcomeForSession from the quote/cart/
+              checkout routes and the add-to-cart tool). Funnel-ranked:
+              purchased > checkout_started > cart_added/quote_started —
+              deeper stages never downgrade; escalated outcomes preserved.
+              abandoned still unwired.
 messages      id · conversationId→conversations · role (user|assistant|tool|
               system — system rows NEVER reach customer-facing APIs) ·
               content (raw transcript, preserved) · structuredJson? ·

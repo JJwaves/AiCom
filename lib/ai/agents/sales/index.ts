@@ -7,7 +7,15 @@
  */
 
 export { runSalesAgentTurn, __setSalesTestProvider } from "./agent";
-export type { SalesAgentResult, SalesTurnInput } from "./agent";
+export type {
+  CartAddSignal,
+  CheckoutActionSignal,
+  SalesAgentResult,
+  SalesTurnInput,
+  SuggestedAction,
+  SuggestedCartAction,
+  SuggestedConfigurationAction,
+} from "./agent";
 export {
   EXTRACTION_FIELDS,
   extractionCandidateSchema,

@@ -29,9 +29,9 @@ export type AnalyticsEvent =
   | { name: "select_quantity"; params: { product_id: string; quantity: number } }
   | { name: "view_price"; params: { product_id: string; unit_price: number; value: number; currency: string } }
   | { name: "shipping_estimate_requested"; params: { market: string } }
-  | { name: "add_to_cart"; params: { items: EcommerceItem[]; value: number; currency: string } }
+  | { name: "add_to_cart"; params: { items: EcommerceItem[]; value: number; currency: string; added_via?: "ai_chat" } }
   | { name: "view_cart"; params: { items: EcommerceItem[]; value: number; currency: string } }
-  | { name: "begin_checkout"; params: { items: EcommerceItem[]; value: number; currency: string } }
+  | { name: "begin_checkout"; params: { items: EcommerceItem[]; value: number; currency: string; trigger?: "ai_chat" } }
   | { name: "add_shipping_info"; params: Record<string, unknown> }
   | { name: "add_payment_info"; params: Record<string, unknown> }
   | { name: "purchase"; params: { transaction_id: string; items: EcommerceItem[]; value: number; currency: string } }

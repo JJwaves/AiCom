@@ -7,6 +7,7 @@ import type { ProviderToolSpec } from "../providers/types";
 import {
   AGENT_TOOL_PERMISSIONS,
   type AnyToolDefinition,
+  type CartSnapshot,
   type ToolCallResult,
   type ToolErrorKind,
   type ToolExecutionContext,
@@ -135,6 +136,8 @@ export function createToolContext(input: {
   sessionId?: string;
   customerId?: string;
   conversationId?: string;
+  /** Route-validated client cart snapshot (S07) — untrusted client state, bounded and typed. */
+  cartSnapshot?: CartSnapshot;
 }): ToolExecutionContext {
   return {
     agentType: input.agentType,
@@ -142,6 +145,7 @@ export function createToolContext(input: {
     sessionId: input.sessionId,
     customerId: input.customerId,
     conversationId: input.conversationId,
+    ...(input.cartSnapshot ? { cartSnapshot: input.cartSnapshot } : {}),
     requestId: newId("areq"),
   };
 }

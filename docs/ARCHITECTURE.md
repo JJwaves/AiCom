@@ -124,6 +124,7 @@ Human Approval (/admin/ai-actions)  |  Guarded auto-execution (later)
 | `lib/ai/{providers,router,tools,schemas,prompts,usage}` | DONE (Session 04) | Provider-agnostic runtime: Anthropic adapter (openai/gemini interface-ready), workload router, versioned prompts, budget guard, permission-scoped tool registry (8 sales tools). See AI_RUNTIME.md. |
 | `lib/ai/agents/sales` + `/api/ai/chat` + `components/ai` | DONE (Session 05) | AI Packaging Expert: conversation lifecycle, evidence-validated extraction, summarization, escalation, rate-limited chat API, flag-gated chat UI. See AI_SALES_AGENT.md. |
 | `lib/configuration` + `/api/configuration` | DONE (Session 06) | THE shared configuration state (invariant 1 realized): pure catalog validation + reducer, React provider with restore/debounced persistence, sync bus, one server application path (row-locked, revision-checked), 3 AI configuration tools. See AI_CONFIGURATOR_INTEGRATION.md. |
+| `lib/commerce/cart-line` + `/api/cart/line` + `lib/cart/checkout-client` | DONE (Session 07) | AI-assisted cart/checkout: ONE server validation path from the authoritative configuration to an engine-priced cart line (reprice + stale guards), 4 COMMERCE/READ sales tools (add/suggest/summary/startCheckout), shared client checkout submission, conservative aiAssisted order attribution. See AI_COMMERCE_INTEGRATION.md. |
 | `modules/guardrails` | ADD | Central `evaluateAgentAction`; see GUARDRAILS.md. (S04's budget guard covers AI spend only.) |
 | `modules/customer-intelligence` | ADD (Stage D) | Aggregation over conversations/quotes/orders. |
 | `modules/ads/google`, `modules/ads/meta` | DEFER | Read-only first, much later. |
@@ -144,7 +145,10 @@ Human Approval (/admin/ai-actions)  |  Guarded auto-execution (later)
    with the deterministic engine before any order/checkout is created.
    *Enforced since Session 02 (`/api/checkout`): price drift → 409
    REPRICED; invalid/custom-quote configs → 422; cost figures never leave
-   the server.*
+   the server. Session 07 extends the same semantics to AI-path cart
+   additions (`lib/commerce/cart-line.ts`): expected totals are drift
+   detection only, and repriced/stale results require fresh customer
+   confirmation.*
 3. **Typed tools only.** No agent gets DB or HTTP access; every tool
    validates inputs server-side and is permission-scoped per agent.
 4. **Feature-flagged AI.** Commerce must work with every AI flag off.
@@ -305,3 +309,33 @@ Human Approval (/admin/ai-actions)  |  Guarded auto-execution (later)
   mutating after submission and would misrepresent what was quoted;
   quotes keep their embedded configuration payloads (orders already
   snapshot per line).
+- **2026-08-11 (S07) · The cart stays client-side; the AI gets a validated
+  channel INTO it, not a server cart.** A server-side cart would fork the
+  existing (working) localStorage cart + checkout re-quote design into two
+  sources of truth. Instead, `lib/commerce/cart-line.ts` turns the
+  AUTHORITATIVE shared configuration into a server-validated engine-priced
+  line, and the client applies it through the SAME `useCart().addLine` the
+  manual configurator uses. `/api/checkout` remains the single order
+  authority; AI-added and manual lines are equivalent by construction.
+- **2026-08-11 (S07) · The agent sees the cart only as a price-free
+  client-reported snapshot.** The chat request carries ids + quantities +
+  hasArtwork (STRICT schema — a client-sent price is a 422, not data);
+  the server re-prices with the engine for context/tools. Same trust
+  level as the localStorage cart it mirrors, because checkout re-quotes
+  everything anyway. Chosen over a server cart mirror (drift) and over
+  keeping the agent cart-blind (can't answer "did you add it?").
+- **2026-08-11 (S07) · Commerce tools carry intent, never authority — and
+  checkout requires a customer tap.** `addConfiguredProductToCart` states
+  what the customer was shown (revision + total) purely for drift
+  detection; `startCheckout` has an EMPTY strict input and only surfaces a
+  "Continue to checkout" action the customer must click, which then runs
+  the same shared `submitCartCheckout` path as the cart page. With the
+  mock provider a checkout IS an order, so tap-to-confirm is structural,
+  not stylistic. No tool for payments/refunds/discounts/URLs exists.
+- **2026-08-11 (S07) · aiAssisted is conservative and event-derived.**
+  An order is AI-assisted only when a sales conversation exists AND a
+  material AI commerce event (recommendation, config commit, add-to-cart
+  request, checkout request) was recorded — a loaded widget or
+  small-talk-only chat never counts. The order row stores the boolean +
+  conversation link; the detailed breakdown stays derivable from events
+  (no duplicated columns).

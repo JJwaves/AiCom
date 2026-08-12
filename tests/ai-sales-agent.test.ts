@@ -270,7 +270,9 @@ describe("prompt injection — the capability boundary holds", () => {
     const toolStep = fake.requests.find((r) => r.method === "generateToolStep")!.request as { tools: { name: string }[] };
     const toolNames = toolStep.tools.map((t) => t.name).sort();
     expect(toolNames).toEqual([
+      "addConfiguredProductToCart",
       "calculatePrice",
+      "getCartSummary",
       "getCurrentConfiguration",
       "getProductDetails",
       "getQuantityPricing",
@@ -279,6 +281,8 @@ describe("prompt injection — the capability boundary holds", () => {
       "requestHumanHelp",
       "saveCustomerNeed",
       "searchProducts",
+      "startCheckout",
+      "suggestAddToCart",
       "suggestConfigurationUpdate",
       "updateConfiguration",
     ]);
@@ -484,7 +488,8 @@ describe("shared configuration flow (Session 06)", () => {
       patch: { quantity: 10_000 },
       basedOnRevision: 1,
     });
-    expect(result.suggestedActions?.[0].preview?.totalCents).toBeGreaterThan(0);
+    const action = result.suggestedActions?.[0];
+    expect(action?.type === "APPLY_CONFIGURATION_PATCH" && (action.preview?.totalCents ?? 0) > 0).toBe(true);
 
     // NOT committed: the row still says 5,000 at revision 1.
     const { getActiveConfiguration } = await import("@/lib/data/configuration-service");

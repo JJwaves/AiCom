@@ -18,7 +18,8 @@ take real traffic until they pass.
 - [ ] Database backups/point-in-time recovery enabled on the production Postgres
 
 ## AI Packaging Expert (only if enabling AI_SALES for customers)
-- [ ] ⛔ Edge/platform rate limiting in front of `/api/ai/chat` — the built-in token buckets are per-instance application guards, not a distributed limiter (docs/AI_SALES_AGENT.md)
+- [ ] ⛔ Edge/platform rate limiting in front of `/api/ai/chat` (and the S07 companion `/api/cart/line`) — the built-in token buckets are per-instance application guards, not a distributed limiter (docs/AI_SALES_AGENT.md)
+- [ ] Verify the S07 AI commerce boundary on the production build: AI add-to-cart requires explicit intent, repriced adds/checkouts require re-confirmation, checkout URLs are provider-generated only, and no purchase event fires before order creation (docs/AI_COMMERCE_INTEGRATION.md)
 - [ ] ⛔ AI budget caps set (`AI_DAILY_BUDGET_USD` / `AI_MONTHLY_BUDGET_USD`) AND `config/ai-pricing.ts` filled with current provider rates — caps over unpriced models fail closed and block every call
 - [ ] ⛔ Model ids verified against the live account: `npm run ai:smoke` (model names age; the defaults are not guaranteed valid forever)
 - [ ] ⛔ Escalation delivery wired to a real destination (BUSINESS_CONFIG_TODO) — today handoffs are recorded in the DB, not sent anywhere

@@ -11,24 +11,34 @@ import {
   suggestConfigurationUpdateTool,
   updateConfigurationTool,
 } from "./configuration-tools";
+import {
+  addConfiguredProductToCartTool,
+  getCartSummaryTool,
+  startCheckoutTool,
+  suggestAddToCartTool,
+} from "./cart-tools";
 import type { AnyToolDefinition } from "./types";
 
 /**
  * Sales toolset — the ONLY tools a customer-facing sales conversation can
  * ever reach. Session 04 shipped the low-risk read/record set; Session 05
  * added recommendProduct (catalog-validated recommendations) and
- * requestHumanHelp (structured escalation). Session 06 adds the shared-
+ * requestHumanHelp (structured escalation). Session 06 added the shared-
  * configuration tools (getCurrentConfiguration / updateConfiguration /
  * suggestConfigurationUpdate) — the AI mutates the SAME validated
  * configuration path the visual configurator uses, never a parallel state.
- * Cart/quote/order tools arrive with the sessions that grant commerce
- * authority.
+ * Session 07 grants COMMERCE: validated add-to-cart of the authoritative
+ * configuration and a checkout HANDOFF into the existing provider flow
+ * (addConfiguredProductToCart / suggestAddToCart / getCartSummary /
+ * startCheckout) — intent only; prices, carts, and checkout URLs remain
+ * entirely server/application authority.
  *
  * Deliberately absent, forever, from any customer-facing toolset:
  * modifyPrice, issueRefund, changeAdBudget, createAdCampaign, modifyMargin,
- * modifyProductManufacturingRules, adminDatabaseQuery — with no tool, a
- * prompt-injected request has nothing to call (capability boundary, not
- * prompt wording).
+ * modifyProductManufacturingRules, adminDatabaseQuery, createCheckout
+ * (direct provider checkout construction), applyDiscount, markOrderPaid,
+ * capturePayment, setShipping, setTax — with no tool, a prompt-injected
+ * request has nothing to call (capability boundary, not prompt wording).
  */
 
 const SALES_TOOLS: AnyToolDefinition[] = [
@@ -43,6 +53,10 @@ const SALES_TOOLS: AnyToolDefinition[] = [
   getCurrentConfigurationTool,
   updateConfigurationTool,
   suggestConfigurationUpdateTool,
+  addConfiguredProductToCartTool,
+  suggestAddToCartTool,
+  getCartSummaryTool,
+  startCheckoutTool,
 ];
 
 /** Hard structural invariant: customer-facing toolsets never contain restricted tools. */

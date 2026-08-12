@@ -53,20 +53,22 @@ limits, refund authorization, agent autonomy, approvals.
 
 ## Current project stage
 
-**Session 06 "AI Sales × Product Configurator" COMPLETE (2026-08-10) —
-ONE shared authoritative configuration state (`lib/configuration` +
-`product_configurations` row, version = revision) drives both the visual
-configurator and the AI: chat "make it 10,000" visibly updates the
-configurator + price; manual choices are visible to the agent; stale AI
-writes are revision-blocked; the manual cart receives the same shared
-state. AI still OFF by default. Next milestone: Session 07 "AI Sales ×
-Cart / Checkout".**
+**Session 07 "AI Sales × Cart / Checkout" COMPLETE (2026-08-11) — the
+first full AI-assisted purchase path (§44): conversation → configuration →
+explicit "add it to my cart" → server-validated engine-priced cart line
+(the SAME client cart + `/api/checkout` re-quote as manual) → explicit
+customer-confirmed checkout handoff → order, with conservative
+`aiAssisted` + conversation linkage on the order row. The AI gained
+intent, never authority: no payment/discount/URL surface exists,
+repriced/stale adds require fresh confirmation, purchase events remain
+order-creation-only. AI still OFF by default. Next milestone: Session 08
+"Customer Intelligence Engine".**
 
-## Current architecture (2026-08-10, post-Session 06)
+## Current architecture (2026-08-11, post-Session 07)
 
 Working B2B storefront, verified end-to-end (see
 docs/CURRENT_SYSTEM_AUDIT.md + its Session-02 resolution note):
-- Next.js 16.3 App Router · React 19 · TS · Tailwind v4 · zod · vitest (317 tests)
+- Next.js 16.3 App Router · React 19 · TS · Tailwind v4 · zod · vitest (352 tests)
   · Drizzle ORM + Postgres (PGlite embedded dev/test, node-postgres prod).
 - **Database (Session 03):** `db/schema.ts` (20 tables: sessions, events,
   customers, businesses, orders+lines, quotes, artworks, configurations,
@@ -196,6 +198,42 @@ docs/CURRENT_SYSTEM_AUDIT.md + its Session-02 resolution note):
   "✓ Configurator updated" chips + tappable suggestion chips; mobile
   launcher/panel lift above the sticky Add-to-Cart bar when a
   configurator is mounted.
+- **AI Sales × Cart/Checkout (Session 07 —
+  docs/AI_COMMERCE_INTEGRATION.md is authoritative):** the cart stays
+  client-side (`bd_cart_v1`) and `/api/checkout` stays the only order
+  authority — S07 adds a validated channel INTO them.
+  `lib/commerce/cart-line.ts` = ONE server path turning the authoritative
+  shared configuration (at `expectedRevision`) into an engine-priced cart
+  line; `expectedTotalCents` is /api/checkout-style drift detection ONLY
+  (`repriced` requires fresh customer confirmation; `stale_configuration`
+  returns current state; artwork/custom-quote rules match the manual
+  button). Four sales tools (11→15; sales = READ+CUSTOMER_WRITE+COMMERCE):
+  addConfiguredProductToCart (COMMERCE, explicit-intent commit),
+  suggestAddToCart (READ → "Add to cart" chip; taps re-validate via
+  `/api/cart/line`), getCartSummary (READ over the server-minted client
+  cart snapshot), startCheckout (COMMERCE, EMPTY strict input → validated
+  "Continue to checkout" action the CUSTOMER taps). Chat POST carries a
+  STRICT price-free cart snapshot (client prices = 422); context injects
+  the engine-priced cart view; SalesAgentResult/wire gain cartAdd +
+  checkoutAction + ADD_TO_CART suggested actions. The client applies
+  validated lines via the SAME `useCart().addLine` as manual and checks
+  out via the NEW shared `lib/cart/checkout-client.ts` (cart page
+  refactored onto it) — REPRICED shows "Confirm & continue at $X" and is
+  never auto-accepted. Orders: `aiAssisted` + `conversationId` stamped at
+  creation via `lib/data/ai-assistance.ts` (conservative: a sales
+  conversation AND ≥1 material ai_* commerce event; widget-loaded ≠
+  assisted); purchase_completed carries an aiAssisted prop. Outcomes:
+  `cart_added` added with funnel ranking (purchased > checkout_started >
+  cart_added/quote_started — never downgrades). Events: +3 taxonomy names
+  (ai_add_to_cart_proposed/requested, ai_checkout_requested); generic
+  add_to_cart/checkout_started gain optional addedVia/trigger "ai_chat"
+  props. Prompt v1.2.0 (explicit-intent list + non-examples, reprice
+  confirmation, dual "add and checkout" intent, shipping/tax =
+  "calculated at checkout"). Security structural + red-team-tested: no
+  price/discount/config/url tool inputs (STRICT schemas), no
+  markOrderPaid/applyDiscount/capturePayment/createCheckout tools,
+  checkout URLs only from the provider via `/api/checkout`, purchase
+  events only at order creation.
 - `lib/commerce` — provider abstraction; `mock` active, `shopify`
   Storefront skeleton env-gated (variant mapping TODO, needs real store).
   **All catalog reads go through `lib/commerce/catalog.ts`** (provider-
@@ -633,6 +671,101 @@ known issue "six useState hooks local to ProductConfigurator" is RESOLVED.
     thresholds item). No schema/migration changes — S03's tables already
     carried version/source/configSnapshotJson.
 
+## Completed in Session 07 (2026-08-11) — AI Sales × Cart / Checkout
+
+The first full AI-assisted purchase path (§44), OFF by default; manual
+commerce browser-verified byte-identical with every flag off.
+
+1. **`lib/commerce/cart-line.ts`** — ONE server validation path behind
+   every AI-path cart addition (tool commit AND chip tap): loads the
+   AUTHORITATIVE shared configuration, verifies `expectedRevision` (S06
+   guard extended to commerce), enforces manual-parity add rules (artwork
+   required, custom-quote routing), re-prices with the engine, and treats
+   `expectedTotalCents` as drift detection only → `repriced` with both
+   totals (never a silent add at a changed price). The prepared line is
+   byte-equivalent to a manual add (same config/optionSummary/engine
+   prices — asserted in tests).
+2. **`/api/cart/line`** — the chip-tap endpoint: STRICT body (injected
+   price/config keys = loud 422), session-scoped, 200 prepared / 409
+   REPRICED / 409 STALE_CONFIGURATION / 422 ARTWORK·QUOTE / 404; emits
+   `ai_add_to_cart_requested{via:chip}` + stamps `cart_added`.
+3. **Four commerce tools (registry 11→15; sales grants COMMERCE)** —
+   addConfiguredProductToCart (explicit customer intent only; structured
+   price_changed/stale/blocked outcomes), suggestAddToCart (no-write
+   "Add to cart" button proposal), getCartSummary (engine-priced view of
+   the client-reported cart; honest "unavailable" without a snapshot),
+   startCheckout (EMPTY strict input; validates readiness and surfaces a
+   customer-confirmed CONTINUE_TO_CHECKOUT action — with the mock
+   provider a checkout IS an order, so tap-to-confirm is structural).
+4. **Cart visibility** — chat POST gains a bounded STRICT **price-free**
+   cart snapshot (ids/quantities/hasArtwork, ≤50 lines; client prices are
+   a 422, never data); server-minted into ToolExecutionContext; context
+   block renders the engine-priced cart ("Cart (N lines)…" /
+   "Cart: empty."); MAX_CONTEXT_CHARS 2400→3200.
+5. **Client execution through the manual paths** — validated `cartAdd`
+   payloads apply via the SAME `useCart().addLine` the configurator uses
+   (+ generic add_to_cart event with addedVia:"ai_chat"); NEW
+   `lib/cart/checkout-client.ts` is the ONE client checkout submission
+   (cart page refactored onto it); the chat's "Continue to checkout · $X"
+   runs it, shows REPRICED as "Prices were updated … Confirm & continue
+   at $Y" (cart corrected to server numbers, second explicit tap), and
+   navigates only to the app's order page or the provider URL returned by
+   `/api/checkout`. Chips: real buttons, loading/disabled states,
+   role="status" announcements; mobile keeps the S06 offsets.
+6. **Attribution & outcomes** — `lib/data/ai-assistance.ts` defines
+   material assistance conservatively (sales conversation + ≥1 of
+   ai_product_recommended / ai_configuration_updated /
+   ai_add_to_cart_requested / ai_checkout_requested); order creation
+   stamps `aiAssisted` + links `conversationId` (linked whenever a
+   conversation exists; assisted only when material) and
+   purchase_completed carries an aiAssisted prop. Conversation outcome
+   `cart_added` added with funnel ranking (purchased > checkout_started >
+   cart_added/quote_started); escalated preserved. Taxonomy +3:
+   ai_add_to_cart_proposed / ai_add_to_cart_requested{via,outcome} /
+   ai_checkout_requested{outcome}.
+7. **Prompt `ai_sales_agent` v1.2.0** — cart & checkout contract:
+   explicit-intent-only with counted examples AND non-examples ("looks
+   good"/"how much" never add), read-then-add (revision + shown total),
+   reprice → state new price + wait for confirmation, stale → reconcile,
+   artwork/quote routing, "add it and take me to checkout" as dual
+   intent, getCartSummary for cart questions (never guess), duplicate-add
+   honesty, shipping/tax = "calculated at checkout" only.
+8. **Security (structural, red-team-tested)** — no tool input carries a
+   usable price/discount/config/artwork/URL (STRICT schemas →
+   invalid_input); markOrderPaid/applyDiscount/capturePayment/
+   createCheckout/setShippingCost/setTax don't exist (unknown_tool, zero
+   side effects); "add this for $1" → server re-quote wins; checkout
+   destinations are provider-generated only; purchase events fire ONLY at
+   authoritative order creation (tested: none from AI actions).
+9. **Tests 317 → 352** (all green; zero credentials/network):
+   tests/cart-line.test.ts (prepare statuses, manual-equivalence,
+   /api/cart/line contract + injection, outcome ranking, aiAssisted
+   attribution + purchase-prop), tests/ai-cart-tools.test.ts (4 tools,
+   permission tiers, injection red-team, §44 flow, weak-language no-op,
+   ADD_TO_CART action lift, cart context injection, chat-route wire +
+   strict snapshot); S04–S06 toolset/permission assertions updated.
+10. **Browser-verified (desktop + 375px mobile)** on `next dev` with the
+    S06-style scripted provider mock (ANTHROPIC_BASE_URL; no credentials,
+    no app-code changes, .env.local removed after): "Make it 10,000 large
+    black bags with no logo" → config sync; "Add it to my cart." →
+    "✓ Added to your cart" chip (Large·Black·No logo·10,000×$0.37=
+    $3,700.00 demo) + badge + identical cart-page line; "add at the old
+    price" → price_changed relayed, nothing added; "Checkout please" →
+    "Continue to checkout · $3,700.00 (demo)" → tap → order
+    MOCK-MSPBCD9Q; tampered cart price → visible REPRICED confirm →
+    corrected order; mobile flow no-overlap; provider-down single safe
+    sentence with manual commerce intact; flags-off manual two-line order
+    (AI line preserved beside manual line).
+11. **Docs** — new docs/AI_COMMERCE_INTEGRATION.md (authoritative);
+    ARCHITECTURE (S07 module row, invariant 2 extended, 4 decision-log
+    entries), AI_SALES_AGENT (15 tools, v1.2.0, wire shape, S07 UI/
+    metrics/limitations), AI_AGENT_ARCHITECTURE (toolset ✅, flow,
+    red-team), AI_RUNTIME (toolset table), AI_CONFIGURATOR_INTEGRATION
+    (S07 cross-ref), DATABASE_SCHEMA (taxonomy, outcomes, aiAssisted
+    semantics), LAUNCH_CHECKLIST (+/api/cart/line edge limiting, S07
+    boundary verification), prompts/00-INDEX statuses. No schema/migration
+    changes — S03's orders.aiAssisted/conversationId columns were waiting.
+
 ## Important decisions (and why)
 
 1. **Database is the first ADD** — every roadmap capability consumes
@@ -722,6 +855,25 @@ known issue "six useState hooks local to ProductConfigurator" is RESOLVED.
     customer's words drove it, the S05 evidence extractor independently
     grants USER_STATED from the actual message. Still zero model-writable
     paths to top-rank provenance.
+22. **(S07) The cart stays client-side; the AI gets a validated channel
+    INTO it, not a server cart** — a server cart would fork the working
+    localStorage-cart + checkout-re-quote design into two truths. The
+    server validates/prices lines from the authoritative configuration;
+    the client applies them through the manual `addLine`; `/api/checkout`
+    stays the only order authority. AI and manual lines are equivalent by
+    construction.
+23. **(S07) Commerce tools carry intent, never authority; checkout needs
+    a customer tap** — expectedRevision/expectedTotalCents are drift
+    detection (reprice/stale = fresh confirmation required);
+    startCheckout's input is the empty strict object and only surfaces an
+    action the customer clicks (mock checkout IS an order, so
+    tap-to-confirm is structural). The agent sees the cart only as a
+    price-free client-reported snapshot the engine re-prices.
+24. **(S07) aiAssisted is conservative and event-derived** — a sales
+    conversation plus ≥1 material ai_* commerce event; a loaded widget or
+    small-talk chat never counts. The order stores the boolean +
+    conversation link; details stay derivable from events (no duplicated
+    columns, no invented probability scores).
 
 ## Known issues
 
@@ -773,7 +925,21 @@ known issue "six useState hooks local to ProductConfigurator" is RESOLVED.
 - (S05) Chat rate limiting is per-instance in-memory token buckets — a
   deliberate application guard, not a distributed limiter; platform-edge
   limiting is a ⛔ LAUNCH_CHECKLIST item before enabling AI_SALES on real
-  traffic.
+  traffic (S07: `/api/cart/line` shares this posture — strictly bounded
+  payloads, no route limiter).
+- (S07) Explicit-intent classification is prompt-enforced (v1.2.0) plus
+  structural backstops (chips are customer taps; reprice/stale/checkout
+  all require explicit confirmation) — there is no deterministic intent
+  classifier, so an over-eager model could add a REVERSIBLE cart line
+  without perfect wording; it can never price, pay, or check out.
+- (S07) The chat's cart chips (added/repriced states) are per-turn client
+  state — reloading restores transcript text but not chip states (same as
+  S06 suggestion chips; the cart itself persists). Duplicate adds follow
+  existing cart semantics (append) — the agent is prompted to surface
+  "already in your cart" instead of silently re-adding.
+- (S07) `orders.conversationId` links the latest sales conversation
+  whenever one exists; `aiAssisted` alone marks material assistance — do
+  not read linkage as attribution.
 - (S05) Escalation handoffs are recorded (system message rows +
   human_handoff_requested events) but not yet DELIVERED anywhere — the
   destination is owner config (BUSINESS_CONFIG_TODO).
@@ -802,18 +968,18 @@ filled)**, guardrail thresholds, escalation destination.
 
 ## Deferred work
 
-Explicitly preserved for later sessions: **AI-assisted Add-to-Cart /
-checkout** (S07 — S06 deliberately stops at synchronized configuration:
-no cart/quote/order tools exist, the manual Add-to-Cart flow receives the
-shared state), **human escalation delivery** (owner config), **Customer
-Intelligence** (S08), **Business Intelligence / Guardrails Action Center**,
-**Pricing Agent/Intelligence** (S12), **CRO Agent** + experiment runtime
-(S11), **Google Ads Agent** (S13+), **Meta Ads Agent**, **CEO Agent**
-(S09), autonomous/background configuration actions (never — AI acts only
-on customer interaction). Also deferred: Shopify order webhooks → DB order
-rows, accounts/reorder, email automation, Merchant Center feed, admin
-surfaces, privacy portal UI, conversation `abandoned` outcome sweep,
-owner-configured confirmation thresholds (BUSINESS_CONFIG_TODO). Order per
+Explicitly preserved for later sessions: **human escalation delivery**
+(owner config), **Customer Intelligence** (S08), **Business Intelligence /
+Guardrails Action Center**, **Pricing Agent/Intelligence** (S12), **CRO
+Agent** + experiment runtime (S11), **Google Ads Agent** (S13+), **Meta
+Ads Agent**, **CEO Agent** (S09), autonomous commerce/background actions
+(never — every commerce mutation traces to an explicit customer message or
+tap). Also deferred: `createDraftQuote` tool (the AI points at
+/request-quote today), `getOrderStatus` tool, Shopify order webhooks → DB
+order rows (real-store aiAssisted linkage lands there), accounts/reorder,
+email automation, Merchant Center feed, admin surfaces, privacy portal UI,
+conversation `abandoned` outcome sweep, owner-configured confirmation
+thresholds (BUSINESS_CONFIG_TODO). Order per
 `docs/AI_PLATFORM_ROADMAP.md`.
 
 ### Deferred technical debt (Session 03 audit — accepted, not forgotten)
@@ -843,18 +1009,14 @@ the 03.5 hardening pass (small blast radius, none block Session 04):
 
 ## Recommended next session
 
-**Session 07 — AI Sales × Cart / Checkout** — run
-`prompts/07-ai-checkout.md`:
-the end-to-end configuration system is stable (317 tests, browser-verified
-both directions), so the natural next milestone is letting the
-conversation carry through to commerce: an `addConfiguredProductToCart`
-tool that routes the SHARED configuration through the existing server
-re-quote (409 REPRICED semantics preserved — the AI never sets prices),
-customer-confirmed add-to-cart from chat (structured action, same
-suggestion-chip pattern as S06), cart visibility for the agent
-(getCartState READ tool), and the conversation outcome links
-(`aiAssisted` on orders + conversationId already exist on the schema).
-Hard boundaries staying: no checkout submission, no payment actions, no
-autonomous cart mutations — customer-confirmed actions only. Also
-available if preferred: Session 08 Customer Intelligence (the
-conversation/configuration/order corpus is now rich enough to aggregate).
+**Session 08 — Customer Intelligence Engine** — run
+`prompts/08-customer-intelligence.md`: the AI-assisted purchase funnel is
+now stable end-to-end (conversation → configuration → cart → checkout →
+order, 352 tests, browser-verified), and the corpus is rich for
+aggregation: conversations with summaries + funnel-ranked outcomes
+(cart_added/checkout_started/purchased), provenance-labeled need
+profiles, configuration histories, orders with conservative aiAssisted +
+conversation linkage, and the full ai_* event funnel. The S03 Insight
+model (sourceRefs ≥ 1 enforced) and READ-only customer_intelligence
+permissions are already waiting. Hard boundaries staying: insights must
+trace to real records; no customer-facing output; no storefront mutation.

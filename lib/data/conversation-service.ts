@@ -43,6 +43,7 @@ export const messageInputSchema = z.object({
 export const CONVERSATION_OUTCOMES = [
   "abandoned",
   "quote_started",
+  "cart_added",
   "checkout_started",
   "purchased",
   "escalated",
@@ -149,25 +150,60 @@ export async function findActiveConversation(
 }
 
 /**
+ * Funnel depth of each commerce outcome — a later stage never downgrades to
+ * an earlier one (S07: cart_added slots between quote_started and
+ * checkout_started). quote_started and cart_added share a rank: they are
+ * parallel paths (quote flow vs cart flow) and the customer can genuinely
+ * move between them, so the latest of the two wins.
+ */
+const COMMERCE_OUTCOME_RANK: Record<string, number> = {
+  quote_started: 1,
+  cart_added: 1,
+  checkout_started: 2,
+  purchased: 3,
+};
+
+/**
  * Stamp a commerce outcome on the session's active sales conversation
- * WITHOUT ending it (S06): a customer who starts checkout or a quote after
- * chatting can keep chatting. Escalated conversations keep their escalated
- * outcome (a handoff in motion outranks a funnel stamp). No-op when the
- * session has no live conversation.
+ * WITHOUT ending it (S06): a customer who adds to cart, starts checkout or
+ * a quote after chatting can keep chatting. Escalated conversations keep
+ * their escalated outcome (a handoff in motion outranks a funnel stamp).
+ * Deeper funnel stages are never downgraded (cart_added can't overwrite
+ * checkout_started or purchased). No-op when the session has no live
+ * conversation.
  */
 export async function markConversationOutcomeForSession(
   sessionId: string,
-  outcome: Extract<(typeof CONVERSATION_OUTCOMES)[number], "quote_started" | "checkout_started" | "purchased">,
+  outcome: Extract<(typeof CONVERSATION_OUTCOMES)[number], "quote_started" | "cart_added" | "checkout_started" | "purchased">,
 ): Promise<void> {
   const conversation = await findActiveConversation(sessionId, "sales");
   if (!conversation || conversation.status === "escalated") return;
-  // purchased outranks checkout_started; never downgrade.
-  if (conversation.outcome === "purchased" && outcome !== "purchased") return;
+  const currentRank = conversation.outcome ? COMMERCE_OUTCOME_RANK[conversation.outcome] ?? 0 : 0;
+  if (COMMERCE_OUTCOME_RANK[outcome] < currentRank) return;
   const db = await getDb();
   await db
     .update(conversations)
     .set({ outcome, updatedAt: new Date() })
     .where(eq(conversations.id, conversation.id));
+}
+
+/**
+ * The session's most recent conversation for an agent regardless of status —
+ * order attribution links orders to the conversation that assisted them even
+ * after it ended (S07). Read-only; never used to resume a thread.
+ */
+export async function findLatestConversation(
+  sessionId: string,
+  agentType = "sales",
+): Promise<ConversationRow | null> {
+  const db = await getDb();
+  const [row] = await db
+    .select()
+    .from(conversations)
+    .where(and(eq(conversations.sessionId, sessionId), eq(conversations.agentType, agentType)))
+    .orderBy(desc(conversations.startedAt))
+    .limit(1);
+  return row ?? null;
 }
 
 /**
