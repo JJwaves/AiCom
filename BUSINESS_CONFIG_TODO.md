@@ -124,4 +124,12 @@ anyone invent them. Units: integer cents; rates in basis points (290 = 2.9%).
 | **Escalation destination (email/Slack/phone for human handoff)** | The S05 Sales Agent already RECORDS structured handoffs (conversation `system` messages, `human_handoff_requested` events) — but nothing DELIVERS them yet. Provide the destination + wire delivery before enabling AI_SALES for real customers, or watch the DB manually |
 | AI configuration confirmation thresholds (S06) | No numeric cost-impact thresholds exist yet, deliberately (no invented economics). Today the sales prompt applies a behavioral policy: clearly-requested small changes commit directly; changes with substantial cost impact preview + propose an apply chip first. If the owner wants hard rules ("quantity increases over $X require the chip"), define them as config and wire them into the prompt/tool layer |
 | Confirmed factory capabilities list (what the sales agent may claim) | `config/products.ts` `confirmed` flags + capability notes |
-| Admin users + auth method for `/admin/*` | auth config (Stage B+) |
+| ~~Admin users + auth method for `/admin/*`~~ **RESOLVED S08** | HTTP Basic from env: set `ADMIN_USER` + `ADMIN_PASSWORD` (`.env`); unset ⇒ every admin path 404s (fail closed). See docs/CUSTOMER_INTELLIGENCE.md + LAUNCH_CHECKLIST "Admin surface" |
+
+## Customer intelligence (Session 08)
+
+| Item | Where |
+| --- | --- |
+| Customer Intelligence on/off | `.env` → `AI_CUSTOMER_INTELLIGENCE_ENABLED` (default false; admin surface 404s while off). AI classification additionally needs the AI runtime + key above |
+| Evidence / denominator / trend / segment thresholds | `config/customer-intelligence.ts` — documented conservative defaults (insight ≥3 evidence, % needs ≥5 denominator, trend needs ≥5 previous base, segments ≥5 per cell, batch 25). Review before relying on the dashboard for decisions; they gate when the system SPEAKS, not what it claims |
+| Volume-group boundaries | `config/customer-intelligence.ts` `VOLUME_GROUPS` — derived from the current 500 MOQ + quantity presets; revisit if MOQ or presets change |

@@ -25,6 +25,13 @@ take real traffic until they pass.
 - [ ] ⛔ Escalation delivery wired to a real destination (BUSINESS_CONFIG_TODO) — today handoffs are recorded in the DB, not sent anywhere
 - [ ] Chat verified end-to-end on the production build with flags on, and verified ABSENT (no UI, 503 API) with flags off
 
+## Admin surface (Session 08 — only if enabling AI_CUSTOMER_INTELLIGENCE)
+- [ ] ⛔ `ADMIN_USER` + `ADMIN_PASSWORD` set to strong values (long random password) — while unset every /admin and /api/admin path is a 404 by design; never reuse other credentials
+- [ ] ⛔ Admin served over HTTPS only (Basic auth sends credentials per request — TLS is the transport protection)
+- [ ] Verify /admin/customer-intelligence answers 404 with the flag off, 401-challenge with wrong credentials, and renders with correct ones on the production build
+- [ ] Verify production intelligence shows REAL data only (`npm run db:seed` demo rows must never reach the production database — existing DB checklist item)
+- [ ] Review CUSTOMER_INTELLIGENCE thresholds in `config/customer-intelligence.ts` (documented defaults: 3 evidence / 5 denominator / 5 trend base / batch 25) before relying on the report for decisions
+
 ## Commerce
 - [ ] ⛔ Shopify production credentials in env (`NEXT_PUBLIC_SHOPIFY_*`)
 - [ ] ⛔ Variant mapping complete in `lib/commerce/shopify.ts` (no `REPLACE_ME` ids)

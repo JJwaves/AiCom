@@ -53,28 +53,32 @@ limits, refund authorization, agent autonomy, approvals.
 
 ## Current project stage
 
-**Session 07 "AI Sales × Cart / Checkout" COMPLETE (2026-08-11) — the
-first full AI-assisted purchase path (§44): conversation → configuration →
-explicit "add it to my cart" → server-validated engine-priced cart line
-(the SAME client cart + `/api/checkout` re-quote as manual) → explicit
-customer-confirmed checkout handoff → order, with conservative
-`aiAssisted` + conversation linkage on the order row. The AI gained
-intent, never authority: no payment/discount/URL surface exists,
-repriced/stale adds require fresh confirmation, purchase events remain
-order-creation-only. AI still OFF by default. Next milestone: Session 08
-"Customer Intelligence Engine".**
+**Session 08 "Customer Intelligence Engine" COMPLETE (2026-08-12) — the
+first intelligence layer AND the first admin surface: real conversations/
+profiles/configurations/orders → LOW_COST controlled-taxonomy message
+labeling (server-validated evidence, idempotent explicit runs) →
+DETERMINISTIC aggregation (`modules/customer-intelligence` has no lib/ai
+import — counts/percentages structurally cannot be fabricated) →
+threshold-gated, identity-stable CustomerInsight + ProductOpportunity
+rows (sourceRefs ≥ 1) → `/admin/customer-intelligence` behind fail-closed
+HTTP Basic auth + `AI_CUSTOMER_INTELLIGENCE` flag. OBSERVE→CLASSIFY→
+AGGREGATE→REPORT only: no autonomous actions, nothing customer-facing,
+AI can never validate manufacturing feasibility. Next milestone:
+Session 09 "Business Intelligence + CEO Recommendation Agent".**
 
-## Current architecture (2026-08-11, post-Session 07)
+## Current architecture (2026-08-12, post-Session 08)
 
 Working B2B storefront, verified end-to-end (see
 docs/CURRENT_SYSTEM_AUDIT.md + its Session-02 resolution note):
-- Next.js 16.3 App Router · React 19 · TS · Tailwind v4 · zod · vitest (352 tests)
+- Next.js 16.3 App Router · React 19 · TS · Tailwind v4 · zod · vitest (415 tests)
   · Drizzle ORM + Postgres (PGlite embedded dev/test, node-postgres prod).
-- **Database (Session 03):** `db/schema.ts` (20 tables: sessions, events,
-  customers, businesses, orders+lines, quotes, artworks, configurations,
-  conversations+messages, need profiles, ai_usage, agent_decisions,
-  approvals, agent_configs, insights, opportunities, experiments,
-  assignments) + additive SQL migrations in `db/migrations/`.
+- **Database (Session 03; +1 table Session 08):** `db/schema.ts` (21
+  tables: sessions, events, customers, businesses, orders+lines, quotes,
+  artworks, configurations, conversations+messages,
+  conversation_classifications (S08), need profiles, ai_usage,
+  agent_decisions, approvals, agent_configs, insights, opportunities,
+  experiments, assignments) + additive SQL migrations in `db/migrations/`
+  (0000–0002).
   `DATABASE_URL` unset ⇒ embedded PGlite at `.data/pglite` self-migrates
   (zero-setup dev; tests use `memory://`); set ⇒ real Postgres, migrations
   applied explicitly via `npm run db:migrate`. **`NODE_ENV=production`
@@ -234,6 +238,44 @@ docs/CURRENT_SYSTEM_AUDIT.md + its Session-02 resolution note):
   markOrderPaid/applyDiscount/capturePayment/createCheckout tools,
   checkout URLs only from the provider via `/api/checkout`, purchase
   events only at order creation.
+- **Customer Intelligence (Session 08 — docs/CUSTOMER_INTELLIGENCE.md is
+  authoritative):** `modules/customer-intelligence` = the DETERMINISTIC
+  authority (closed question/objection/request taxonomies, catalog-support
+  verdicts supported|custom_quote_path|unsupported from the REAL catalog,
+  the qualified-conversation rule, conversation-deduplicated aggregation,
+  three-lane demand requested[stated vs inferred split]/configured/
+  purchased, funnel/segment/attribution/association metrics, threshold-
+  gated identity-stable insight+opportunity generation) — it has NO lib/ai
+  import. `lib/ai/agents/customer-intelligence/` = LOW_COST labeling only
+  (`ai_customer_intelligence_classifier` v1.0.0, agentType
+  customer_intelligence, closed enums, messageIds verified against the
+  transcript sent, one idempotent row per conversation in
+  `conversation_classifications` [migration 0002] keyed by
+  classifierVersion+sourceUpdatedAt) + explicit batch processing (cap 25;
+  budget/provider failures leave rows PENDING, invalid output marks ONE
+  row failed and continues, flags-off touches nothing). All DB access via
+  `lib/data/intelligence-service.ts` (::float8 aggregates). Insights:
+  types CUSTOMER_QUESTION/OBJECTION_PATTERN/DEMAND_PATTERN/PRODUCT_GAP/
+  MOQ_SIGNAL/SHIPPING_SIGNAL/PRICING_SIGNAL/SEGMENT_PATTERN/
+  CONVERSION_PATTERN; valueJson.identityKey = TYPE:dimension:periodDays
+  (one row ever — candidate/validated update in place, dismissed/archived
+  resurrect only on GROWN evidence); statuses +dismissed (S08).
+  Opportunities: lower_moq + unsupported_product, created `proposed` only,
+  validated/rejected are human-frozen, humanValidationRequired always
+  true. Admin: `/admin/customer-intelligence` (+ per-insight/opportunity
+  evidence drill-downs with bounded excerpts, missing-evidence honesty) +
+  `/api/admin/customer-intelligence/*` (process, status routes) behind
+  HTTP Basic (`ADMIN_USER`/`ADMIN_PASSWORD` via `proxy.ts` + per-route
+  re-checks; unset ⇒ 404 fail-closed) + the flag; /admin
+  robots-disallowed. Thresholds in `config/customer-intelligence.ts`
+  (documented: insight ≥3 evidence, % ≥5 denominator, trend ≥5 base,
+  segment ≥5/cell, association ≥10pp). Qualified conversation (the
+  denominator, deterministic): funnel outcome OR escalation OR a
+  qualifying session event (price_viewed/add_to_cart/checkout_started/
+  purchase_completed/quote_*/ai_product_recommended/
+  ai_configuration_updated/ai_add_to_cart_requested/ai_checkout_requested/
+  human_handoff_requested) OR quantity/productInterest at USER_STATED/
+  CONFIGURATOR/ORDER_DATA provenance — AI_INFERRED alone never qualifies.
 - `lib/commerce` — provider abstraction; `mock` active, `shopify`
   Storefront skeleton env-gated (variant mapping TODO, needs real store).
   **All catalog reads go through `lib/commerce/catalog.ts`** (provider-
@@ -766,6 +808,99 @@ commerce browser-verified byte-identical with every flag off.
     boundary verification), prompts/00-INDEX statuses. No schema/migration
     changes — S03's orders.aiAssisted/conversationId columns were waiting.
 
+## Completed in Session 08 (2026-08-12) — Customer Intelligence Engine
+
+The first intelligence layer + the first admin surface. OBSERVE→CLASSIFY→
+AGGREGATE→REPORT only; commerce verified untouched (all S02–S07 tests
+green, no commerce file modified).
+
+1. **Schema (migration `0002_customer_intelligence.sql`, additive)** —
+   new `conversation_classifications` (one row per conversation: status
+   classified|failed, classifierVersion, promptId/promptVersion/model,
+   questions/objections/unsupportedRequests JSON with per-message
+   evidence, userMessageCount, sourceUpdatedAt; UNIQUE(conversationId);
+   CASCADE with its conversation so privacy deletion rides the S03.5
+   cascade) + `product_opportunities` gains opportunityType/valueJson/
+   periodStart/periodEnd.
+2. **`modules/customer-intelligence/`** — deterministic authority with NO
+   lib/ai import: taxonomy.ts (14 question themes, 12 objection types,
+   request kinds, support verdicts, insight/opportunity types, outcome
+   groups, CLASSIFIER_VERSION), catalog-support.ts (real-catalog matching;
+   custom color/size/capacity/below-MOQ = custom_quote_path, never gaps;
+   short option ids match whole words only), qualified.ts (THE deterministic
+   denominator), period.ts ([start,end) windows, safePercentage/safeTrendPct
+   — null under documented minimums), aggregate.ts (corpus load,
+   conversation-level dedup with separate mention counts, three demand
+   lanes, funnel from events+orders, segments, attribution [click ids
+   never surfaced], descriptive associations), insights.ts +
+   opportunities.ts (template-filled candidates from real counts; stable
+   identityKey; dismissed/archived resurrect only on grown evidence;
+   opportunities created `proposed` only, human decisions frozen),
+   report.ts (everything the admin page renders + conservative
+   lost-opportunity view).
+3. **AI classification (`lib/ai/agents/customer-intelligence/`)** —
+   classifier.ts: LOW_COST `generateStructuredObject` with closed-enum zod
+   schema; labels pointing at messages we didn't send are DROPPED
+   (logged); request phrases lowercased+deduped; prompt
+   `ai_customer_intelligence_classifier` v1.0.0 (registry) with explicit
+   question-vs-objection contract. process.ts: explicit idempotent
+   batches (never page-load; cap 25) — reprocess only when version
+   changed / new messages / previous failure; budget/provider/rate/timeout
+   ⇒ abort batch leaving rows PENDING; invalid output ⇒ that row failed
+   (errorCode), batch continues; flags-off/config ⇒ `unavailable`, zero
+   writes. AiUsage stamped per call (agentType customer_intelligence).
+4. **`lib/data/intelligence-service.ts`** — all intelligence DB access:
+   corpus queries (conversations/messages/profiles/orders/configurations/
+   sessions), GROUP BY event counts + FILTER order counts (::float8),
+   classification upsert + needs-classification detection, and
+   `resolveEvidenceRefs` (bounded excerpts; deleted rows counted as
+   missing, never reconstructed). insight-service extended: getInsight/
+   getOpportunity, updateInsightMetrics/updateOpportunityMetrics
+   (regeneration paths; opportunity status/humanValidationRequired
+   untouchable), INSIGHT_STATUSES +dismissed.
+5. **Admin auth (FIRST admin surface; decision in ARCHITECTURE.md)** —
+   HTTP Basic from `ADMIN_USER`/`ADMIN_PASSWORD`: `proxy.ts` (Next 16
+   middleware) challenges /admin + /api/admin; `lib/admin/auth.ts`
+   (edge-safe, constant-time compare) re-checked inside EVERY page and
+   route; env unset ⇒ 404 everywhere (fail closed, tests included);
+   /admin robots-disallowed, pages noindex.
+6. **Admin UI + API** — `/admin/customer-intelligence`: period selector
+   (7/30/90 + custom ?from/?to), classification status + "Process new
+   conversations" button (the ONLY AI trigger), overview cards,
+   AI-assisted funnel (session-distinct; purchases from the conservative
+   order flag), questions/objections tables (counts, mentions,
+   denominator-honest percentages, gated trends), three-lane demand,
+   product gaps + custom-quote-path requests, conservative lost
+   opportunities, opportunities + insights with status chips + evidence
+   drill-down pages, segments/associations (sample-gated), honest empty
+   states quoting real thresholds. API: POST process (runs classification
+   batch, then deterministic insight+opportunity generation — works with
+   AI unavailable), POST insights/[id]/status, POST
+   opportunities/[id]/status (the only path to validated/rejected).
+7. **Config** — `config/customer-intelligence.ts` (documented policy
+   thresholds + VOLUME_GROUPS derived from the real 500 MOQ + presets);
+   `.env.example` +AI_CUSTOMER_INTELLIGENCE_ENABLED +ADMIN_USER/
+   ADMIN_PASSWORD; flag already existed (S04).
+8. **Tests 352 → 415** (all green; zero credentials/network; fixtures
+   test-only): taxonomy/catalog-support/qualified/period math (17),
+   classifier + processing failure modes incl. fabricated-messageId drop,
+   idempotency, budget/provider aborts, flags-off (10), aggregation —
+   dedup(4 mentions=1 conversation), question-vs-objection fixtures
+   (Restaurant B/D), period filtering, demand-lane separation, funnel,
+   gated associations, trends, attribution without click ids, suppressed
+   percentages (12), insights/opportunities — thresholds, identity dedup,
+   dismissed suppression+resurrection, human-frozen statuses,
+   evidence-vs-refs enforcement (10), privacy — cascade + missing-evidence
+   honesty + bounded excerpts (4), admin — fail-closed auth, flag gating,
+   graceful AI-less processing, status routes (10).
+9. **Docs** — new docs/CUSTOMER_INTELLIGENCE.md (authoritative);
+   ARCHITECTURE (admin-surface note, module map, 4 decision-log entries),
+   DATABASE_SCHEMA (S08 writer + classification table + privacy note),
+   AI_AGENT_ARCHITECTURE (agent #2 implemented), AI_RUNTIME (prompt),
+   GUARDRAILS (CI autonomy row), AI_PLATFORM_ROADMAP (Stage D ✅),
+   prompts/00-INDEX (08 ✅, 09 next), LAUNCH_CHECKLIST (admin section),
+   BUSINESS_CONFIG_TODO (admin auth RESOLVED + CI thresholds), .env.example.
+
 ## Important decisions (and why)
 
 1. **Database is the first ADD** — every roadmap capability consumes
@@ -874,6 +1009,29 @@ commerce browser-verified byte-identical with every flag off.
     small-talk chat never counts. The order stores the boolean +
     conversation link; details stay derivable from events (no duplicated
     columns, no invented probability scores).
+25. **(S08) The intelligence module computes every number; the model only
+    labels with closed enums** — modules/customer-intelligence has no
+    lib/ai import (fabricated counts structurally impossible); classifier
+    labels must cite messageIds we actually sent (fabricated ids
+    dropped); catalog support is deterministic matching, never model
+    opinion. Chosen over LLM-estimates-percentages and free-text
+    categories.
+26. **(S08) Admin auth = HTTP Basic from env, proxy challenge + per-route
+    re-check, fail-closed 404** — no session store or login UI for a
+    single-operator tool; unset credentials mean the surface doesn't
+    exist; handlers stay directly testable. Chosen over login+session and
+    URL tokens.
+27. **(S08) Classification persists once per conversation; reprocessing
+    is explicit and version/message-driven** — page loads never call the
+    model; budget/provider failures leave work PENDING (not failed) so
+    runs resume; AI spend is bounded by a batch-capped admin action.
+    Chosen over classify-on-load and background workers.
+28. **(S08) Insights/opportunities are identity-stable and humans own
+    terminal statuses** — one row per TYPE:dimension:periodDays updated
+    in place; dismissed rows return only on grown evidence; generation
+    creates opportunities as `proposed` and never touches
+    validated/rejected — manufacturing feasibility is human-only by
+    construction.
 
 ## Known issues
 
@@ -952,6 +1110,23 @@ commerce browser-verified byte-identical with every flag off.
   column); same-millisecond rows in one turn could theoretically
   interleave in history reads — not observed in tests, revisit if turn
   transcripts ever misorder.
+- (S08) The admin page inherits the storefront layout chrome
+  (header/footer) — app/layout.tsx wraps every route and opting out would
+  require a route-group restructure; accepted for an internal tool (the
+  chat launcher only renders under the separate AI_SALES gates).
+- (S08) Classification coverage is explicit-run-driven: the dashboard
+  shows pending/failed counts instead of silently classifying on load.
+  A "weekly" cadence means running the admin action weekly (or wiring a
+  scheduler later) — no background worker exists by design.
+- (S08) Intelligence corpus queries are bounded (5,000 rows/period,
+  identity scan over listInsights(1000)) — fine at current scale;
+  revisit with real volume. `product_configurations` is a live mutating
+  row, so the configured demand lane reflects latest-state-in-period,
+  not a history.
+- (S08) Admin Basic auth is single-credential (no per-user identities or
+  audit trail of WHO clicked); acceptable for the single-operator stage —
+  revisit before a second admin exists. Basic auth requires HTTPS in
+  production (LAUNCH_CHECKLIST).
 
 ## Business configuration still needed
 
@@ -969,18 +1144,23 @@ filled)**, guardrail thresholds, escalation destination.
 ## Deferred work
 
 Explicitly preserved for later sessions: **human escalation delivery**
-(owner config), **Customer Intelligence** (S08), **Business Intelligence /
-Guardrails Action Center**, **Pricing Agent/Intelligence** (S12), **CRO
-Agent** + experiment runtime (S11), **Google Ads Agent** (S13+), **Meta
-Ads Agent**, **CEO Agent** (S09), autonomous commerce/background actions
+(owner config), **Business Intelligence / CEO Recommendation Agent**
+(S09), **Guardrails Action Center** (S10), **Pricing Agent/Intelligence**
+(S12), **CRO Agent** + experiment runtime (S11), **Google Ads Agent**
+(S13+), **Meta Ads Agent**, autonomous commerce/background actions
 (never — every commerce mutation traces to an explicit customer message or
-tap). Also deferred: `createDraftQuote` tool (the AI points at
+tap; S08 intelligence additionally runs only on an explicit admin
+action). Also deferred: `createDraftQuote` tool (the AI points at
 /request-quote today), `getOrderStatus` tool, Shopify order webhooks → DB
 order rows (real-store aiAssisted linkage lands there), accounts/reorder,
-email automation, Merchant Center feed, admin surfaces, privacy portal UI,
-conversation `abandoned` outcome sweep, owner-configured confirmation
-thresholds (BUSINESS_CONFIG_TODO). Order per
-`docs/AI_PLATFORM_ROADMAP.md`.
+email automation, Merchant Center feed, further admin surfaces
+(ai-actions, ai-usage — customer-intelligence shipped S08), privacy
+portal UI, conversation `abandoned` outcome sweep + intelligence
+abandonment labeling (needs an inactivity rule), scheduled/weekly
+intelligence processing (manual admin action today), quote-payload demand
+mining, painPoints/objections need-profile array extraction,
+owner-configured confirmation thresholds (BUSINESS_CONFIG_TODO). Order
+per `docs/AI_PLATFORM_ROADMAP.md`.
 
 ### Deferred technical debt (Session 03 audit — accepted, not forgotten)
 
@@ -1009,14 +1189,15 @@ the 03.5 hardening pass (small blast radius, none block Session 04):
 
 ## Recommended next session
 
-**Session 08 — Customer Intelligence Engine** — run
-`prompts/08-customer-intelligence.md`: the AI-assisted purchase funnel is
-now stable end-to-end (conversation → configuration → cart → checkout →
-order, 352 tests, browser-verified), and the corpus is rich for
-aggregation: conversations with summaries + funnel-ranked outcomes
-(cart_added/checkout_started/purchased), provenance-labeled need
-profiles, configuration histories, orders with conservative aiAssisted +
-conversation linkage, and the full ai_* event funnel. The S03 Insight
-model (sourceRefs ≥ 1 enforced) and READ-only customer_intelligence
-permissions are already waiting. Hard boundaries staying: insights must
-trace to real records; no customer-facing output; no storefront mutation.
+**Session 09 — Business Intelligence + CEO Recommendation Agent** — run
+`prompts/09-business-intelligence.md`: Customer Intelligence (S08) now
+supplies evidence-backed insights/opportunities with stable identities
+and an admin surface with auth to build on. S09's contribution-profit
+analytics need the cost model (`config/costs.ts` is still all-null
+placeholders — margins report "unavailable" and profit math will be
+blocked until the owner fills it; surface this honestly rather than
+inventing economics). The CEO agent is RECOMMEND-only per
+docs/GUARDRAILS.md, writes AgentDecision rows, and its Action Center
+(`/admin/ai-actions`) can reuse the S08 admin auth pattern. Hard
+boundaries staying: recommendations must trace to real metrics; no
+autonomous execution; nothing customer-facing.

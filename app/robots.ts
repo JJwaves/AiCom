@@ -7,8 +7,8 @@ export default function robots(): MetadataRoute.Robots {
       {
         userAgent: "*",
         allow: "/",
-        // Ad landing variants, cart and account are noise for crawlers
-        disallow: ["/lp/", "/cart", "/account", "/api/"],
+        // Ad landing variants, cart, account and the admin surface are noise for crawlers
+        disallow: ["/lp/", "/cart", "/account", "/api/", "/admin"],
       },
     ],
     sitemap: `https://${BUSINESS.DOMAIN}/sitemap.xml`,

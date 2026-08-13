@@ -95,9 +95,13 @@ the agents that need them.
 `lib/ai/prompts/registry.ts` — each prompt has a stable `id`, semver
 `version`, `purpose`, `template` ({{var}} placeholders, strict rendering:
 missing OR unused variables throw). Registered: the S04 infra prompts
-(`runtime_smoke_test`, `structured_output_retry`) plus the Session 05
+(`runtime_smoke_test`, `structured_output_retry`), the Session 05
 sales prompts (`ai_sales_agent` — the AI Packaging Expert persona,
-`ai_sales_need_extraction`, `ai_sales_summary`).
+`ai_sales_need_extraction`, `ai_sales_summary`), and the Session 08
+customer-intelligence classifier (`ai_customer_intelligence_classifier`
+— LOW_COST controlled-taxonomy labeling; output untrusted, server
+validates enum membership + messageId evidence, deterministic code
+decides catalog support — docs/CUSTOMER_INTELLIGENCE.md).
 Every runtime call made with a registry prompt stamps
 `prompt_id` + `prompt_version` onto its AiUsage row, so any output can be
 traced to the exact prompt+model that produced it.

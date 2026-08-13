@@ -15,6 +15,13 @@
       "when": 1786348618354,
       "tag": "0001_ai_usage_prompt",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786519235862,
+      "tag": "0002_customer_intelligence",
+      "breakpoints": true
     }
   ]
 }

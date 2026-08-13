@@ -35,13 +35,17 @@ Exit: the §44 end-to-end flow works — visitor → chat → recommendation →
 configurator updates → logo → deterministic price → checkout → order linked
 to conversation + profile, AI-assisted attribution recorded.
 
-## Stage D — Customer Intelligence
+## Stage D — Customer Intelligence ✅ COMPLETE (Session 08, 2026-08-12)
 - `/modules/customer-intelligence`: aggregate questions, objections, MOQ/
   price/shipping concerns, requested quantities/sizes/colors, unsupported
   requests, industry patterns, lost opportunities
 - `/admin/customer-intelligence` dashboard (real data only; demo data
   visibly labeled)
-Exit: weekly insight reports traceable to underlying records.
+Exit: weekly insight reports traceable to underlying records. ✅
+Report renders from real stored data with per-insight evidence
+drill-through (sourceRefs ≥ 1 enforced); explicit (manual-trigger)
+processing per the prompt's "weekly generation, manual trigger acceptable
+first". See docs/CUSTOMER_INTELLIGENCE.md.
 
 ## Stage E — AI Business Intelligence
 - Contribution-profit analytics (needs Stage A cost model):

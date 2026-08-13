@@ -66,11 +66,18 @@ Browser
 ```
 
 Server session identity (`bd_sid`/`bd_aid` httpOnly cookies, rolling 1y)
-exists WITHOUT auth — guests work unchanged. No admin surface yet. Payments
-stay delegated to Shopify checkout. Checkout totals are server-computed;
-the browser's prices are proposals only. Every AI-ops table
+exists WITHOUT auth — guests work unchanged. Payments stay delegated to
+Shopify checkout. Checkout totals are server-computed; the browser's
+prices are proposals only. Every AI-ops table
 (AiUsage/AgentDecision/Approval/AgentConfig/Insight/Opportunity/Experiment)
-is live schema with a validated service interface and zero runtime.
+is live schema with a validated service interface; Insight/Opportunity
+gained their first writer in Session 08 (Customer Intelligence).
+
+The FIRST admin surface exists since Session 08:
+`/admin/customer-intelligence` (+ `/api/admin/*`), gated by HTTP Basic
+auth (`ADMIN_USER`/`ADMIN_PASSWORD`, fail-closed 404 when unset) in
+`proxy.ts` AND re-checked per page/route, plus the
+`AI_CUSTOMER_INTELLIGENCE` flag — see docs/CUSTOMER_INTELLIGENCE.md.
 
 ## Target architecture (evolved incrementally)
 
@@ -126,10 +133,10 @@ Human Approval (/admin/ai-actions)  |  Guarded auto-execution (later)
 | `lib/configuration` + `/api/configuration` | DONE (Session 06) | THE shared configuration state (invariant 1 realized): pure catalog validation + reducer, React provider with restore/debounced persistence, sync bus, one server application path (row-locked, revision-checked), 3 AI configuration tools. See AI_CONFIGURATOR_INTEGRATION.md. |
 | `lib/commerce/cart-line` + `/api/cart/line` + `lib/cart/checkout-client` | DONE (Session 07) | AI-assisted cart/checkout: ONE server validation path from the authoritative configuration to an engine-priced cart line (reprice + stale guards), 4 COMMERCE/READ sales tools (add/suggest/summary/startCheckout), shared client checkout submission, conservative aiAssisted order attribution. See AI_COMMERCE_INTEGRATION.md. |
 | `modules/guardrails` | ADD | Central `evaluateAgentAction`; see GUARDRAILS.md. (S04's budget guard covers AI spend only.) |
-| `modules/customer-intelligence` | ADD (Stage D) | Aggregation over conversations/quotes/orders. |
+| `modules/customer-intelligence` + `lib/ai/agents/customer-intelligence` + `lib/data/intelligence-service` | DONE (Session 08) | Deterministic aggregation authority (taxonomies, qualified rule, catalog-support verdicts, insights/opportunities — NO lib/ai import) + LOW_COST message labeling with server-validated evidence + idempotent explicit processing. See CUSTOMER_INTELLIGENCE.md. |
 | `modules/ads/google`, `modules/ads/meta` | DEFER | Read-only first, much later. |
 | `config/flags.ts` | DONE (Session 04) | Feature flags (`AI_RUNTIME`, `AI_SALES`, …); all default OFF, env-enabled (`*_ENABLED=true`). |
-| `app/admin/*` | ADD | Auth-gated; customer-intelligence, ai-actions, ai-usage. |
+| `app/admin/*` | STARTED (Session 08) | `customer-intelligence` live behind HTTP Basic (`proxy.ts` + per-route checks, fail-closed 404) + feature flag; ai-actions/ai-usage remain future sessions. |
 
 ## Invariants (enforced across all future sessions)
 
@@ -339,3 +346,44 @@ Human Approval (/admin/ai-actions)  |  Guarded auto-execution (later)
   small-talk-only chat never counts. The order row stores the boolean +
   conversation link; the detailed breakdown stays derivable from events
   (no duplicated columns).
+- **2026-08-12 (S08) · Admin auth is HTTP Basic from env, challenged in
+  proxy.ts and re-checked per page/route, failing closed to 404.**
+  `ADMIN_USER`/`ADMIN_PASSWORD` unset ⇒ every /admin and /api/admin path
+  answers 404 — the surface does not exist until the owner configures it,
+  in dev, prod, and tests alike. Basic auth needs no session store, no
+  login UI, and works identically for pages and API calls; the browser
+  challenge lives in `proxy.ts` (Next 16's middleware) while every
+  handler re-checks `checkAdminAuth` itself, keeping routes directly
+  testable and following Next's guidance that proxy is an optimistic
+  check, not the authorization system. Chosen over a login page + session
+  cookie (state and UI for a single-operator tool) and over a bearer
+  token in the URL (credentials must never ride in query strings).
+- **2026-08-12 (S08) · The intelligence module computes every number; the
+  model only labels messages with closed enums.**
+  `modules/customer-intelligence` (aggregation, denominators, trends,
+  insight generation) has no lib/ai import — fabricated counts are
+  structurally impossible, satisfying invariant 6 for intelligence.
+  The LOW_COST classifier emits only controlled-taxonomy labels tied to
+  messageIds we actually sent (fabricated ids dropped server-side), and
+  catalog support verdicts come from deterministic matching against the
+  real catalog, never from the model's opinion. Chosen over "LLM reads
+  100 conversations and estimates percentages" (unverifiable, invents
+  statistics) and over free-text categories (unbounded vocabulary drift).
+- **2026-08-12 (S08) · Classification is persisted once per conversation
+  and reprocessed only on explicit admin runs when version/messages
+  change.** `conversation_classifications` stores classifierVersion +
+  prompt/model + sourceUpdatedAt; page loads never call the model, and a
+  budget/provider failure leaves conversations PENDING (not failed) so a
+  later run resumes cleanly — AI cost is bounded by an explicit,
+  batch-capped action. Chosen over classify-on-page-load (unbounded
+  spend, §33) and over an always-running background worker (autonomous
+  surface area Session 08 explicitly excludes).
+- **2026-08-12 (S08) · Insights/opportunities have stable identities and
+  humans own their terminal statuses.** One row per
+  TYPE:dimension:periodDays, updated in place; dismissed/archived rows
+  regenerate only when evidence GROWS; generation creates opportunities
+  as `proposed` only and never touches validated/rejected rows —
+  manufacturing feasibility is a human decision by construction
+  (humanValidationRequired hard-coded true). Chosen over
+  insert-per-run (duplicate spam defeating admin review) and over
+  AI-settable validation states.

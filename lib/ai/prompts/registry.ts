@@ -166,6 +166,40 @@ const PROMPTS = [
       "any pricing discussed, objections or concerns, and the current next step. Plain text only, no headers or lists. " +
       "Include only details that are actually in the transcript — never invent any.",
   },
+  {
+    id: "ai_customer_intelligence_classifier",
+    version: "1.0.0",
+    purpose:
+      "LOW_COST controlled-taxonomy classification of CUSTOMER messages for Customer Intelligence (Session 08). " +
+      "Labels question themes, objections, and requested products/options — it NEVER counts, aggregates, or decides " +
+      "catalog support. Output is untrusted: the server validates enum membership and drops any label whose " +
+      "messageId is not a real customer message (lib/ai/agents/customer-intelligence/classifier.ts); catalog support " +
+      "is decided deterministically afterwards (modules/customer-intelligence/catalog-support.ts).",
+    expectedOutputSchema: "classifierOutputSchema (lib/ai/agents/customer-intelligence/classifier.ts)",
+    template:
+      "You label CUSTOMER messages from a packaging sales chat with controlled categories. Respond with JSON only.\n\n" +
+      "Each customer message is given as: [messageId] text\n\n" +
+      "Produce three arrays:\n" +
+      '- "questions": one entry per (message, theme) where the customer ASKS FOR INFORMATION. Themes: SHIPPING ' +
+      "(cost/methods/destinations), DELIVERY_TIME (how long production or delivery takes), MOQ (minimum order " +
+      "quantity), PRICE, SIZE (bag dimensions/options), CAPACITY (what fits inside), PRINTING, COLOR, MATERIAL, " +
+      "ARTWORK (files/proofs), CUSTOM_PRODUCT (custom sizes/products), REORDER, PRODUCT_AVAILABILITY (whether we " +
+      "sell something), OTHER.\n" +
+      '- "objections": one entry per (message, type) where the customer expresses that something about the offer ' +
+      "BLOCKS OR DISCOURAGES buying. Types: PRICE_TOO_HIGH, MOQ_TOO_HIGH, SHIPPING_COST, DELIVERY_TOO_LONG, " +
+      "PRODUCT_NOT_AVAILABLE, SIZE_NOT_AVAILABLE, COLOR_NOT_AVAILABLE, MATERIAL_NOT_AVAILABLE, " +
+      "PRINTING_NOT_AVAILABLE, CUSTOMIZATION_LIMITATION, NEEDS_MORE_INFORMATION, OTHER.\n" +
+      '- "requests": products or options the customer explicitly wants, as {kind: product|size|color|material|' +
+      "printing|capacity|other, normalized: a short lowercase phrase like \"insulated bag\" or \"pink\", messageId}.\n\n" +
+      "Rules:\n" +
+      "- A question is NOT an objection. \"What is your MOQ?\" is only a MOQ question. \"500 is too many, I only " +
+      'need 200" is an MOQ_TOO_HIGH objection (and not a question). "How much is shipping?" is a SHIPPING question; ' +
+      '"shipping is too expensive" is a SHIPPING_COST objection. Label both only when a message truly does both.\n' +
+      "- Use ONLY the listed category values. Anything else belongs to OTHER.\n" +
+      "- messageId must be copied exactly from the input. Never label messages that are not shown.\n" +
+      "- Label only what the customer's words support. Empty arrays are a good answer for small talk.\n" +
+      "- Do NOT decide whether we sell or support anything — just record what was asked or requested.",
+  },
 ] as const satisfies readonly PromptDefinition[];
 
 export type PromptId = (typeof PROMPTS)[number]["id"];

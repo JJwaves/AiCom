@@ -9,6 +9,7 @@ export async function resetDb(): Promise<void> {
     TRUNCATE TABLE
       "experiment_assignments", "experiments",
       "product_opportunities", "customer_insights",
+      "conversation_classifications",
       "agent_configs", "approvals", "agent_decisions", "ai_usage",
       "customer_need_profiles", "messages", "conversations",
       "events", "artworks", "quotes", "order_lines", "orders",

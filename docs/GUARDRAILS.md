@@ -32,6 +32,7 @@ assignments:
 | Agent | Mode |
 | --- | --- |
 | Sales | GUARDED_AUTO — but only within its customer-facing toolset |
+| Customer Intelligence | RECOMMEND — implemented S08: runs only on the explicit admin action, READ-only grant, outputs insights/opportunities that execute nothing; opportunities always `humanValidationRequired` |
 | Pricing | RECOMMEND |
 | CRO | RECOMMEND |
 | CEO / Business Review | RECOMMEND |

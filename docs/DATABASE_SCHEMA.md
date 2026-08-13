@@ -265,21 +265,59 @@ decision record and, later, inside guardrail verdict logs — one audit
 trail, no duplicate concepts. Approval-requiring decisions atomically
 create their pending approval row.
 
-## Intelligence outputs (implemented capability — NOTHING writes them yet)
+## Intelligence outputs (written by Session 08 — docs/CUSTOMER_INTELLIGENCE.md)
 
 ```
 customer_insights
-              id · insightType · title · summary? · valueJson? ·
+              id · insightType (S08 vocabulary: CUSTOMER_QUESTION|
+              OBJECTION_PATTERN|DEMAND_PATTERN|PRODUCT_GAP|MOQ_SIGNAL|
+              SHIPPING_SIGNAL|PRICING_SIGNAL|SEGMENT_PATTERN|
+              CONVERSION_PATTERN) · title · summary? · valueJson?
+              (carries identityKey = TYPE:dimension:periodDays — stable
+              generation identity, one row per identity ever; plus
+              eligiblePopulation/percentage/metric fields) ·
               evidenceCount · sourceRefsJson (≥1 {table,id} refs REQUIRED —
-              fabrication is structurally impossible) · confidence? ·
-              periodStart? · periodEnd? · status (candidate|validated|
-              archived) · timestamps
+              fabrication is structurally impossible; evidenceCount ≥ refs
+              enforced) · confidence? · periodStart? · periodEnd? ·
+              status (candidate|validated|archived|dismissed — dismissed
+              added S08: suppresses identical regeneration until evidence
+              grows) · timestamps
 product_opportunities
-              id · title · description · evidenceCount · sourceRefsJson? ·
+              id · title · description · opportunityType? (S08: lower_moq|
+              unsupported_product) · valueJson? (identityKey + metrics) ·
+              evidenceCount · sourceRefsJson? ·
               estimatedDemand? (free text, never a manufactured number) ·
-              status (proposed|under_review|validated|rejected|archived) ·
-              humanValidationRequired (always true at creation) · timestamps
+              status (proposed|under_review|validated|rejected|archived —
+              generation creates proposed ONLY and never modifies
+              validated/rejected rows; feasibility is human-validated) ·
+              humanValidationRequired (always true at creation) ·
+              periodStart? · periodEnd? · timestamps
 ```
+
+## Conversation classification (Session 08 — migration 0002)
+
+```
+conversation_classifications
+              id · conversationIdᵁ→conversations (CASCADE — dies with its
+              conversation, and therefore with the session/customer:
+              privacy rides the S03.5 cascade) · status (classified|failed
+              — failed rows retry next run) · classifierVersion ·
+              promptId? · promptVersion? · model? · errorCode? ·
+              questionsJson [{theme, messageId}] ·
+              objectionsJson [{type, messageId}] ·
+              unsupportedRequestsJson [{kind, normalized, messageId,
+              support}] (support decided DETERMINISTICALLY against the
+              catalog, never by the model) · userMessageCount ·
+              sourceUpdatedAt (latest covered customer message —
+              reprocess trigger) · processedAt · timestamps
+```
+
+One row per conversation (unique index), upserted. Labels are controlled
+enums validated by the classifier's zod layer; every messageId is
+verified against the transcript actually sent. Counts/percentages are
+NEVER stored here — deterministic aggregation over these rows happens at
+read time in `modules/customer-intelligence`. All aggregate SQL casts
+`::float8` (S03.5 rule).
 
 ## Experiments (schema only — NO runtime until Stage F)
 
@@ -301,10 +339,14 @@ Technical deletion/anonymization consistency (not legal policy — the owner
 reviews policy before launch):
 
 - `deleteSessionData(sessionId)` — erases ONE browser session's behavioral
-  trail: cascades events, conversations+messages, need profile,
-  configurations, assignments. Orders/quotes/artworks survive with the
-  session link nulled and are NOT redacted (they belong to the customer
-  identity, which this operation does not touch).
+  trail: cascades events, conversations+messages (+ S08 conversation
+  classifications), need profile, configurations, assignments.
+  Orders/quotes/artworks survive with the session link nulled and are NOT
+  redacted (they belong to the customer identity, which this operation
+  does not touch). S08: customer_insights/product_opportunities rows are
+  aggregated business records and survive, but their sourceRefs stop
+  resolving — the admin evidence view reports them as "no longer
+  available" (tests/customer-intelligence-privacy.test.ts).
 - `deleteCustomerData(customerId)` — erases the PERSON, in one
   transaction: (1) deletes their sessions (same cascade as above),
   (2) deletes need profiles and conversations linked by `customerId` from

@@ -16,3 +16,8 @@ for (const key of Object.keys(process.env)) {
 delete process.env.ANTHROPIC_API_KEY;
 delete process.env.OPENAI_API_KEY;
 delete process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+
+// Admin auth (S08): fail-closed by default in tests too — routes answer 404
+// until a test sets both credentials explicitly.
+delete process.env.ADMIN_USER;
+delete process.env.ADMIN_PASSWORD;

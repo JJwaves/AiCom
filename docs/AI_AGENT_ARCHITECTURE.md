@@ -138,19 +138,19 @@ credential access. "Audit" rows are the minimum written record per run.
 | Guardrails | Tool allowlist; server re-quote at cart-add AND at checkout; `confirmed`-only capability claims; escalation triggers (refunds, complaints, legal, large/unsupported orders); AI budget caps; no payment/discount/URL surface exists. |
 | Audit | Message rows (raw transcript), tool-call log (name, args hash), config snapshots per turn, AiUsage row per model call, conversation outcome. |
 
-### 2 · Customer Intelligence Agent — Stage D
+### 2 · Customer Intelligence Agent — Stage D · **IMPLEMENTED (Session 08 — docs/CUSTOMER_INTELLIGENCE.md is authoritative)**
 
-| Dimension | Specification |
+| Dimension | Specification (as built) |
 | --- | --- |
-| Responsibility | Aggregate conversations, quotes, orders, abandoned configurations into recurring questions, objections, demand signals, lost opportunities. |
-| Inputs | Persisted first-party events, conversation summaries, need profiles, quotes, orders (batch reads). |
-| Outputs | `Insight` rows with `sourceRefsJson` tracing every claim to real records; weekly report for `/admin/customer-intelligence`. |
-| Allowed tools | Read-only aggregation queries + insight writer. |
-| Prohibited | Any customer-facing output; any storefront/pricing/config mutation; fabricating or extrapolating counts; PII beyond what analysis needs. |
-| Autonomy | RECOMMEND (its output is information; it executes nothing). |
-| Data access | Read-only over analytics tables; writes only to `Insight`. |
-| Guardrails | Every insight must reference source rows; minimum-sample thresholds before claiming a pattern; demo data visibly labeled. |
-| Audit | AiUsage per run; insight rows carry period + sources; run log with input row counts. |
+| Responsibility | Aggregate conversations, quotes, orders, configurations into recurring questions, objections, demand signals (requested vs configured vs purchased), product gaps, lost opportunities. |
+| Inputs | Persisted first-party events, conversations + customer messages, need profiles (provenance-split), configurations, orders + lines, session attribution (batch reads via `lib/data/intelligence-service`). |
+| Outputs | `CustomerInsight` + `ProductOpportunity` rows with `sourceRefsJson` tracing every claim to real records (evidenceCount ≥ refs enforced); the `/admin/customer-intelligence` report. |
+| Model role | LOW_COST labeling ONLY (`ai_customer_intelligence_classifier` v1.0.0, closed enums, messageId evidence verified server-side, persisted idempotently in `conversation_classifications`). Every count/percentage/trend is computed by `modules/customer-intelligence`, which has NO lib/ai import. |
+| Prohibited | Any customer-facing output; any storefront/pricing/config mutation; fabricating or extrapolating counts; deciding catalog support (deterministic code does); validating manufacturing feasibility (humans only); PII beyond what analysis needs. |
+| Autonomy | RECOMMEND-equivalent: runs only on the explicit admin action, executes nothing, opportunities are created `proposed` with `humanValidationRequired=true`. |
+| Data access | Read-only over analytics tables; writes only classifications + Insight/Opportunity through `lib/data`. Permission grant stays `["READ"]` — insight writes happen in server pipeline code, not through the tool registry. |
+| Guardrails | sourceRefs ≥ 1 structural; `MIN_EVIDENCE_FOR_INSIGHT` (3) before persisting a pattern; percentages need denominator ≥ 5; trends need previous base ≥ 5; batch cap 25/run; budget guard fail-closed; flag + admin auth fail-closed 404. |
+| Audit | AiUsage row per model call (prompt id+version, agentType customer_intelligence); classification rows carry classifier/prompt/model versions + processedAt; run log with candidate/processed/failed/remaining counts. |
 
 ### 3 · CRO Agent — Stage F
 

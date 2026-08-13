@@ -361,6 +361,52 @@ export const customerNeedProfiles = pgTable(
   (t) => [uniqueIndex("customer_need_profiles_session_uq").on(t.sessionId)],
 );
 
+/**
+ * Customer-intelligence classification (Session 08) — one row per
+ * conversation, holding the CONTROLLED-taxonomy labels the LOW_COST
+ * classifier assigned to individual customer messages. Counts and
+ * percentages are NEVER stored here — aggregation is deterministic and
+ * runs over these rows at read time (modules/customer-intelligence).
+ *
+ * Idempotency: (classifierVersion, sourceUpdatedAt) records what was
+ * processed; a conversation is reprocessed only when the classifier
+ * version changes or new customer messages arrive. Privacy: cascades
+ * away with its conversation (and therefore with the session/customer).
+ */
+export const conversationClassifications = pgTable(
+  "conversation_classifications",
+  {
+    id: text("id").primaryKey(),
+    conversationId: text("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    /** classified | failed — failed rows are retried on the next processing run. */
+    status: text("status").notNull().default("classified"),
+    /** Version of the classification pipeline (taxonomy + prompt + validation). */
+    classifierVersion: text("classifier_version").notNull(),
+    promptId: text("prompt_id"),
+    promptVersion: text("prompt_version"),
+    model: text("model"),
+    errorCode: text("error_code"),
+    /** [{ theme, messageId }] — theme from the controlled question taxonomy; messageId verified to exist. */
+    questionsJson: jsonb("questions_json").$type<{ theme: string; messageId: string }[]>().notNull(),
+    /** [{ type, messageId }] — objection taxonomy; questions and objections are distinct by design. */
+    objectionsJson: jsonb("objections_json").$type<{ type: string; messageId: string }[]>().notNull(),
+    /** [{ kind, normalized, messageId, support }] — support decided DETERMINISTICALLY against the catalog, never by the model. */
+    unsupportedRequestsJson: jsonb("unsupported_requests_json")
+      .$type<{ kind: string; normalized: string; messageId: string; support: string }[]>()
+      .notNull(),
+    /** Customer (user-role) messages covered by this classification. */
+    userMessageCount: integer("user_message_count").notNull().default(0),
+    /** createdAt of the latest customer message covered — reprocess when newer messages exist. */
+    sourceUpdatedAt: ts("source_updated_at").notNull(),
+    processedAt: ts("processed_at").notNull().defaultNow(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("conversation_classifications_conversation_uq").on(t.conversationId)],
+);
+
 /* ------------------------------------------------------------------ */
 /* AI operations (prepared this session; no agents run yet)            */
 /* ------------------------------------------------------------------ */
@@ -475,6 +521,10 @@ export const productOpportunities = pgTable("product_opportunities", {
   id: text("id").primaryKey(),
   title: text("title").notNull(),
   description: text("description").notNull(),
+  /** S08: lower_moq | unsupported_product — controlled at the service boundary. */
+  opportunityType: text("opportunity_type"),
+  /** S08: structured metrics + stable identityKey (generation dedup) — deterministic values only. */
+  valueJson: jsonb("value_json").$type<Record<string, unknown>>(),
   evidenceCount: integer("evidence_count").notNull().default(0),
   sourceRefsJson: jsonb("source_refs_json").$type<{ table: string; id: string }[]>(),
   /** Free-text scale estimate; never a manufactured number. */
@@ -482,6 +532,8 @@ export const productOpportunities = pgTable("product_opportunities", {
   /** proposed | under_review | validated | rejected | archived */
   status: text("status").notNull().default("proposed"),
   humanValidationRequired: boolean("human_validation_required").notNull().default(true),
+  periodStart: ts("period_start"),
+  periodEnd: ts("period_end"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
