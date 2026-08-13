@@ -41,3 +41,23 @@ export function checkAdminAuth(
   }
   return timingSafeEqual(decoded, `${user}:${password}`) ? "authorized" : "unauthorized";
 }
+
+/**
+ * The authenticated admin's identity (Session 10 spec §25).
+ *
+ * SERVER-DERIVED ONLY: the value comes from the configured `ADMIN_USER`
+ * after the credentials verified — never from a request body, and never
+ * from the username half of the client's own header. Callers stamp this on
+ * approvals (`reviewedBy`), so a client claiming `reviewedBy: "CEO"` is
+ * simply ignored.
+ *
+ * Known limitation, documented rather than hidden: Basic auth carries ONE
+ * shared operator identity. Per-user RBAC and a per-person audit trail are
+ * deferred — every review currently reads as the single configured admin.
+ */
+export function adminIdentity(
+  authorizationHeader: string | null,
+  env: Record<string, string | undefined> = process.env,
+): string | null {
+  return checkAdminAuth(authorizationHeader, env) === "authorized" ? (env.ADMIN_USER as string) : null;
+}

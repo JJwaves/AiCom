@@ -545,6 +545,15 @@ export default async function BusinessIntelligencePage({
               : " No review has been generated yet."}
             {report.ceoReportStale ? " This review predates the latest data — refresh it for current numbers." : ""}
           </p>
+          {isFlagEnabled("AI_ACTION_CENTER") ? (
+            <p className="mt-2 text-sm text-ink-3">
+              Review and approve these recommendations in the{" "}
+              <Link className="underline" href="/admin/ai-actions">
+                AI Action Center
+              </Link>
+              , where each one is guardrail-evaluated before you decide.
+            </p>
+          ) : null}
         </div>
         <GenerateReviewButton periodDays={s.period.days} hasReport={report.ceoReport !== null} />
       </div>

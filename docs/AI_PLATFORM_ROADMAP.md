@@ -59,10 +59,15 @@ first". See docs/CUSTOMER_INTELLIGENCE.md.
   admin trigger; AgentDecision + ceo_reports persistence) —
   docs/BUSINESS_INTELLIGENCE.md
 - ✅ `/admin/business-intelligence` dashboard (deterministic without AI)
-- ⏳ AI Action Center (`/admin/ai-actions`) + full guardrail evaluation
-  path → Session 10 (decisions are pending-approval rows already)
-Exit: AgentDecision → human approval loop operating — decision records +
-pending approvals exist; the review/approve UI is the S10 deliverable.
+- ✅ AI Action Center (`/admin/ai-actions`) + the central Guardrail Engine
+  (`modules/guardrails`) — Session 10: closed proposed-action taxonomy,
+  pure `evaluateAgentAction()`, policy-clamped autonomy, deterministic
+  risk, append-only evaluation log, approve/reject/modify with
+  concurrency + idempotency. Executor registry EMPTY: approval records a
+  human decision, never a mutation.
+Exit: ✅ AgentDecision → guardrail → human approval loop operating
+end-to-end on real CEO recommendations. Execution remains deferred (no
+executor exists for any business action type).
 
 ## Stage F — CRO
 - Experiment engine (model from DATABASE_SCHEMA.md; flag

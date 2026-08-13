@@ -132,10 +132,6 @@ zero, nothing estimates. Classification:
 
 | Item | Where (planned) |
 | --- | --- |
-| `minimumAllowedPrice` / `minimumGrossMargin` / `minimumContributionMargin` | guardrail config |
-| `maximumDiscountPct` / `maximumPriceChangePct` | guardrail config |
-| High-value order threshold (forces human review) | guardrail config |
-| Refund approval threshold | guardrail config |
 | **Escalation destination (email/Slack/phone for human handoff)** | The S05 Sales Agent already RECORDS structured handoffs (conversation `system` messages, `human_handoff_requested` events) — but nothing DELIVERS them yet. Provide the destination + wire delivery before enabling AI_SALES for real customers, or watch the DB manually |
 | AI configuration confirmation thresholds (S06) | No numeric cost-impact thresholds exist yet, deliberately (no invented economics). Today the sales prompt applies a behavioral policy: clearly-requested small changes commit directly; changes with substantial cost impact preview + propose an apply chip first. If the owner wants hard rules ("quantity increases over $X require the chip"), define them as config and wire them into the prompt/tool layer |
 | Confirmed factory capabilities list (what the sales agent may claim) | `config/products.ts` `confirmed` flags + capability notes |
@@ -157,3 +153,47 @@ zero, nothing estimates. Classification:
 | Reporting thresholds | `config/business-intelligence.ts` — documented conservative defaults (% needs ≥5 denominator, trend needs ≥5 previous base, segments ≥5 per cell, ≤10 recommendations per review). They gate when the system SPEAKS, not what it claims |
 | Cost model (see above) | Profitability metrics stay "Unavailable — configure manufacturing costs" until `config/costs.ts` is complete; the dashboard lists the missing inputs verbatim |
 | AI model pricing | `config/ai-pricing.ts` (see AI section) — AI spend metrics show unavailable/partial while calls are unpriced; an unpriced call is never $0 |
+
+## Guardrail limits (Session 10 — `config/guardrails.ts`)
+
+Every value below ships as an explicit `null` `[TO BE PROVIDED]`. The
+Guardrail Engine treats a `null` limit as **MISSING CONFIGURATION**, never
+as "no limit": the affected action can still be reviewed and approved by
+you, but it can never become eligible for automated execution, and
+`/admin/ai-actions` names the exact missing config path on the card
+("Cannot be approved for automated execution — missing configuration:
+config/guardrails.ts → GUARDRAIL_LIMITS.maximumDailyAdSpendCents").
+
+**Nothing here blocks today's recommendation-only mode.** These values are
+prerequisites for a future GUARDED_AUTO promotion (roadmap Stage J), not
+for using the Action Center now. Do not invent them.
+
+Units: integer cents, or percent as a whole number (10 = 10%). Any change
+to this file **must bump `GUARDRAIL_POLICY_VERSION`** — stored guardrail
+evaluations reference it so past verdicts stay explainable.
+
+### Currently required
+
+| Item | Where | Status |
+| --- | --- | --- |
+| Admin credentials for the Action Center | `.env` → `ADMIN_USER` / `ADMIN_PASSWORD` | Same surface as S08/S09 — no separate credentials |
+| Action Center on/off | `.env` → `AI_ACTION_CENTER_ENABLED` (default false; the surface 404s while off). The Guardrail Engine itself always runs | — |
+
+### Required before GUARDED_AUTO (never before then, never invented)
+
+| Item | Where |
+| --- | --- |
+| Minimum gross / contribution margin | `config/costs.ts` → `marginPolicy` (**already listed under "Cost model"** — the guardrail engine reads the SAME config as the pricing engine; it is not duplicated) |
+| Maximum price decrease / increase per change | `config/guardrails.ts` → `maximumPriceDecreasePct` / `maximumPriceIncreasePct` |
+| Maximum discount an automated action may apply | `config/guardrails.ts` → `maximumDiscountPct` |
+| Maximum campaign budget change per action | `config/guardrails.ts` → `maximumCampaignBudgetChangePct` |
+| Maximum total daily ad spend | `config/guardrails.ts` → `maximumDailyAdSpendCents` |
+| Maximum new-campaign test budget | `config/guardrails.ts` → `maximumNewCampaignTestBudgetCents` |
+| Maximum experiment traffic share | `config/guardrails.ts` → `maximumExperimentTrafficPct` |
+| High-value order threshold (forces human review) | `config/guardrails.ts` → `highValueOrderThresholdCents` |
+| Refund approval threshold | `config/guardrails.ts` → `refundApprovalThresholdCents` (refunds stay CRITICAL and permanently non-automated regardless — this only sets the review threshold) |
+| Maximum MOQ change per action | `config/guardrails.ts` → `maximumMoqChangePct` |
+
+Magnitude-based risk escalation ("a >X% budget increase is CRITICAL") is
+deliberately NOT implemented, because implementing it would mean inventing
+X. It becomes possible once these values exist.

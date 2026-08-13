@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
   doublePrecision,
@@ -478,18 +479,162 @@ export const approvals = pgTable(
     reviewNotes: text("review_notes"),
     beforeJson: jsonb("before_json").$type<Record<string, unknown>>(),
     afterJson: jsonb("after_json").$type<Record<string, unknown>>(),
+    /**
+     * Session 10: the proposed action this verdict was rendered on. The
+     * approval row stays the DECISION-level record (S03/S09 semantics
+     * unchanged — CEO dedup still freezes human-reviewed decisions); this
+     * column says WHICH action revision the human actually looked at.
+     */
+    actionId: text("action_id"),
     createdAt: createdAt(),
   },
-  (t) => [index("approvals_decision_idx").on(t.decisionId)],
+  (t) => [index("approvals_decision_idx").on(t.decisionId), index("approvals_action_idx").on(t.actionId)],
 );
 
 export const agentConfigs = pgTable("agent_configs", {
   agentType: text("agent_type").primaryKey(),
-  /** OBSERVE | RECOMMEND | GUARDED_AUTO | AUTONOMOUS — absent row reads as OBSERVE (fail-safe). */
+  /**
+   * OBSERVE | RECOMMEND | GUARDED_AUTO | AUTONOMOUS — absent row reads as
+   * OBSERVE (fail-safe). Session 10: the guardrail engine additionally
+   * CLAMPS whatever is stored here to the per-agent ceiling in
+   * config/guardrails.ts, so a wrong row can never grant execution.
+   */
   autonomyMode: text("autonomy_mode").notNull().default("OBSERVE"),
   limitsJson: jsonb("limits_json").$type<Record<string, unknown>>(),
   updatedAt: updatedAt(),
 });
+
+/* ------------------------------------------------------------------ */
+/* Guardrails + AI Action Center (Session 10 — migration 0004)         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A structured PROPOSED business action — the thing a human approves or
+ * rejects. Distinct from AgentDecision (the AI's reasoning) and from
+ * Approval (the human verdict record on the decision): collapsing them into
+ * one status field is exactly what spec §13 forbids.
+ *
+ * Immutability: a payload is never edited in place. An admin modification
+ * marks the original SUPERSEDED and inserts a new revision linked by
+ * `originActionId` — history stays auditable (spec §29).
+ */
+export const agentActions = pgTable(
+  "agent_actions",
+  {
+    id: text("id").primaryKey(),
+    /** CEO_AGENT | PRICING_AGENT | CRO_AGENT | GOOGLE_ADS_AGENT | META_ADS_AGENT | HUMAN_ADMIN */
+    sourceAgent: text("source_agent").notNull(),
+    /** The AgentDecision this proposal came from, when it came from one. */
+    sourceDecisionId: text("source_decision_id").references(() => agentDecisions.id, { onDelete: "set null" }),
+    /** Closed taxonomy — modules/guardrails/actions.ts. Unknown types are rejected. */
+    actionType: text("action_type").notNull(),
+    title: text("title").notNull(),
+    /** Schema-validated payload for this action type. Never a free-form blob. */
+    payloadJson: jsonb("payload_json").$type<Record<string, unknown>>().notNull(),
+    /** Stable generation identity carried over from the source decision. */
+    identityKey: text("identity_key"),
+    /** Payload revision: 1 for the original, +1 per human modification. */
+    revision: integer("revision").notNull().default(1),
+    /** Original proposal in a modification chain (null on the original). */
+    originActionId: text("origin_action_id"),
+    /** Set on the original when a modification replaces it. */
+    supersededByActionId: text("superseded_by_action_id"),
+    /** PROPOSED | GUARDRAIL_BLOCKED | PENDING_APPROVAL | APPROVED | REJECTED | SUPERSEDED */
+    status: text("status").notNull().default("PROPOSED"),
+    /**
+     * NOT_APPLICABLE | NOT_SUPPORTED | READY | EXECUTING | EXECUTED |
+     * FAILED | ROLLED_BACK — deliberately SEPARATE from approval:
+     * "approved" never implies "happened" (spec §16).
+     */
+    executionStatus: text("execution_status").notNull().default("NOT_SUPPORTED"),
+    /** LOW | MEDIUM | HIGH | CRITICAL — POLICY-derived, never model-derived. */
+    riskLevel: text("risk_level").notNull(),
+    /** What the model claimed the risk was. Metadata for comparison only. */
+    modelSuggestedRisk: text("model_suggested_risk"),
+    approvalRequired: boolean("approval_required").notNull().default(true),
+    /** Most recent guardrail_evaluations row for this action. */
+    latestEvaluationId: text("latest_evaluation_id"),
+    /** Server-derived admin identity — never accepted from a client payload. */
+    reviewedBy: text("reviewed_by"),
+    reviewedAt: ts("reviewed_at"),
+    reviewNotes: text("review_notes"),
+    /** Who/what created this row ("system:ceo_sync", "admin:<user>"). */
+    createdBy: text("created_by").notNull(),
+    /** Optimistic-concurrency token: every state transition increments it. */
+    stateVersion: integer("state_version").notNull().default(1),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index("agent_actions_status_idx").on(t.status, t.createdAt),
+    index("agent_actions_source_idx").on(t.sourceAgent, t.createdAt),
+    /** One ORIGINAL action per decision — the DB-level idempotency guarantee. */
+    uniqueIndex("agent_actions_root_decision_idx")
+      .on(t.sourceDecisionId)
+      .where(sql`origin_action_id is null and source_decision_id is not null`),
+  ],
+);
+
+/**
+ * Append-only guardrail verdict log (spec §12, §38). Every evaluation —
+ * including blocked ones — is stored with the policy version and the exact
+ * limits consulted, so "why was this allowed on that date?" is answerable
+ * years later. Contains no secrets and no customer PII.
+ */
+export const guardrailEvaluations = pgTable(
+  "guardrail_evaluations",
+  {
+    id: text("id").primaryKey(),
+    actionId: text("action_id")
+      .notNull()
+      .references(() => agentActions.id, { onDelete: "cascade" }),
+    /** The action revision this verdict was produced for. */
+    actionRevision: integer("action_revision").notNull().default(1),
+    policyVersion: text("policy_version").notNull(),
+    sourceAgent: text("source_agent").notNull(),
+    actionType: text("action_type").notNull(),
+    /** The mode actually applied, after clamping to the policy ceiling. */
+    autonomyMode: text("autonomy_mode").notNull(),
+    allowed: boolean("allowed").notNull(),
+    executionEligible: boolean("execution_eligible").notNull(),
+    approvalRequired: boolean("approval_required").notNull(),
+    riskLevel: text("risk_level").notNull(),
+    violatedRulesJson: jsonb("violated_rules_json").$type<Record<string, unknown>[]>().notNull(),
+    missingConfigurationJson: jsonb("missing_configuration_json").$type<string[]>().notNull(),
+    reason: text("reason").notNull(),
+    executionSupport: text("execution_support").notNull(),
+    /** The configured limits as they were at evaluation time. */
+    limitsSnapshotJson: jsonb("limits_snapshot_json").$type<Record<string, number | null>>().notNull(),
+    evaluatedAt: ts("evaluated_at").notNull().defaultNow(),
+  },
+  (t) => [index("guardrail_evaluations_action_idx").on(t.actionId, t.evaluatedAt)],
+);
+
+/**
+ * Append-only action history (spec §29, §38–§39): proposed / blocked /
+ * approved / rejected / modified, each with the SERVER-DERIVED actor.
+ *
+ * These are first-party ADMIN events and deliberately do NOT go into the
+ * `events` table: that taxonomy is the customer journey (every row requires
+ * a session) and its rows feed third-party analytics copies. Business-action
+ * details stay first-party only.
+ */
+export const agentActionEvents = pgTable(
+  "agent_action_events",
+  {
+    id: text("id").primaryKey(),
+    actionId: text("action_id")
+      .notNull()
+      .references(() => agentActions.id, { onDelete: "cascade" }),
+    /** ai_action_proposed | ai_action_guardrail_blocked | ai_action_approved | ai_action_rejected | ai_action_modified */
+    type: text("type").notNull(),
+    /** "system:ceo_sync" or "admin:<username>" — derived server-side, never from the client. */
+    actor: text("actor").notNull(),
+    detailJson: jsonb("detail_json").$type<Record<string, unknown>>(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("agent_action_events_action_idx").on(t.actionId, t.createdAt)],
+);
 
 /* ------------------------------------------------------------------ */
 /* Intelligence outputs (capability only — nothing generates these yet)*/

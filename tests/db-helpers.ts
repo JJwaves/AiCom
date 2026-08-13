@@ -10,6 +10,7 @@ export async function resetDb(): Promise<void> {
       "experiment_assignments", "experiments",
       "product_opportunities", "customer_insights",
       "conversation_classifications", "ceo_reports",
+      "agent_action_events", "guardrail_evaluations", "agent_actions",
       "agent_configs", "approvals", "agent_decisions", "ai_usage",
       "customer_need_profiles", "messages", "conversations",
       "events", "artworks", "quotes", "order_lines", "orders",

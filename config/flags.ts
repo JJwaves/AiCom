@@ -19,6 +19,13 @@ export const FEATURE_FLAGS = [
   "AI_CUSTOMER_INTELLIGENCE",
   /** Business Intelligence admin surface + CEO recommendation agent (Session 09). */
   "AI_BUSINESS_INTELLIGENCE",
+  /**
+   * AI Action Center admin surface (Session 10). The Guardrail Engine
+   * itself is ALWAYS active — a proposed action is evaluated whether or not
+   * this flag is on; the flag gates the /admin/ai-actions surface and its
+   * mutation routes, which 404 while it is off.
+   */
+  "AI_ACTION_CENTER",
   "AI_PRICING_AGENT",
   "AI_CRO_AGENT",
   "AI_GOOGLE_ADS_AGENT",

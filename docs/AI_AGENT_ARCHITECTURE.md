@@ -118,6 +118,20 @@ agent in `AgentConfig` and enforced by the guardrail engine — not by
 prompts. Financially sensitive agents start at OBSERVE/RECOMMEND and are
 promoted only with operating history (see AI_PLATFORM_ROADMAP.md Stage J).
 
+**Implemented in Session 10** (`modules/guardrails`, docs/GUARDRAILS.md):
+the stored mode is additionally CLAMPED to a per-agent policy ceiling in
+`config/guardrails.ts` — every business agent's ceiling is RECOMMEND, so a
+mistaken or tampered `agent_configs` row cannot grant execution. Business
+agents propose through ONE path only —
+`Agent → ProposedAction → evaluateAgentAction() → human approval →
+Executor` — and no executor exists yet, so approval records intent.
+
+The Sales agent is deliberately OUTSIDE that space: its customer-facing
+tools are governed by the permission tiers below plus customer
+confirmation. CUSTOMER TRANSACTION TOOLS (`calculatePrice`,
+`addConfiguredProductToCart`, …) are never modelled as BUSINESS MANAGEMENT
+ACTIONS — see docs/AI_ACTION_CENTER.md "Tool separation".
+
 ## Per-agent specification
 
 Binding definitions for every planned agent. "Data access" is always
@@ -209,7 +223,8 @@ remains server-only.
 | Outputs | Business-review documents; `AgentDecision` rows referencing specialist-agent proposals. ✅ S09: `ceo_reports` rows (versioned document: period, prompt+model, exact snapshot, validated review) + one pending AgentDecision per recommendation (stable-identity dedup; human verdicts frozen). |
 | Allowed tools | **NONE.** ✅ S09 implements this as one `generateStructuredObject` call — no tool registry exists on this agent; "decision writer" is server code persisting validated output, never a model-invocable capability. |
 | Prohibited | Direct execution of anything — prices, ads, refunds, products, factory commitments; instructing another agent to bypass its own guardrails (composition never escalates privileges). ✅ Structural: no execution code path; executionStatus stays `none`; references outside the offered context are dropped server-side. |
-| Autonomy | RECOMMEND, permanently — an advisor, never an executor. Never an all-powerful super-agent. |
+| Autonomy | RECOMMEND, permanently — an advisor, never an executor. Never an all-powerful super-agent. ✅ S10 enforces this in code: the policy ceiling for CEO_AGENT is RECOMMEND, and its permitted action types are review-only — a CEO-proposed `PRICE_CHANGE` is denied `source_not_permitted_for_action_type`. |
+| Approval path (S10) | Each pending recommendation materializes into a typed review-only ProposedAction, is guardrail-evaluated, and awaits the owner in `/admin/ai-actions`. Approving records the decision; nothing executes. An agent may never approve its own or another agent's action. |
 | Data access | Read-only aggregates; no raw PII requirement. ✅ Tested: no emails/names/messages/artwork names reach the context. |
 | Guardrails | Same per-domain limits as the specialists it summarizes; its recommendations inherit the *strictest* applicable guardrail. ✅ approvalRequired always true; runs only via the explicit admin action under the AI budget guard. |
 | Audit | Every review stored with sources; AiUsage; decision/approval trail for anything it proposes. ✅ AiUsage stamps prompt `ai_ceo_business_review` v1.0.0 + model; reports are append-only. |

@@ -53,6 +53,31 @@ limits, refund authorization, agent autonomy, approvals.
 
 ## Current project stage
 
+**Session 10 "Central Guardrail Engine + AI Action Center" COMPLETE
+(2026-08-12) — the system-wide safety and approval layer every future AI
+action passes through. `modules/guardrails` is the ONE authority: a CLOSED
+proposed-action taxonomy (20 types, strict per-type zod payloads — unknown
+type, unknown key, or smuggled `riskLevel`/`approvalStatus` all fail
+closed), a PURE `evaluateAgentAction()` (no lib/ai, no db/, no clock, no
+randomness ⇒ reproducible from input + `GUARDRAIL_POLICY_VERSION`),
+autonomy modes CLAMPED to per-agent policy ceilings (every business agent
+= RECOMMEND, so a tampered `agent_configs` row grants nothing),
+deterministic risk LOW/MEDIUM/HIGH/CRITICAL (a model's claim is metadata
+only), HARD vs SOFT rules (HARD blocks either the PROPOSAL or EXECUTION
+forever; no bypass semantic exists), and missing configuration reported by
+exact config path — never as PASS or 0. Persistence: `agent_actions`
+(status ⟂ executionStatus), append-only `guardrail_evaluations` (policy
+version + limits snapshot) and `agent_action_events` (migration 0004).
+`/admin/ai-actions` behind the S08 auth + `AI_ACTION_CENTER`: approve /
+reject / modify with server-derived `reviewedBy`, `stateVersion` +
+row-lock concurrency (double-click and stale reviewer ⇒ 409), immutable
+proposals (modification = SUPERSEDED original + re-evaluated revision),
+server-resolved evidence, and same-origin + JSON-only CSRF protection on
+the first admin mutation routes. **The executor registry is EMPTY:
+approving records the owner's decision and mutates no price, ad, product,
+or payment.** 512 tests. Next milestone: Session 11 "Experiment Engine +
+CRO Agent".**
+
 **Session 09 "Business Intelligence + CEO Recommendation Agent" COMPLETE
 (2026-08-12) — the business-level intelligence layer: DETERMINISTIC
 metrics (`modules/business-intelligence`, no lib/ai import) with an
@@ -72,9 +97,9 @@ snapshot versioning) → `/admin/business-intelligence` behind the S08
 auth + `AI_BUSINESS_INTELLIGENCE` flag: deterministic dashboard works
 with AI off/down; CEO review generates ONLY from the explicit admin
 button. MEASURE→SYNTHESIZE→EXPLAIN→RECOMMEND, never execute. Next
-milestone: Session 10 "Guardrails + AI Action Center".**
+milestone: Session 10 "Guardrails + AI Action Center" — DONE, see above.**
 
-## Current architecture (2026-08-12, post-Session 09)
+## Current architecture (2026-08-12, post-Session 10)
 
 Working B2B storefront, verified end-to-end (see
 docs/CURRENT_SYSTEM_AUDIT.md + its Session-02 resolution note):
@@ -328,6 +353,56 @@ docs/CURRENT_SYSTEM_AUDIT.md + its Session-02 resolution note):
   `config/business-intelligence.ts` thresholds; services
   `lib/data/business-intelligence-service.ts` (::float8 aggregates) +
   `lib/data/ceo-report-service.ts`.
+- **Guardrail Engine + AI Action Center (Session 10 — docs/GUARDRAILS.md +
+  docs/AI_ACTION_CENTER.md are authoritative):** `modules/guardrails` is
+  THE central safety layer, with NO `lib/ai` and NO `db/` import.
+  actions.ts = the CLOSED taxonomy: 11 review-only types (`*_REVIEW` +
+  CRO_EXPERIMENT_PROPOSAL — approving means "yes, investigate"), 9
+  representable-but-unexecutable types (PRICE_CHANGE/PRICE_EXPERIMENT/
+  MOQ_CHANGE/AD_BUDGET_CHANGE/AD_PAUSE/AD_RESUME/AD_CREATIVE_TEST/
+  CRO_EXPERIMENT_LAUNCH/AI_COST_CHANGE) and 2 never-automated CRITICAL
+  types (REFUND, MANUFACTURING_CHANGE); every type has a STRICT zod
+  payload schema (unknown keys are errors, so no authorization field can
+  be smuggled) plus source permissions — CEO_AGENT may propose review
+  types only, so "lower all prices 90%" is `source_not_permitted_for_
+  action_type`. evaluate.ts = the pure `evaluateAgentAction({source,
+  actionType, payload, autonomyMode, modelSuggestedRiskLevel?,
+  priceContext?})` → `{allowed, executionEligible, approvalRequired,
+  riskLevel, violatedRules[{id,severity HARD|SOFT,blocks PROPOSAL|
+  EXECUTION}], missingConfiguration[], reason, executionSupport,
+  executionState, limitsSnapshot, policyVersion}`: unknown agent/type,
+  malformed payload, unknown mode, OBSERVE, and evaluator exceptions all
+  DENY; autonomy is clamped `min(stored, AGENT_AUTONOMY_POLICY ceiling)`;
+  HIGH/CRITICAL always need a human (`MAX_UNATTENDED_RISK_LEVEL=MEDIUM`);
+  price-affecting types reuse `evaluatePriceFloor` + `COST_MODEL.
+  marginPolicy` (NOT duplicated) and fail closed while costs are null.
+  executors.ts = an EMPTY registry (no dummy executors; the future
+  contract is documented). decision-mapping.ts maps the 9 CEO categories
+  → review types (informational recommendations create nothing).
+  `config/guardrails.ts` = policy version + 10 `null` `[TO BE PROVIDED]`
+  limits + autonomy defaults/ceilings + an EMPTY guarded-auto allow-list.
+  Persistence `lib/data/agent-action-service.ts` over migration 0004:
+  `agent_actions` (status PROPOSED/GUARDRAIL_BLOCKED/PENDING_APPROVAL/
+  APPROVED/REJECTED/SUPERSEDED ⟂ executionStatus NOT_APPLICABLE/
+  NOT_SUPPORTED/READY/…; revision + originActionId lineage; stateVersion
+  concurrency; partial unique index = one root action per decision),
+  append-only `guardrail_evaluations` (policy version + limits snapshot)
+  and `agent_action_events` (proposed/blocked/approved/rejected/modified,
+  server-derived actor — deliberately NOT the customer `events` taxonomy,
+  which requires a session and feeds third-party copies). Blocked
+  proposals are STORED and shown, never swallowed. Admin:
+  `/admin/ai-actions` (+ `/[id]` detail: observation, recommendation,
+  server-resolved evidence with unresolved refs named as unavailable,
+  structured payload, full evaluation with rules/limits, history,
+  revisions) behind the S08 HTTP Basic + `AI_ACTION_CENTER`, fail-closed
+  404; POST `/api/admin/ai-actions/{sync,[id]/review,[id]/modify}` — the
+  first admin MUTATION routes, guarded by `lib/admin/write-guard.ts`
+  (POST + auth + same-origin + `application/json` + bounded body + strict
+  zod). `reviewedBy` is server-derived (`adminIdentity()`); a client
+  sending reviewedBy/riskLevel/approvalStatus gets 422. Modification
+  preserves the original (SUPERSEDED) and RE-EVALUATES a new revision (no
+  inherited verdict; evidence refs may narrow, never grow). Sync is
+  deterministic — it reads pending CEO decisions, no model call.
 - `lib/commerce` — provider abstraction; `mock` active, `shopify`
   Storefront skeleton env-gated (variant mapping TODO, needs real store).
   **All catalog reads go through `lib/commerce/catalog.ts`** (provider-
@@ -1034,6 +1109,83 @@ untouched (all S02–S08 tests green, no commerce file modified).
    BUSINESS_CONFIG_TODO (launch-vs-profit-intelligence cost split + BI
    section), .env.example.
 
+## Completed in Session 10 (2026-08-12) — Guardrail Engine + AI Action Center
+
+The system-wide safety/approval layer. Recommendation → structured action
+→ deterministic evaluation → risk → human approve/reject/modify →
+approved-action record. **Execution stays deferred: no executor exists.**
+Storefront/commerce verified untouched (every S02–S09 test green; no
+commerce file modified).
+
+1. **Schema (migration `0004_guardrails_action_center.sql`, additive)** —
+   `agent_actions` (source, decision link, closed actionType, validated
+   payload, revision/originActionId/supersededByActionId lineage, status
+   ⟂ executionStatus, policy risk + modelSuggestedRisk metadata,
+   server-derived reviewedBy/reviewedAt/reviewNotes, stateVersion,
+   partial unique index `(source_decision_id) WHERE origin_action_id IS
+   NULL` = sync idempotency at the DB level), append-only
+   `guardrail_evaluations` (policy version, applied autonomy mode,
+   allowed/executionEligible/approvalRequired, violated rules, missing
+   config, limits snapshot) and append-only `agent_action_events`;
+   `approvals` gained a nullable `action_id` so the S03/S09 decision-level
+   approval spine records WHICH revision the human reviewed (no second
+   approval model).
+2. **`modules/guardrails/`** — the deterministic authority, no `lib/ai`
+   and no `db/` import: types.ts (sources/modes/risk/rule severity/
+   execution states/GuardrailDecision), actions.ts (20-type closed
+   registry with strict per-type schemas, base risk, execution support,
+   required limits, source→type permissions), evaluate.ts (the pure
+   evaluator), executors.ts (EMPTY registry + the documented future
+   executor contract), decision-mapping.ts (CEO category → review type,
+   uncategorized ⇒ null).
+3. **`config/guardrails.ts`** — `GUARDRAIL_POLICY_VERSION`, 10 `null`
+   `[TO BE PROVIDED]` limits, per-agent `{defaultMode, maxMode}` (all
+   business agents capped at RECOMMEND), EMPTY
+   `GUARDED_AUTO_ALLOWED_ACTION_TYPES`, `MAX_UNATTENDED_RISK_LEVEL=MEDIUM`.
+   Margin floors are NOT duplicated — `config/costs.ts → marginPolicy`
+   stays the single home and the engine calls the same
+   `evaluatePriceFloor`.
+4. **`lib/data/agent-action-service.ts`** — proposeAction (evaluates and
+   stores, blocked included), reviewAction and modifyAction (transaction +
+   `SELECT … FOR UPDATE` + `stateVersion` check ⇒ 409 on double-click or
+   stale reviewer), syncDecisionsToActions (deterministic, idempotent, no
+   model call), plus reads for the admin surface.
+   `lib/data/action-evidence.ts` resolves evidence refs against real
+   insight/opportunity rows; unresolved refs are reported, never
+   reconstructed.
+5. **Admin** — `/admin/ai-actions` + `/admin/ai-actions/[id]` (S08 auth +
+   `AI_ACTION_CENTER` flag, fail-closed 404) and POST
+   `/api/admin/ai-actions/sync|[id]/review|[id]/modify` behind
+   `lib/admin/write-guard.ts` (POST + auth + same-origin Origin/Referer +
+   `application/json` + bounded body + strict schema — the CSRF answer to
+   browser-auto-sent Basic credentials). `lib/admin/auth.ts` gained
+   `adminIdentity()`: server-derived `reviewedBy`, never client-supplied.
+   BI page links through to the Action Center when the flag is on.
+6. **Tests 451 → 512** (all green; zero credentials/network/AI provider):
+   guardrails-engine (fail-closed matrix, determinism, limits snapshot,
+   autonomy clamping, source permissions, policy-vs-model risk, missing
+   config, price-floor fail-closed, empty executor registry, null-limit
+   assertion, no-lib/ai structural check, CEO category coverage),
+   ai-actions-workflow (propose/blocked/OBSERVE/clamped, CEO sync
+   idempotency, approve/reject + decision mirroring, double-click and
+   stale-reviewer conflicts, modification lineage + re-evaluation +
+   invented-evidence refusal, evidence resolution), ai-actions-admin
+   (404/401/flag gates, cross-origin 403, form-post 415, no-Origin 403,
+   strict bodies, red team: reviewedBy/riskLevel/approvalStatus/
+   executionStatus rejection, server-recomputed risk, 409 staleness,
+   approval ≠ execution, blocked action unapprovable),
+   guardrails-separation (15 sales tools unchanged, no commerce/sales file
+   imports the guardrail layer, no mutation/network call anywhere in it,
+   CEO agent still tool-free and cannot approve).
+7. **Docs** — docs/GUARDRAILS.md rewritten as the IMPLEMENTED spec; new
+   docs/AI_ACTION_CENTER.md (authoritative); ARCHITECTURE (module map +
+   admin note + 5 decision-log entries), DATABASE_SCHEMA (three tables +
+   services), AI_AGENT_ARCHITECTURE (autonomy clamping + CEO approval
+   path + tool separation), AI_PLATFORM_ROADMAP (Stage E complete),
+   prompts/00-INDEX (10 ✅, 11 next), LAUNCH_CHECKLIST (+Action Center
+   section), BUSINESS_CONFIG_TODO (+Guardrail limits, split into
+   currently-required vs required-before-GUARDED_AUTO), .env.example.
+
 ## Important decisions (and why)
 
 1. **Database is the first ADD** — every roadmap capability consumes
@@ -1186,6 +1338,56 @@ untouched (all S02–S08 tests green, no commerce file modified).
     Chosen over stuffing documents into decision rows and over
     regenerate-on-load.
 
+32. **(S10) One guardrail engine, and it is a pure function** —
+    `modules/guardrails` imports neither `lib/ai` nor `db/`, and
+    `evaluateAgentAction` has no clock, randomness or I/O, so the same
+    input under the same `GUARDRAIL_POLICY_VERSION` always produces the
+    same verdict and a model can never influence one. Persistence stamps
+    the time and writes an append-only evaluation row carrying the policy
+    version AND the exact limits consulted. Chosen over per-agent safety
+    checks (which drift apart) and over an LLM-judged safety layer.
+33. **(S10) The action taxonomy is CLOSED and payload schemas are
+    STRICT** — 20 registered types, each with its own zod schema; unknown
+    types and unknown payload keys are validation failures. A model can
+    neither invent a capability ("TRANSFER_MONEY") nor smuggle an
+    authorization field (`riskLevel`, `approvalStatus`) into a payload.
+    ACTION TYPE and EXECUTION SUPPORT are separate axes, so
+    `PRICE_EXPERIMENT` is representable today with executionStatus
+    NOT_SUPPORTED. Also: the SOURCE grants nothing — CEO_AGENT is
+    permitted review types only, so a "lower all prices 90%" proposal is
+    denied by permission, not by prompt wording.
+34. **(S10) Autonomy is clamped by policy, not merely stored** —
+    `agent_configs` remains the store (absent row = OBSERVE), but the
+    evaluator applies `min(stored, policy ceiling)` where every business
+    agent's ceiling is RECOMMEND. A mistaken or tampered AUTONOMOUS row
+    grants nothing; the guarded-auto allow-list is empty and HIGH/CRITICAL
+    risk always requires a human. Chosen over trusting one mutable row.
+35. **(S10) Approval and execution are separate columns, and the executor
+    registry is EMPTY** — `status` records the human verdict,
+    `executionStatus` records whether anything happened. No dummy
+    executors exist, so approving records intent and mutates no price, ad,
+    product or payment; the documented contract (validated action → fresh
+    evaluation → approval → idempotency key → before/after → audit →
+    rollback) must be met before the first executor is registered. Chosen
+    over one ambiguous status field and over stubs that pretend to work.
+36. **(S10) Proposals are immutable; modification creates a re-evaluated
+    revision** — an admin edit marks the original SUPERSEDED and inserts
+    `revision + 1` with `originActionId`, then runs the FULL evaluation on
+    the new payload: no verdict is inherited and a rule-violating edit
+    lands as GUARDRAIL_BLOCKED. Evidence refs may narrow but never grow,
+    so an edit cannot launder fabricated evidence. Transitions are
+    `stateVersion`-checked under a row lock, so a double-click or a stale
+    second reviewer conflicts instead of rewriting history. Chosen over
+    in-place payload edits.
+37. **(S10) Admin mutation routes defend against the cost of Basic auth** —
+    browsers send Basic credentials automatically, so authentication alone
+    would leave approve/reject cross-site triggerable. Every write requires
+    POST + authenticated admin + same-origin Origin/Referer +
+    `application/json` + a bounded body + a strict schema, and
+    `reviewedBy` is derived from the server's configured `ADMIN_USER`.
+    Documented as a tested control set, NOT a claim of full security
+    compliance; per-user RBAC stays deferred.
+
 ## Known issues
 
 - ~~Configurator state is six `useState` hooks local to
@@ -1292,6 +1494,27 @@ untouched (all S02–S08 tests green, no commerce file modified).
   dismisses stragglers; S10's Action Center is the management surface).
 - (S09) `/admin/business-intelligence` inherits the storefront layout
   chrome, same as the S08 page (accepted for an internal tool).
+- (S10) Admin identity is still single-credential Basic auth, so every
+  `reviewedBy` reads as the one configured `ADMIN_USER` — the Action
+  Center records WHAT was decided and WHEN, but not WHICH person decided
+  it. Per-user RBAC and a per-person audit trail are deferred (this is the
+  S08 limitation, now visible on approval records).
+- (S10) Magnitude-based risk escalation ("a >X% budget increase is
+  CRITICAL") is deliberately NOT implemented — it would require inventing
+  X. Missing limits are surfaced as missing configuration, which blocks
+  automated execution; risk itself comes from the action-type table.
+- (S10) The Modify control is a JSON payload editor, not a per-field form.
+  It is fully validated and re-evaluated server-side (an invalid edit is
+  refused), but it expects an operator comfortable with the structured
+  payload; per-type edit forms are a future refinement.
+- (S10) Sync materializes actions from PENDING CEO decisions only. A
+  recommendation already approved/rejected is history, not a pending
+  question, so re-running sync never resurrects it.
+- (S10) `/admin/ai-actions` inherits the storefront layout chrome (same as
+  S08/S09) and shares their bounded-load posture (500 actions).
+- (S10) The Action Center list resolves each action's latest evaluation
+  with a per-row query — fine at current volume, revisit alongside the
+  S08/S09 bounded-load items if action counts grow.
 
 ## Business configuration still needed
 
@@ -1309,9 +1532,12 @@ filled)**, guardrail thresholds, escalation destination.
 ## Deferred work
 
 Explicitly preserved for later sessions: **human escalation delivery**
-(owner config), **Guardrails + AI Action Center** (S10 — CEO decisions
-already sit pending-approval, awaiting the review/approve UI +
-evaluateAgentAction engine), **CRO Agent** + experiment runtime (S11),
+(owner config), **real action executors** (none exist — the contract in
+docs/AI_ACTION_CENTER.md must be satisfied first), **GUARDED_AUTO
+promotion** (needs operating history + the guardrail limits in
+config/guardrails.ts + an explicit human decision, Stage J), **per-user
+admin RBAC** (single Basic credential today), **CRO Agent** + experiment
+runtime (S11),
 **Pricing Agent/Intelligence** (S12 — the CEO may recommend "review
 pricing", never compute optimal prices), **Google Ads Agent** (S13+ —
 until then NO ad-spend ingestion, NO CAC/ROAS anywhere), **Meta Ads
@@ -1322,7 +1548,7 @@ deferred: `createDraftQuote` tool (the AI points at /request-quote
 today), `getOrderStatus` tool, Shopify order webhooks → DB order rows
 (real-store aiAssisted linkage + order-status revenue semantics land
 there), accounts/reorder, email automation, Merchant Center feed, further
-admin surfaces (ai-actions, ai-usage), privacy portal UI, conversation
+admin surfaces (ai-usage), privacy portal UI, conversation
 `abandoned` outcome sweep + intelligence abandonment labeling (needs an
 inactivity rule), scheduled/weekly intelligence processing + scheduled
 CEO review delivery (manual admin actions today), quote-payload demand
@@ -1358,16 +1584,24 @@ the 03.5 hardening pass (small blast radius, none block Session 04):
 
 ## Recommended next session
 
-**Session 10 — Guardrails + AI Action Center** — run
-`prompts/10-guardrails.md`: everything it consumes now exists. The CEO
-agent (S09) writes pending AgentDecision rows with structured,
-category-scoped proposedActions (identity-keyed, future-Action-Center
-compatible by design); Approval rows are auto-created; `reviewApproval`
-already updates decision+approval atomically but has NO UI. S10 builds
-`modules/guardrails` (`evaluateAgentAction` — hard limits from
-GUARDRAILS.md; note price-floor checks fail closed while config/costs.ts
-is null) + `/admin/ai-actions` reusing the S08/S09 admin auth pattern
-(HTTP Basic + flag, fail-closed 404). Hard boundaries staying: approving
-a recommendation records the human decision — EXECUTION paths for
-CEO-category actions still don't exist and must not be invented;
-autonomy promotion (GUARDED_AUTO) needs operating history per Stage J.
+**Session 11 — Experiment Engine + CRO Agent** — run `prompts/11-cro.md`.
+Prerequisites now exist: the `experiments` + `experiment_assignments`
+tables have been live schema since S03 (no runtime), first-party events
+give exposure/outcome measurement, `modules/business-intelligence`
+supplies denominator-honest conversion metrics, and S10 supplies the
+approval spine a CRO agent must go through — `CRO_EXPERIMENT_PROPOSAL`
+(review-only, LOW) and `CRO_EXPERIMENT_LAUNCH` (MEDIUM,
+`executionStatus = NOT_SUPPORTED`) are already registered action types,
+and `CRO_AGENT` is already permitted exactly those.
+
+Boundaries that stay: the CRO agent proposes, it never launches — a launch
+executor is the first executor this codebase would ever have, so it must
+satisfy the full contract in docs/AI_ACTION_CENTER.md (fresh evaluation,
+approval, idempotency key, before/after, audit, rollback) and register in
+`modules/guardrails/executors.ts`. `maximumExperimentTrafficPct` is
+`[TO BE PROVIDED]`, so any launch action reports missing configuration and
+cannot be execution-eligible until the owner sets it. Checkout must stay a
+protected page. No insufficient-sample winners — reuse the existing
+threshold doctrine in `config/business-intelligence.ts`.
+
+Do not start it automatically.

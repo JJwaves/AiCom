@@ -55,6 +55,8 @@ Conventions (all enforced in code):
 | `intelligence-service` | S08 corpus reads, classification upsert, evidence resolution |
 | `business-intelligence-service` | S09 session counts + AI-usage aggregates (unpriced calls counted, never $0) |
 | `ceo-report-service` | S09 CEO review documents (append-only, versioned) |
+| `agent-action-service` | S10 proposed actions: guardrail-evaluated proposal, human approve/reject/modify (row-locked + `stateVersion`-checked), CEO-decision sync, append-only evaluation + history rows |
+| `action-evidence` | S10 server-side resolution of an action's evidence refs (unresolved refs are reported, never reconstructed) |
 | `privacy` | deleteSessionData / deleteCustomerData (cascade + PII redaction) |
 
 ## Identity & commerce spine (implemented)
@@ -256,17 +258,77 @@ agent_decisions
               rolled_back|failed) · resultJson? · createdAt · executedAt?
 approvals     id · decisionId→agent_decisions · status (pending|approved|
               rejected|modified) · requestedAt · reviewedAt? · reviewedBy? ·
-              reviewNotes? · beforeJson? · afterJson? · createdAt
+              reviewNotes? · beforeJson? · afterJson? ·
+              actionId? (S10 — which proposed-action revision the human
+              actually reviewed) · createdAt
 agent_configs agentType (pk) · autonomyMode (OBSERVE|RECOMMEND|GUARDED_AUTO|
               AUTONOMOUS) · limitsJson? · updatedAt
-              (missing row reads as OBSERVE — fail-safe default)
+              (missing row reads as OBSERVE — fail-safe default; S10 also
+              CLAMPS whatever is stored to the per-agent ceiling in
+              config/guardrails.ts, so a wrong row grants nothing)
 ```
 
 **AgentAction is a typed zod structure, not a table** (`agent-service.ts`:
 `{ agentType, actionType, params, expectedEffect? }`). It lives inside its
-decision record and, later, inside guardrail verdict logs — one audit
-trail, no duplicate concepts. Approval-requiring decisions atomically
-create their pending approval row.
+decision record — the AI's own description of what it proposes. Session 10
+adds the separate `agent_actions` table below: the STRUCTURED, closed-type
+proposal a human reviews. The two are distinct on purpose (spec §13) —
+decision = reasoning, action = the proposed business change.
+Approval-requiring decisions atomically create their pending approval row.
+
+## Guardrails + AI Action Center (Session 10 — migration 0004)
+
+```
+agent_actions id · sourceAgent (CEO_AGENT|PRICING_AGENT|CRO_AGENT|
+              GOOGLE_ADS_AGENT|META_ADS_AGENT|HUMAN_ADMIN) ·
+              sourceDecisionId?→agent_decisions (set null) ·
+              actionType (CLOSED taxonomy — modules/guardrails/actions.ts) ·
+              title · payloadJson (validated by the type's STRICT schema;
+              a blocked proposal stores a bounded preview of what was
+              attempted) · identityKey? (carried from the decision) ·
+              revision (1, +1 per human modification) · originActionId? ·
+              supersededByActionId? ·
+              status (PROPOSED|GUARDRAIL_BLOCKED|PENDING_APPROVAL|APPROVED|
+              REJECTED|SUPERSEDED) ·
+              executionStatus (NOT_APPLICABLE|NOT_SUPPORTED|READY|EXECUTING|
+              EXECUTED|FAILED|ROLLED_BACK — SEPARATE from approval:
+              "approved" never implies "happened") ·
+              riskLevel (LOW|MEDIUM|HIGH|CRITICAL — POLICY-derived) ·
+              modelSuggestedRisk? (metadata only, never applied) ·
+              approvalRequired · latestEvaluationId? ·
+              reviewedBy? (SERVER-derived admin identity) · reviewedAt? ·
+              reviewNotes? · createdBy · stateVersion (optimistic
+              concurrency: every transition increments it) · timestamps
+              UNIQUE (sourceDecisionId) WHERE originActionId IS NULL
+              — one ORIGINAL action per decision (sync idempotency)
+guardrail_evaluations
+              id · actionId→agent_actions (cascade) · actionRevision ·
+              policyVersion · sourceAgent · actionType · autonomyMode
+              (as APPLIED, after clamping) · allowed · executionEligible ·
+              approvalRequired · riskLevel · violatedRulesJson
+              ({id,severity HARD|SOFT,blocks PROPOSAL|EXECUTION,message}) ·
+              missingConfigurationJson (config paths, verbatim) · reason ·
+              executionSupport · limitsSnapshotJson (the limits as they
+              were) · evaluatedAt
+              APPEND-ONLY — answers "why was this allowed on that date?"
+agent_action_events
+              id · actionId→agent_actions (cascade) · type
+              (ai_action_proposed|ai_action_guardrail_blocked|
+              ai_action_approved|ai_action_rejected|ai_action_modified) ·
+              actor (SERVER-derived: "system:ceo_sync" | "admin:<user>") ·
+              detailJson? · createdAt
+              APPEND-ONLY admin history. Deliberately NOT the `events`
+              table: that taxonomy is the customer journey (every row needs
+              a session) and feeds third-party analytics copies — business
+              action details stay first-party only.
+```
+
+Immutability: payloads are never edited in place. A human modification
+marks the original SUPERSEDED and inserts `revision + 1` with
+`originActionId`, which is then RE-EVALUATED from scratch (no inherited
+verdict). All state transitions run under `SELECT … FOR UPDATE` with a
+`stateVersion` check, so a double-clicked Approve or a stale second
+reviewer gets a conflict instead of rewriting history.
 
 ## Intelligence outputs (written by Session 08 — docs/CUSTOMER_INTELLIGENCE.md)
 

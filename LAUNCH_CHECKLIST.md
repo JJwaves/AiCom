@@ -39,6 +39,15 @@ take real traffic until they pass.
 - [ ] Understand profitability stays "Unavailable — configure manufacturing costs" until `config/costs.ts` is filled (see Commerce item below); never expect $0 placeholders
 - [ ] CEO reviews cost real AI spend (REASONING tier) — generate them deliberately; model pricing in `config/ai-pricing.ts` is required for spend metrics + budget caps
 
+## AI Action Center (Session 10 — only if enabling AI_ACTION_CENTER)
+- [ ] Same admin auth prerequisites as above (shared surface — no separate credentials)
+- [ ] ⛔ HTTPS is mandatory here specifically: these are the first admin MUTATION routes, and HTTP Basic credentials travel on every request
+- [ ] Verify /admin/ai-actions answers 404 with the flag off, and that approve/reject/modify are rejected cross-origin (403) and for non-JSON content types (415) on the production build
+- [ ] Understand what approval means: it records YOUR decision. No executor exists for any business action type, so nothing changes a price, ad budget, product, or payment. Do not read "Approved" as "done"
+- [ ] Guardrail limits in `config/guardrails.ts` are all `[TO BE PROVIDED]` — actions needing them show "missing configuration" and can never be execution-eligible. Fill them only before any GUARDED_AUTO promotion is considered (BUSINESS_CONFIG_TODO)
+- [ ] Any change to `config/guardrails.ts` or the action taxonomy must bump `GUARDRAIL_POLICY_VERSION` (stored evaluations reference it)
+- [ ] Known limitation accepted: single shared admin identity — every `reviewedBy` reads as the configured `ADMIN_USER`; per-user RBAC is deferred
+
 ## Commerce
 - [ ] ⛔ Shopify production credentials in env (`NEXT_PUBLIC_SHOPIFY_*`)
 - [ ] ⛔ Variant mapping complete in `lib/commerce/shopify.ts` (no `REPLACE_ME` ids)
