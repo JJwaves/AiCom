@@ -32,6 +32,13 @@ take real traffic until they pass.
 - [ ] Verify production intelligence shows REAL data only (`npm run db:seed` demo rows must never reach the production database — existing DB checklist item)
 - [ ] Review CUSTOMER_INTELLIGENCE thresholds in `config/customer-intelligence.ts` (documented defaults: 3 evidence / 5 denominator / 5 trend base / batch 25) before relying on the report for decisions
 
+## Business intelligence (Session 09 — only if enabling AI_BUSINESS_INTELLIGENCE)
+- [ ] Same admin auth prerequisites as above (shared surface — no separate credentials)
+- [ ] Verify /admin/business-intelligence answers 404 with the flag off and renders deterministic metrics WITHOUT any AI configuration on the production build
+- [ ] Review BUSINESS_INTELLIGENCE thresholds in `config/business-intelligence.ts` (documented defaults: 5 denominator / 5 trend base / 5 segment sample) before relying on the dashboard for decisions
+- [ ] Understand profitability stays "Unavailable — configure manufacturing costs" until `config/costs.ts` is filled (see Commerce item below); never expect $0 placeholders
+- [ ] CEO reviews cost real AI spend (REASONING tier) — generate them deliberately; model pricing in `config/ai-pricing.ts` is required for spend metrics + budget caps
+
 ## Commerce
 - [ ] ⛔ Shopify production credentials in env (`NEXT_PUBLIC_SHOPIFY_*`)
 - [ ] ⛔ Variant mapping complete in `lib/commerce/shopify.ts` (no `REPLACE_ME` ids)

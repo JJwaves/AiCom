@@ -45,3 +45,6 @@ next-env.d.ts
 
 # keep the env template
 !.env.example
+
+# auto-generated session status (Stop hook output — never source of truth)
+.claude/STATUS.md

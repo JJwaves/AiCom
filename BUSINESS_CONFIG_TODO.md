@@ -86,6 +86,21 @@ an explicit `null` placeholder. Margin math reports "unavailable" and every
 price guardrail fails closed until ALL of these are provided. Do NOT let
 anyone invent them. Units: integer cents; rates in basis points (290 = 2.9%).
 
+**Session 09 makes the gap visible daily:** `/admin/business-intelligence`
+shows gross profit, contribution profit (before paid media), and both
+margins as **"Unavailable — configure manufacturing costs"** — listing the
+exact missing inputs — until every row below is filled. Nothing substitutes
+zero, nothing estimates. Classification:
+
+- **REQUIRED FOR LAUNCH** (price guardrails fail closed without them):
+  payment fee + margin policy floors.
+- **REQUIRED FOR PROFIT INTELLIGENCE** (dashboards + future pricing/ads
+  optimization are blind without them): every per-product manufacturing /
+  size / material / printing / packaging / shipping / other-variable input.
+- Not needed yet (later sessions): advertising cost feeds (Google/Meta) —
+  the dashboard already labels contribution "before paid media" and never
+  fabricates CAC/ROAS.
+
 | Item | Where |
 | --- | --- |
 | Base manufacturing cost per bag | `config/costs.ts` → `products.<id>.baseManufacturingCentsPerUnit` |
@@ -133,3 +148,12 @@ anyone invent them. Units: integer cents; rates in basis points (290 = 2.9%).
 | Customer Intelligence on/off | `.env` → `AI_CUSTOMER_INTELLIGENCE_ENABLED` (default false; admin surface 404s while off). AI classification additionally needs the AI runtime + key above |
 | Evidence / denominator / trend / segment thresholds | `config/customer-intelligence.ts` — documented conservative defaults (insight ≥3 evidence, % needs ≥5 denominator, trend needs ≥5 previous base, segments ≥5 per cell, batch 25). Review before relying on the dashboard for decisions; they gate when the system SPEAKS, not what it claims |
 | Volume-group boundaries | `config/customer-intelligence.ts` `VOLUME_GROUPS` — derived from the current 500 MOQ + quantity presets; revisit if MOQ or presets change |
+
+## Business intelligence (Session 09)
+
+| Item | Where |
+| --- | --- |
+| Business Intelligence on/off | `.env` → `AI_BUSINESS_INTELLIGENCE_ENABLED` (default false; `/admin/business-intelligence` 404s while off). Deterministic metrics need only this flag + admin auth; CEO review generation additionally needs the AI runtime + key |
+| Reporting thresholds | `config/business-intelligence.ts` — documented conservative defaults (% needs ≥5 denominator, trend needs ≥5 previous base, segments ≥5 per cell, ≤10 recommendations per review). They gate when the system SPEAKS, not what it claims |
+| Cost model (see above) | Profitability metrics stay "Unavailable — configure manufacturing costs" until `config/costs.ts` is complete; the dashboard lists the missing inputs verbatim |
+| AI model pricing | `config/ai-pricing.ts` (see AI section) — AI spend metrics show unavailable/partial while calls are unpriced; an unpriced call is never $0 |

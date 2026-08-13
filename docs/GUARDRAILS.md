@@ -35,7 +35,7 @@ assignments:
 | Customer Intelligence | RECOMMEND — implemented S08: runs only on the explicit admin action, READ-only grant, outputs insights/opportunities that execute nothing; opportunities always `humanValidationRequired` |
 | Pricing | RECOMMEND |
 | CRO | RECOMMEND |
-| CEO / Business Review | RECOMMEND |
+| CEO / Business Review | RECOMMEND, permanently — implemented S09: runs only on the explicit admin action, NO tools (one structured-output call over the deterministic snapshot), metric/evidence references server-validated, recommendations persist as pending AgentDecision rows (approvalRequired always true, executionStatus never leaves `none`) |
 | Google Ads | OBSERVE |
 | Meta Ads | OBSERVE |
 

@@ -101,7 +101,11 @@ sales prompts (`ai_sales_agent` — the AI Packaging Expert persona,
 customer-intelligence classifier (`ai_customer_intelligence_classifier`
 — LOW_COST controlled-taxonomy labeling; output untrusted, server
 validates enum membership + messageId evidence, deterministic code
-decides catalog support — docs/CUSTOMER_INTELLIGENCE.md).
+decides catalog support — docs/CUSTOMER_INTELLIGENCE.md), and the
+Session 09 CEO review (`ai_ceo_business_review` — REASONING
+interpretation of the deterministic BusinessHealthSnapshot; output
+untrusted, server validates every metric/evidence reference against the
+context actually sent — docs/BUSINESS_INTELLIGENCE.md).
 Every runtime call made with a registry prompt stamps
 `prompt_id` + `prompt_version` onto its AiUsage row, so any output can be
 traced to the exact prompt+model that produced it.

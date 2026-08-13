@@ -53,32 +53,40 @@ limits, refund authorization, agent autonomy, approvals.
 
 ## Current project stage
 
-**Session 08 "Customer Intelligence Engine" COMPLETE (2026-08-12) — the
-first intelligence layer AND the first admin surface: real conversations/
-profiles/configurations/orders → LOW_COST controlled-taxonomy message
-labeling (server-validated evidence, idempotent explicit runs) →
-DETERMINISTIC aggregation (`modules/customer-intelligence` has no lib/ai
-import — counts/percentages structurally cannot be fabricated) →
-threshold-gated, identity-stable CustomerInsight + ProductOpportunity
-rows (sourceRefs ≥ 1) → `/admin/customer-intelligence` behind fail-closed
-HTTP Basic auth + `AI_CUSTOMER_INTELLIGENCE` flag. OBSERVE→CLASSIFY→
-AGGREGATE→REPORT only: no autonomous actions, nothing customer-facing,
-AI can never validate manufacturing feasibility. Next milestone:
-Session 09 "Business Intelligence + CEO Recommendation Agent".**
+**Session 09 "Business Intelligence + CEO Recommendation Agent" COMPLETE
+(2026-08-12) — the business-level intelligence layer: DETERMINISTIC
+metrics (`modules/business-intelligence`, no lib/ai import) with an
+explicit AVAILABLE/PARTIAL/UNAVAILABLE availability model — revenue/
+orders/AOV/units, funnel + denominator-honest rates, AI sales + AI cost
+(unpriced calls never $0), profitability (gross + contribution BEFORE
+paid media — UNAVAILABLE while config/costs.ts is null: "Unavailable —
+configure manufacturing costs", never zero, never estimated), segments,
+first-party attribution (no CAC/ROAS — no ad spend exists), explicit
+trend states (NEW_ACTIVITY/LOW_BASELINE, never +∞%) → ONE
+BusinessHealthSnapshot → CEO agent (RECOMMEND permanently: NO tools, one
+REASONING structured-output call, metric/evidence references
+server-validated against the exact context sent, fabricated refs
+dropped) → pending AgentDecision rows (identity-stable dedup, human
+verdicts frozen) + append-only `ceo_reports` (period/prompt/model/
+snapshot versioning) → `/admin/business-intelligence` behind the S08
+auth + `AI_BUSINESS_INTELLIGENCE` flag: deterministic dashboard works
+with AI off/down; CEO review generates ONLY from the explicit admin
+button. MEASURE→SYNTHESIZE→EXPLAIN→RECOMMEND, never execute. Next
+milestone: Session 10 "Guardrails + AI Action Center".**
 
-## Current architecture (2026-08-12, post-Session 08)
+## Current architecture (2026-08-12, post-Session 09)
 
 Working B2B storefront, verified end-to-end (see
 docs/CURRENT_SYSTEM_AUDIT.md + its Session-02 resolution note):
-- Next.js 16.3 App Router · React 19 · TS · Tailwind v4 · zod · vitest (415 tests)
+- Next.js 16.3 App Router · React 19 · TS · Tailwind v4 · zod · vitest (451 tests)
   · Drizzle ORM + Postgres (PGlite embedded dev/test, node-postgres prod).
-- **Database (Session 03; +1 table Session 08):** `db/schema.ts` (21
-  tables: sessions, events, customers, businesses, orders+lines, quotes,
-  artworks, configurations, conversations+messages,
-  conversation_classifications (S08), need profiles, ai_usage,
-  agent_decisions, approvals, agent_configs, insights, opportunities,
-  experiments, assignments) + additive SQL migrations in `db/migrations/`
-  (0000–0002).
+- **Database (Session 03; +1 table Session 08; +1 Session 09):**
+  `db/schema.ts` (22 tables: sessions, events, customers, businesses,
+  orders+lines, quotes, artworks, configurations, conversations+messages,
+  conversation_classifications (S08), ceo_reports (S09), need profiles,
+  ai_usage, agent_decisions, approvals, agent_configs, insights,
+  opportunities, experiments, assignments) + additive SQL migrations in
+  `db/migrations/` (0000–0003).
   `DATABASE_URL` unset ⇒ embedded PGlite at `.data/pglite` self-migrates
   (zero-setup dev; tests use `memory://`); set ⇒ real Postgres, migrations
   applied explicitly via `npm run db:migrate`. **`NODE_ENV=production`
@@ -276,6 +284,50 @@ docs/CURRENT_SYSTEM_AUDIT.md + its Session-02 resolution note):
   ai_configuration_updated/ai_add_to_cart_requested/ai_checkout_requested/
   human_handoff_requested) OR quantity/productInterest at USER_STATED/
   CONFIGURATOR/ORDER_DATA provenance — AI_INFERRED alone never qualifies.
+- **Business Intelligence + CEO Agent (Session 09 —
+  docs/BUSINESS_INTELLIGENCE.md is authoritative):**
+  `modules/business-intelligence` = the DETERMINISTIC business-metrics
+  authority (NO lib/ai import): typed Metric availability
+  AVAILABLE/PARTIAL/UNAVAILABLE (unavailable carries reason+missingInputs,
+  NEVER value 0), revenue from orders.totalCents (multi-line never double
+  counted; cancelled/refunded excluded+reported; per-currency exact,
+  headlines single-currency only — no invented FX), funnel (distinct
+  sessions/stage, purchases from the orders table, rates with documented
+  denominators), AI sales (S07 conservative aiAssisted) + AI cost
+  (unpriced calls counted → PARTIAL/UNAVAILABLE, never $0; by
+  provider/model/agent), profitability reconstructed per order from the
+  S02 cost model (gross = revenue − product COGS; contribution BEFORE
+  paid media = − all variable costs, payment fee per ORDER; per-product =
+  gross only; all-null config/costs.ts ⇒ "Unavailable — configure
+  manufacturing costs" listing missing inputs), segments (businessType),
+  first-party attribution (first/last touch, landing pages, no click ids,
+  NO CAC/ROAS), trends (TREND/NEW_ACTIVITY/LOW_BASELINE/NO_ACTIVITY —
+  previous-zero never +∞%), deterministic data-quality warnings → ONE
+  BusinessHealthSnapshot (JSON-serializable, PII-free). CEO agent
+  `lib/ai/agents/ceo` (RECOMMEND permanently): NO tools — one REASONING
+  `generateStructuredObject` over the snapshot context (prompt
+  `ai_ceo_business_review` v1.0.0); controlled enums (confidence+risk
+  LOW/MEDIUM/HIGH, 9 action categories granting zero authority); server
+  validates every supportingMetricRef/evidenceRef against the exact
+  context sent (fabricated refs filtered, ref-less recommendations
+  dropped+logged); persists pending AgentDecisions (approvalRequired
+  always true, executionStatus stays none; identityKey =
+  category+refs+periodDays dedup — pending rows update in place via
+  `updateDecisionRecommendation`, human-reviewed rows frozen) + one
+  append-only `ceo_reports` row (period, prompt+version, model, provider,
+  exact snapshot, validated review, decision ids; migration 0003).
+  Failure = failure: budget/provider errors persist NOTHING; the last
+  good report stays visible. Admin: `/admin/business-intelligence`
+  (period 1/7/30/90+custom; overview/funnel/AI/profitability/signals/
+  trends/products/segments/attribution/CEO review/data quality;
+  owner-friendly copy) + POST
+  `/api/admin/business-intelligence/ceo-review` (the ONLY generation
+  trigger) behind S08 HTTP Basic (same credentials, no second auth
+  system) + `AI_BUSINESS_INTELLIGENCE` flag, fail-closed 404.
+  Deterministic dashboard requires zero AI configuration. Config:
+  `config/business-intelligence.ts` thresholds; services
+  `lib/data/business-intelligence-service.ts` (::float8 aggregates) +
+  `lib/data/ceo-report-service.ts`.
 - `lib/commerce` — provider abstraction; `mock` active, `shopify`
   Storefront skeleton env-gated (variant mapping TODO, needs real store).
   **All catalog reads go through `lib/commerce/catalog.ts`** (provider-
@@ -901,6 +953,87 @@ green, no commerce file modified).
    prompts/00-INDEX (08 ✅, 09 next), LAUNCH_CHECKLIST (admin section),
    BUSINESS_CONFIG_TODO (admin auth RESOLVED + CI thresholds), .env.example.
 
+## Completed in Session 09 (2026-08-12) — Business Intelligence + CEO Recommendation Agent
+
+The business-level intelligence layer + the second admin surface.
+MEASURE→SYNTHESIZE→EXPLAIN→RECOMMEND only; storefront/commerce verified
+untouched (all S02–S08 tests green, no commerce file modified).
+
+1. **Schema (migration `0003_business_intelligence.sql`, additive)** —
+   new `ceo_reports` (one append-only row per explicit generation run:
+   periodStart/End/Days, promptId+version, model, provider, snapshotJson
+   [the exact deterministic snapshot the model saw], reviewJson
+   [server-validated output], decisionIdsJson). Decision documented: a
+   dedicated table, NOT AgentDecision — a review is a versioned document;
+   recommendations are individual decision rows.
+2. **`modules/business-intelligence/`** — deterministic authority with NO
+   lib/ai import: availability.ts (Metric<T> AVAILABLE/PARTIAL/UNAVAILABLE
+   + denominator-honest ratio; metricValue() returns null, never 0),
+   trend.ts (explicit states, MIN_TREND_BASE gate), revenue.ts (orders
+   table = truth; multi-line dedup; cancelled/refunded excluded+reported;
+   single-currency headline rule), funnel.ts (distinct sessions/stage +
+   4 documented-denominator rates; purchases from orders), ai-metrics.ts
+   (S07-conservative AI sales + spend by provider/model/agent; unpriced
+   calls → PARTIAL/UNAVAILABLE, never $0; cost-per metrics inherit
+   availability), profitability.ts (order-level reconstruction via the
+   S02 cost model; gross vs contribution-BEFORE-paid-media precisely
+   named; per-ORDER payment fee; isCostModelFullyConfigured static
+   check), products.ts (per-product performance + GROSS-only profit —
+   fee allocation would be invented), segments.ts (businessType only),
+   attribution.ts (first/last touch, campaign, landing page; click ids
+   never surfaced; adSpendIntegrated:false — no CAC/ROAS), snapshot.ts
+   (BusinessHealthSnapshot + 7 deterministic data-quality warning codes),
+   report.ts (dashboard assembly; CEO narrative = persisted report only,
+   with staleness note).
+3. **CEO agent (`lib/ai/agents/ceo/`)** — schema.ts (zod review schema;
+   controlled confidence/risk/category enums; ordinal confidence encoding
+   documented as sort-key-only), context.ts (bounded PII-free snapshot
+   rendering that BUILDS the validMetricRefs/validEvidenceRefs whitelists
+   from exactly what it prints), agent.ts (flags→snapshot→context→ONE
+   REASONING structured call→server-side ref validation [invalid refs
+   filtered; ref-less recommendations dropped+logged]→AgentDecision
+   persistence with identity dedup→ceo_reports row; budget/provider
+   failures return failed/unavailable and persist NOTHING). Prompt
+   `ai_ceo_business_review` v1.0.0 registered (numbers-only-from-context,
+   availability respect, observational language, ref-copying contract,
+   recommendation-only stance). agent-service gained
+   `updateDecisionRecommendation` (pending+unexecuted rows only).
+4. **Admin** — `/admin/business-intelligence` (S08 auth + flag,
+   fail-closed 404; periods 1/7/30/90 + custom; owner-friendly metric
+   cards with reasons as hints — "Unavailable — configure manufacturing
+   costs", never $0; funnel/AI/profitability/signals/trends/products/
+   segments/attribution sections; CEO review renders the persisted
+   report + "Generate your first CEO Review" empty state) + POST
+   `/api/admin/business-intelligence/ceo-review` (strict body; 404/401/
+   413/400/422; AI failures → honest 503 while deterministic metrics
+   stay up). New flag `AI_BUSINESS_INTELLIGENCE` (+ .env.example).
+5. **Config** — `config/business-intelligence.ts` (documented policy
+   thresholds: %≥5 denominator, trend≥5 base, segment≥5, ≤10
+   recommendations/review, context ≤16k chars, 5k row bounds).
+6. **Tests 415 → 451** (all green; zero credentials/network;
+   FakeAiProvider only): availability/ratio/trend semantics, revenue
+   (multi-line dedup, mixed-currency unavailability, cancelled exclusion,
+   0-orders AOV honesty), funnel denominators, segments, attribution
+   (click-id absence), snapshot assembly + data-quality codes, §46
+   cost-config suite (all-null ⇒ revenue AVAILABLE + every profit metric
+   UNAVAILABLE with reasons and NO value property; test-only configured
+   model ⇒ exact gross/contribution math incl. one-fee-per-order and
+   PARTIAL mixed coverage; production placeholders untouched), AI cost
+   availability tiers, CEO agent (report+decision persistence, no-tools
+   structural check, fabricated-ref dropping, dedup update-in-place,
+   human-verdict freezing, budget/provider fail-safety with prior report
+   surviving, flags-off unavailability, PII-free context against seeded
+   email/name/artwork/message content), admin route gates + strict
+   validation + deterministic-report-without-AI.
+7. **Docs** — new docs/BUSINESS_INTELLIGENCE.md (authoritative);
+   ARCHITECTURE (module rows + 3 decision-log entries), DATABASE_SCHEMA
+   (ceo_reports + service table), AI_AGENT_ARCHITECTURE (agent #7
+   implemented), AI_RUNTIME (prompt), GUARDRAILS (CEO autonomy row),
+   AI_PLATFORM_ROADMAP (Stage E core ✅, Action Center → S10),
+   prompts/00-INDEX (09 ✅, 10 next), LAUNCH_CHECKLIST (+BI section),
+   BUSINESS_CONFIG_TODO (launch-vs-profit-intelligence cost split + BI
+   section), .env.example.
+
 ## Important decisions (and why)
 
 1. **Database is the first ADD** — every roadmap capability consumes
@@ -1032,6 +1165,26 @@ green, no commerce file modified).
     creates opportunities as `proposed` and never touches
     validated/rejected — manufacturing feasibility is human-only by
     construction.
+29. **(S09) Business metrics are typed availability results; missing
+    inputs are never zero** — Metric<T> AVAILABLE/PARTIAL/UNAVAILABLE
+    with reason+missingInputs everywhere (profitability, AI spend, mixed
+    currencies); UNAVAILABLE has no value property at all, so null→0 is
+    structurally impossible. Chosen over null-coalescing dashboards and
+    over letting the LLM fill gaps.
+30. **(S09) The CEO agent has no tools and its references are earned** —
+    one structured-output call over the PII-free snapshot; the context
+    builder constructs the metric/evidence whitelists from exactly what
+    it prints, and persistence filters/drops anything outside them.
+    Recommendation ≠ authority: approvalRequired always true,
+    executionStatus never leaves `none`, human-reviewed identities are
+    frozen against regeneration.
+31. **(S09) CEO reviews live in a dedicated append-only table** —
+    `ceo_reports` versions the document (period/prompt/model/exact
+    snapshot/validated review/decision links) so failures keep the last
+    good report visible and audits can replay what the model actually
+    saw; AgentDecision stays the per-recommendation approval spine.
+    Chosen over stuffing documents into decision rows and over
+    regenerate-on-load.
 
 ## Known issues
 
@@ -1127,6 +1280,18 @@ green, no commerce file modified).
   audit trail of WHO clicked); acceptable for the single-operator stage —
   revisit before a second admin exists. Basic auth requires HTTPS in
   production (LAUNCH_CHECKLIST).
+- (S09) BI queries share the S08 bounded-load posture (5,000 rows/period
+  per table; sessions likewise) — fine at current scale, revisit with
+  real volume. `ceo_reports.snapshotJson` stores the full snapshot per
+  run (append-only); acceptable while generation is an explicit manual
+  action.
+- (S09) The "Last 24 hours" period is a rolling window, not a calendar
+  day (documented). CEO recommendation dedup keys on the refs the model
+  cites — a re-generated recommendation citing different metric refs
+  creates a separate pending decision (bounded at 10/review; the owner
+  dismisses stragglers; S10's Action Center is the management surface).
+- (S09) `/admin/business-intelligence` inherits the storefront layout
+  chrome, same as the S08 page (accepted for an internal tool).
 
 ## Business configuration still needed
 
@@ -1144,23 +1309,27 @@ filled)**, guardrail thresholds, escalation destination.
 ## Deferred work
 
 Explicitly preserved for later sessions: **human escalation delivery**
-(owner config), **Business Intelligence / CEO Recommendation Agent**
-(S09), **Guardrails Action Center** (S10), **Pricing Agent/Intelligence**
-(S12), **CRO Agent** + experiment runtime (S11), **Google Ads Agent**
-(S13+), **Meta Ads Agent**, autonomous commerce/background actions
-(never — every commerce mutation traces to an explicit customer message or
-tap; S08 intelligence additionally runs only on an explicit admin
-action). Also deferred: `createDraftQuote` tool (the AI points at
-/request-quote today), `getOrderStatus` tool, Shopify order webhooks → DB
-order rows (real-store aiAssisted linkage lands there), accounts/reorder,
-email automation, Merchant Center feed, further admin surfaces
-(ai-actions, ai-usage — customer-intelligence shipped S08), privacy
-portal UI, conversation `abandoned` outcome sweep + intelligence
-abandonment labeling (needs an inactivity rule), scheduled/weekly
-intelligence processing (manual admin action today), quote-payload demand
+(owner config), **Guardrails + AI Action Center** (S10 — CEO decisions
+already sit pending-approval, awaiting the review/approve UI +
+evaluateAgentAction engine), **CRO Agent** + experiment runtime (S11),
+**Pricing Agent/Intelligence** (S12 — the CEO may recommend "review
+pricing", never compute optimal prices), **Google Ads Agent** (S13+ —
+until then NO ad-spend ingestion, NO CAC/ROAS anywhere), **Meta Ads
+Agent**, autonomous commerce/background actions (never — every commerce
+mutation traces to an explicit customer message or tap; S08/S09
+intelligence additionally runs only on explicit admin actions). Also
+deferred: `createDraftQuote` tool (the AI points at /request-quote
+today), `getOrderStatus` tool, Shopify order webhooks → DB order rows
+(real-store aiAssisted linkage + order-status revenue semantics land
+there), accounts/reorder, email automation, Merchant Center feed, further
+admin surfaces (ai-actions, ai-usage), privacy portal UI, conversation
+`abandoned` outcome sweep + intelligence abandonment labeling (needs an
+inactivity rule), scheduled/weekly intelligence processing + scheduled
+CEO review delivery (manual admin actions today), quote-payload demand
 mining, painPoints/objections need-profile array extraction,
-owner-configured confirmation thresholds (BUSINESS_CONFIG_TODO). Order
-per `docs/AI_PLATFORM_ROADMAP.md`.
+owner-configured confirmation thresholds (BUSINESS_CONFIG_TODO),
+multi-currency conversion model (headline metrics stay single-currency
+until one exists). Order per `docs/AI_PLATFORM_ROADMAP.md`.
 
 ### Deferred technical debt (Session 03 audit — accepted, not forgotten)
 
@@ -1189,15 +1358,16 @@ the 03.5 hardening pass (small blast radius, none block Session 04):
 
 ## Recommended next session
 
-**Session 09 — Business Intelligence + CEO Recommendation Agent** — run
-`prompts/09-business-intelligence.md`: Customer Intelligence (S08) now
-supplies evidence-backed insights/opportunities with stable identities
-and an admin surface with auth to build on. S09's contribution-profit
-analytics need the cost model (`config/costs.ts` is still all-null
-placeholders — margins report "unavailable" and profit math will be
-blocked until the owner fills it; surface this honestly rather than
-inventing economics). The CEO agent is RECOMMEND-only per
-docs/GUARDRAILS.md, writes AgentDecision rows, and its Action Center
-(`/admin/ai-actions`) can reuse the S08 admin auth pattern. Hard
-boundaries staying: recommendations must trace to real metrics; no
-autonomous execution; nothing customer-facing.
+**Session 10 — Guardrails + AI Action Center** — run
+`prompts/10-guardrails.md`: everything it consumes now exists. The CEO
+agent (S09) writes pending AgentDecision rows with structured,
+category-scoped proposedActions (identity-keyed, future-Action-Center
+compatible by design); Approval rows are auto-created; `reviewApproval`
+already updates decision+approval atomically but has NO UI. S10 builds
+`modules/guardrails` (`evaluateAgentAction` — hard limits from
+GUARDRAILS.md; note price-floor checks fail closed while config/costs.ts
+is null) + `/admin/ai-actions` reusing the S08/S09 admin auth pattern
+(HTTP Basic + flag, fail-closed 404). Hard boundaries staying: approving
+a recommendation records the human decision — EXECUTION paths for
+CEO-category actions still don't exist and must not be invented;
+autonomy promotion (GUARDED_AUTO) needs operating history per Stage J.

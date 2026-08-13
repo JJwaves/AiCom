@@ -135,6 +135,46 @@ export async function setExecutionStatus(
     .where(eq(agentDecisions.id, decisionId));
 }
 
+/**
+ * Refresh a PENDING, never-executed recommendation in place (Session 09
+ * CEO dedup, spec §24): when the same recommendation identity regenerates
+ * with fresh evidence, its decision row is updated rather than duplicated.
+ * Reviewed decisions (approved/rejected/modified) are frozen — a human
+ * verdict is never overwritten by regeneration. Returns false when the
+ * row is missing or no longer updatable.
+ */
+export async function updateDecisionRecommendation(
+  decisionId: string,
+  input: {
+    observation: string;
+    reasoningSummary: string;
+    supportingData?: Record<string, unknown>;
+    confidence?: number;
+    riskLevel: (typeof RISK_LEVELS)[number];
+    proposedAction: AgentAction;
+  },
+): Promise<boolean> {
+  z.enum(RISK_LEVELS).parse(input.riskLevel);
+  agentActionSchema.parse(input.proposedAction);
+  const db = await getDb();
+  return db.transaction(async (tx) => {
+    const [row] = await tx.select().from(agentDecisions).where(eq(agentDecisions.id, decisionId)).limit(1);
+    if (!row || row.approvalStatus !== "pending" || row.executionStatus !== "none") return false;
+    await tx
+      .update(agentDecisions)
+      .set({
+        observation: input.observation.slice(0, 8000),
+        reasoningSummary: input.reasoningSummary.slice(0, 8000),
+        supportingDataJson: input.supportingData ?? null,
+        confidence: input.confidence ?? null,
+        riskLevel: input.riskLevel,
+        proposedActionJson: input.proposedAction,
+      })
+      .where(eq(agentDecisions.id, decisionId));
+    return true;
+  });
+}
+
 export async function getDecision(id: string): Promise<DecisionRow | null> {
   const db = await getDb();
   const [row] = await db.select().from(agentDecisions).where(eq(agentDecisions.id, id)).limit(1);

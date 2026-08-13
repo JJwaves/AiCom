@@ -17,6 +17,8 @@ export const FEATURE_FLAGS = [
   /** Customer-facing AI Sales Agent (Session 05). */
   "AI_SALES",
   "AI_CUSTOMER_INTELLIGENCE",
+  /** Business Intelligence admin surface + CEO recommendation agent (Session 09). */
+  "AI_BUSINESS_INTELLIGENCE",
   "AI_PRICING_AGENT",
   "AI_CRO_AGENT",
   "AI_GOOGLE_ADS_AGENT",

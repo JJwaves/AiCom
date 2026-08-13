@@ -47,13 +47,22 @@ drill-through (sourceRefs ≥ 1 enforced); explicit (manual-trigger)
 processing per the prompt's "weekly generation, manual trigger acceptable
 first". See docs/CUSTOMER_INTELLIGENCE.md.
 
-## Stage E — AI Business Intelligence
-- Contribution-profit analytics (needs Stage A cost model):
-  revenue − manufacturing − printing − packaging − shipping subsidy −
-  payment fees − discounts − attributed ad spend
-- CEO agent: recommendation-only daily business review
-- AI Action Center (`/admin/ai-actions`) + full guardrail evaluation path
-Exit: AgentDecision → human approval loop operating.
+## Stage E — AI Business Intelligence ✅ CORE COMPLETE (Session 09, 2026-08-12)
+- ✅ `/modules/business-intelligence`: deterministic revenue/funnel/AI-cost/
+  segment/attribution/trend metrics with explicit AVAILABLE/PARTIAL/
+  UNAVAILABLE availability; contribution-profit analytics implemented as
+  "contribution before paid media" (revenue − manufacturing − printing −
+  packaging − shipping − payment fees; discounts structurally zero; ad
+  spend not yet ingested) — UNAVAILABLE until the owner fills
+  config/costs.ts (needs Stage A cost model; never zero, never invented)
+- ✅ CEO agent: recommendation-only business review (no tools; explicit
+  admin trigger; AgentDecision + ceo_reports persistence) —
+  docs/BUSINESS_INTELLIGENCE.md
+- ✅ `/admin/business-intelligence` dashboard (deterministic without AI)
+- ⏳ AI Action Center (`/admin/ai-actions`) + full guardrail evaluation
+  path → Session 10 (decisions are pending-approval rows already)
+Exit: AgentDecision → human approval loop operating — decision records +
+pending approvals exist; the review/approve UI is the S10 deliverable.
 
 ## Stage F — CRO
 - Experiment engine (model from DATABASE_SCHEMA.md; flag

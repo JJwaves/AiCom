@@ -26,8 +26,8 @@ Rules that apply to every session:
 | [06-ai-configurator.md](06-ai-configurator.md) | Chat ↔ configurator shared state | C | ✅ 2026-08-10 |
 | [07-ai-checkout.md](07-ai-checkout.md) | AI-assisted checkout end-to-end (§44) | C | ✅ 2026-08-11 |
 | [08-customer-intelligence.md](08-customer-intelligence.md) | Insight aggregation + admin dashboard | D | ✅ 2026-08-12 |
-| [09-business-intelligence.md](09-business-intelligence.md) | Contribution profit + CEO agent | E | next |
-| [10-guardrails.md](10-guardrails.md) | Guardrail engine + AI Action Center | E | |
+| [09-business-intelligence.md](09-business-intelligence.md) | Contribution profit + CEO agent | E | ✅ 2026-08-12 |
+| [10-guardrails.md](10-guardrails.md) | Guardrail engine + AI Action Center | E | next |
 | [11-cro.md](11-cro.md) | Experiment engine + CRO agent | F | |
 | [12-pricing-intelligence.md](12-pricing-intelligence.md) | Pricing agent (RECOMMEND) | G | |
 | [13-google-ads-readonly.md](13-google-ads-readonly.md) | Google Ads read-only reporting | H | |

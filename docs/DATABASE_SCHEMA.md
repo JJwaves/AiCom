@@ -52,6 +52,9 @@ Conventions (all enforced in code):
 | `agent-service` | AgentDecision/Approval/AgentConfig + typed `AgentAction` schema |
 | `insight-service` | CustomerInsight (sourceRefs mandatory) + ProductOpportunity |
 | `experiment-service` | Experiment + sticky ExperimentAssignment |
+| `intelligence-service` | S08 corpus reads, classification upsert, evidence resolution |
+| `business-intelligence-service` | S09 session counts + AI-usage aggregates (unpriced calls counted, never $0) |
+| `ceo-report-service` | S09 CEO review documents (append-only, versioned) |
 | `privacy` | deleteSessionData / deleteCustomerData (cascade + PII redaction) |
 
 ## Identity & commerce spine (implemented)
@@ -318,6 +321,30 @@ verified against the transcript actually sent. Counts/percentages are
 NEVER stored here — deterministic aggregation over these rows happens at
 read time in `modules/customer-intelligence`. All aggregate SQL casts
 `::float8` (S03.5 rule).
+
+## CEO business reviews (Session 09 — migration 0003)
+
+```
+ceo_reports   id · periodStart · periodEnd · periodDays (admin selects
+              latest report by this) · promptId? · promptVersion? ·
+              model? · provider? · snapshotJson (the deterministic,
+              PII-free BusinessHealthSnapshot the model actually saw) ·
+              reviewJson (server-validated CEO structured output —
+              metric/evidence refs already filtered) ·
+              decisionIdsJson [agent_decisions ids persisted from this
+              review's recommendations] · generatedAt · createdAt
+```
+
+One row per explicit generation run — append-only history, no update or
+delete path. A review is a versioned DOCUMENT; each recommendation inside
+it is its own `agent_decisions` row (agentType `ceo`, decisionType
+`ceo_recommendation`, approvalRequired true ⇒ pending approval row,
+executionStatus stays `none`). Dedup identity lives in
+`proposedActionJson.params.identityKey` (category + sorted refs +
+periodDays): pending rows update in place on regeneration, human-reviewed
+rows are frozen. Reports contain aggregates only (no PII) and are exempt
+from the customer-deletion cascade by construction — see
+docs/BUSINESS_INTELLIGENCE.md.
 
 ## Experiments (schema only — NO runtime until Stage F)
 

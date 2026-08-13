@@ -538,6 +538,42 @@ export const productOpportunities = pgTable("product_opportunities", {
   updatedAt: updatedAt(),
 });
 
+/**
+ * CEO business-review reports (Session 09) — one row per explicit
+ * generation run. Deliberately a dedicated table rather than an
+ * AgentDecision: a review is a versioned DOCUMENT (period + prompt +
+ * model + the exact metric snapshot the model saw), while each
+ * recommendation inside it is persisted as its own AgentDecision row
+ * (linked via decisionIdsJson). Decision in docs/ARCHITECTURE.md.
+ *
+ * The snapshot is stored verbatim so a report remains auditable and
+ * visible even when the provider is down or budgets are exhausted —
+ * regeneration is always an explicit admin action, never scheduled.
+ */
+export const ceoReports = pgTable(
+  "ceo_reports",
+  {
+    id: text("id").primaryKey(),
+    periodStart: ts("period_start").notNull(),
+    periodEnd: ts("period_end").notNull(),
+    /** Whole days covered — the admin page selects reports by this. */
+    periodDays: integer("period_days").notNull(),
+    promptId: text("prompt_id"),
+    promptVersion: text("prompt_version"),
+    model: text("model"),
+    provider: text("provider"),
+    /** The BusinessHealthSnapshot the model received (deterministic, PII-free). */
+    snapshotJson: jsonb("snapshot_json").$type<Record<string, unknown>>().notNull(),
+    /** Server-validated CEO structured output (evidence/metric refs already filtered). */
+    reviewJson: jsonb("review_json").$type<Record<string, unknown>>().notNull(),
+    /** AgentDecision ids persisted from this review's recommendations. */
+    decisionIdsJson: jsonb("decision_ids_json").$type<string[]>().notNull(),
+    generatedAt: ts("generated_at").notNull().defaultNow(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("ceo_reports_period_idx").on(t.periodDays, t.generatedAt)],
+);
+
 /* ------------------------------------------------------------------ */
 /* Experiments (schema only — no runtime until Stage F)                */
 /* ------------------------------------------------------------------ */

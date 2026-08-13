@@ -108,7 +108,7 @@ arbitrary queries.
 | --- | --- | --- |
 | Sales ("AI Packaging Expert") | help customers configure & buy | GUARDED_AUTO within its toolset |
 | Customer Intelligence | aggregate questions/objections/demand | RECOMMEND (read-only analysis) |
-| CEO / Business Review | daily summaries + recommendations | RECOMMEND |
+| CEO / Business Review | daily summaries + recommendations | RECOMMEND (implemented S09) |
 | Pricing | analyze price↔conversion↔margin | RECOMMEND (engine stays authority) |
 | CRO | propose experiments | RECOMMEND |
 | Google Ads / Meta Ads | (deferred) | OBSERVE |
@@ -200,19 +200,19 @@ Identical structure to the Google Ads agent against the Meta Marketing
 API; same staged rollout, same caps, same audit. `META_ACCESS_TOKEN`
 remains server-only.
 
-### 7 · Business Decision / CEO Agent — Stage E, expanded Stage J
+### 7 · Business Decision / CEO Agent — Stage E, expanded Stage J · **IMPLEMENTED (Session 09 — docs/BUSINESS_INTELLIGENCE.md is authoritative)**
 
 | Dimension | Specification |
 | --- | --- |
-| Responsibility | Daily/weekly synthesis across sales, funnel, pricing, ads, experiments; ranked opportunities and risks; coordinate *proposals* from specialist agents. |
-| Inputs | Aggregated metrics from every domain (read-only), agent decisions, insights. |
-| Outputs | Business-review documents; `AgentDecision` rows referencing specialist-agent proposals. |
-| Allowed tools | Read-only cross-domain analytics; decision writer. |
-| Prohibited | Direct execution of anything — prices, ads, refunds, products, factory commitments; instructing another agent to bypass its own guardrails (composition never escalates privileges). |
+| Responsibility | Daily/weekly synthesis across sales, funnel, pricing, ads, experiments; ranked opportunities and risks; coordinate *proposals* from specialist agents. ✅ S09: interprets the deterministic BusinessHealthSnapshot (revenue/funnel/AI-cost/profitability/segments/attribution/trends + S08 customer signals) into a structured review with a controlled recommendation taxonomy. |
+| Inputs | Aggregated metrics from every domain (read-only), agent decisions, insights. ✅ S09: the snapshot context is the ONLY input — bounded, PII-free, with metric availability states; insights/opportunities cited by id. |
+| Outputs | Business-review documents; `AgentDecision` rows referencing specialist-agent proposals. ✅ S09: `ceo_reports` rows (versioned document: period, prompt+model, exact snapshot, validated review) + one pending AgentDecision per recommendation (stable-identity dedup; human verdicts frozen). |
+| Allowed tools | **NONE.** ✅ S09 implements this as one `generateStructuredObject` call — no tool registry exists on this agent; "decision writer" is server code persisting validated output, never a model-invocable capability. |
+| Prohibited | Direct execution of anything — prices, ads, refunds, products, factory commitments; instructing another agent to bypass its own guardrails (composition never escalates privileges). ✅ Structural: no execution code path; executionStatus stays `none`; references outside the offered context are dropped server-side. |
 | Autonomy | RECOMMEND, permanently — an advisor, never an executor. Never an all-powerful super-agent. |
-| Data access | Read-only aggregates; no raw PII requirement. |
-| Guardrails | Same per-domain limits as the specialists it summarizes; its recommendations inherit the *strictest* applicable guardrail. |
-| Audit | Every review stored with sources; AiUsage; decision/approval trail for anything it proposes. |
+| Data access | Read-only aggregates; no raw PII requirement. ✅ Tested: no emails/names/messages/artwork names reach the context. |
+| Guardrails | Same per-domain limits as the specialists it summarizes; its recommendations inherit the *strictest* applicable guardrail. ✅ approvalRequired always true; runs only via the explicit admin action under the AI budget guard. |
+| Audit | Every review stored with sources; AiUsage; decision/approval trail for anything it proposes. ✅ AiUsage stamps prompt `ai_ceo_business_review` v1.0.0 + model; reports are append-only. |
 
 ## Conversation flow (Sales) — IMPLEMENTED S05 + S06 config sync + S07 commerce
 

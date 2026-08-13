@@ -78,6 +78,9 @@ The FIRST admin surface exists since Session 08:
 auth (`ADMIN_USER`/`ADMIN_PASSWORD`, fail-closed 404 when unset) in
 `proxy.ts` AND re-checked per page/route, plus the
 `AI_CUSTOMER_INTELLIGENCE` flag — see docs/CUSTOMER_INTELLIGENCE.md.
+Session 09 added `/admin/business-intelligence` under the SAME auth
+(no second auth system) plus `AI_BUSINESS_INTELLIGENCE` — see
+docs/BUSINESS_INTELLIGENCE.md.
 
 ## Target architecture (evolved incrementally)
 
@@ -134,9 +137,10 @@ Human Approval (/admin/ai-actions)  |  Guarded auto-execution (later)
 | `lib/commerce/cart-line` + `/api/cart/line` + `lib/cart/checkout-client` | DONE (Session 07) | AI-assisted cart/checkout: ONE server validation path from the authoritative configuration to an engine-priced cart line (reprice + stale guards), 4 COMMERCE/READ sales tools (add/suggest/summary/startCheckout), shared client checkout submission, conservative aiAssisted order attribution. See AI_COMMERCE_INTEGRATION.md. |
 | `modules/guardrails` | ADD | Central `evaluateAgentAction`; see GUARDRAILS.md. (S04's budget guard covers AI spend only.) |
 | `modules/customer-intelligence` + `lib/ai/agents/customer-intelligence` + `lib/data/intelligence-service` | DONE (Session 08) | Deterministic aggregation authority (taxonomies, qualified rule, catalog-support verdicts, insights/opportunities — NO lib/ai import) + LOW_COST message labeling with server-validated evidence + idempotent explicit processing. See CUSTOMER_INTELLIGENCE.md. |
+| `modules/business-intelligence` + `lib/ai/agents/ceo` + `lib/data/{business-intelligence,ceo-report}-service` | DONE (Session 09) | Deterministic business-metrics authority (metric availability AVAILABLE/PARTIAL/UNAVAILABLE, revenue/funnel/AI-cost/profitability/segments/attribution/trends, BusinessHealthSnapshot — NO lib/ai import) + recommendation-only CEO agent (REASONING structured output, NO tools, server-validated metric/evidence refs, AgentDecision + ceo_reports persistence). See BUSINESS_INTELLIGENCE.md. |
 | `modules/ads/google`, `modules/ads/meta` | DEFER | Read-only first, much later. |
 | `config/flags.ts` | DONE (Session 04) | Feature flags (`AI_RUNTIME`, `AI_SALES`, …); all default OFF, env-enabled (`*_ENABLED=true`). |
-| `app/admin/*` | STARTED (Session 08) | `customer-intelligence` live behind HTTP Basic (`proxy.ts` + per-route checks, fail-closed 404) + feature flag; ai-actions/ai-usage remain future sessions. |
+| `app/admin/*` | STARTED (Session 08) | `customer-intelligence` (S08) + `business-intelligence` (S09) live behind HTTP Basic (`proxy.ts` + per-route checks, fail-closed 404) + their feature flags; ai-actions/ai-usage remain future sessions. |
 
 ## Invariants (enforced across all future sessions)
 
@@ -387,3 +391,34 @@ Human Approval (/admin/ai-actions)  |  Guarded auto-execution (later)
   (humanValidationRequired hard-coded true). Chosen over
   insert-per-run (duplicate spam defeating admin review) and over
   AI-settable validation states.
+- **2026-08-12 (S09) · Business metrics are typed availability results;
+  missing inputs are never zero.** Every metric in
+  `modules/business-intelligence` is AVAILABLE / PARTIAL / UNAVAILABLE
+  with reason + missingInputs; profitability reconstructs order costs
+  from the SAME cost model as pricing and stays UNAVAILABLE while
+  config/costs.ts holds null placeholders ("Unavailable — configure
+  manufacturing costs", never $0). Currencies are never combined without
+  a conversion model; trends use explicit states (NEW_ACTIVITY /
+  LOW_BASELINE / NO_ACTIVITY) instead of +∞% noise. Chosen over
+  null-coalescing dashboards (silently wrong economics) and over
+  LLM-computed totals (invariant 6).
+- **2026-08-12 (S09) · The CEO agent interprets a deterministic snapshot
+  and has no tools; its references are server-validated.** One
+  REASONING generateStructuredObject call over the PII-free
+  BusinessHealthSnapshot context; every supportingMetricRef/evidenceRef
+  must match what the context actually offered (fabricated refs filtered,
+  ref-less recommendations dropped). Recommendations persist as pending
+  AgentDecision rows with stable-identity dedup (pending rows update in
+  place, human-reviewed rows frozen). Chosen over a tool-wielding
+  "super-agent" (composition never escalates privileges, per-agent spec
+  #7) and over trusting model-cited numbers.
+- **2026-08-12 (S09) · CEO reviews persist in a dedicated additive
+  `ceo_reports` table, not inside AgentDecision.** A review is a
+  versioned DOCUMENT (period, prompt id+version, model, provider, the
+  exact snapshot the model saw, validated review, linked decision ids)
+  generated only by the explicit admin action; decisions stay
+  per-recommendation audit records. Reports are append-only, so a
+  provider/budget failure leaves the last good review visible while the
+  deterministic dashboard keeps rendering with zero AI configuration.
+  Chosen over shoehorning documents into decision rows (blurs both
+  concepts) and over regenerate-on-page-load (unbounded AI spend).
