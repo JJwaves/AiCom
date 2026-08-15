@@ -20,7 +20,7 @@
  */
 
 /** Bump on every policy/limit/taxonomy change. Recorded on every evaluation. */
-export const GUARDRAIL_POLICY_VERSION = "2026-08-12.s10.1";
+export const GUARDRAIL_POLICY_VERSION = "2026-08-12.s11.1";
 
 /**
  * Hard business limits — all [TO BE PROVIDED] (BUSINESS_CONFIG_TODO.md →
@@ -40,7 +40,15 @@ export const GUARDRAIL_LIMITS = {
   maximumDailyAdSpendCents: null as number | null,
   /** Ceiling on a new campaign's test budget, cents. */
   maximumNewCampaignTestBudgetCents: null as number | null,
-  /** Max share of traffic an experiment may take, percent. */
+  /**
+   * Max share of traffic an experiment may take, percent (Session 11).
+   *
+   * While this is null the experiment engine NEVER reads it as 100%:
+   * `config/experiments.ts → resolveTrafficCap()` blocks a launch outright
+   * in production, and applies a documented development-only ceiling
+   * everywhere else. Automated/guarded launch stays blocked regardless —
+   * CRO_EXPERIMENT_LAUNCH lists this key in `requiredLimits`.
+   */
   maximumExperimentTrafficPct: null as number | null,
   /** Order value above which a human must review, cents. */
   highValueOrderThresholdCents: null as number | null,
@@ -64,7 +72,14 @@ export type GuardrailLimitKey = keyof typeof GUARDRAIL_LIMITS;
 export const AGENT_AUTONOMY_POLICY = {
   CEO_AGENT: { defaultMode: "RECOMMEND", maxMode: "RECOMMEND" },
   PRICING_AGENT: { defaultMode: "OBSERVE", maxMode: "RECOMMEND" },
-  CRO_AGENT: { defaultMode: "OBSERVE", maxMode: "RECOMMEND" },
+  /**
+   * Session 11: the CRO agent is implemented and DESIGNED to recommend, so
+   * its default rises to RECOMMEND — the same treatment the CEO agent got
+   * when it shipped. The ceiling is unchanged, the guarded-auto allow-list
+   * is still empty, and the `AI_CRO_AGENT` flag still gates whether the
+   * agent runs at all. It can propose; it can never launch or execute.
+   */
+  CRO_AGENT: { defaultMode: "RECOMMEND", maxMode: "RECOMMEND" },
   GOOGLE_ADS_AGENT: { defaultMode: "OBSERVE", maxMode: "RECOMMEND" },
   META_ADS_AGENT: { defaultMode: "OBSERVE", maxMode: "RECOMMEND" },
   /** A human proposing through the admin surface — still guardrail-checked. */

@@ -1,4 +1,4 @@
-import { reviewActionPayloadSchema } from "./actions";
+import { croExperimentProposalPayloadSchema, reviewActionPayloadSchema } from "./actions";
 import { isRiskLevel, type RiskLevel } from "./types";
 
 /**
@@ -111,4 +111,94 @@ export function mapDecisionToAction(decision: MappableDecision): MappedAction | 
     payload: parsed.data as unknown as Record<string, unknown>,
     modelSuggestedRiskLevel: isRiskLevel(modelRisk) ? modelRisk : null,
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* Session 11 — CRO decisions                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * CRO decision → proposed action (Session 11 spec §24).
+ *
+ * Two shapes only, both review-shaped by policy:
+ *  - `EXPERIMENT` ⇒ `CRO_EXPERIMENT_PROPOSAL`, carrying the design the CRO
+ *    agent produced (already server-validated when it was persisted; it is
+ *    re-validated HERE too, so a decision row written by an older version
+ *    can never become a malformed action silently).
+ *  - `REVIEW` ⇒ `CRO_REVIEW`, for friction that is a business/product
+ *    question rather than a copy test (spec §38). Approving it means "yes,
+ *    look into this" — it can never become an experiment by relabelling.
+ *
+ * A decision with neither shape maps to null: no action is invented from
+ * prose, exactly as for CEO recommendations.
+ */
+export function mapCroDecisionToAction(decision: MappableDecision): MappedAction | null {
+  const params = (decision.proposedActionJson?.params ?? {}) as Record<string, unknown>;
+  const support = decision.supportingDataJson ?? {};
+  const kind = str(support.proposalKind, 20) ?? str(params.proposalKind, 20);
+  const title = str(support.title, 200) ?? str(params.title, 200) ?? "CRO proposal";
+  const identityKey = str(params.identityKey, 200);
+  const modelRisk = DECISION_RISK_TO_LEVEL[decision.riskLevel] ?? null;
+  const metricRefs = strArray(support.supportingMetricRefs ?? params.supportingMetricRefs, 16, 120);
+  const evidenceRefs = strArray(support.evidenceRefs ?? params.evidenceRefs, 16, 64);
+
+  if (kind === "EXPERIMENT") {
+    const payloadCandidate = {
+      page: str(support.targetKey, 200) ?? str(params.targetKey, 200) ?? "",
+      hypothesis: (str(support.hypothesis, 2000) ?? decision.reasoningSummary).slice(0, 2000),
+      control: str(support.controlSummary, 1000) ?? "Current experience, unchanged",
+      variant: str(support.variantSummary, 1000) ?? title,
+      primaryMetric: str(support.primaryMetric, 120) ?? "",
+      proposedTrafficPct: numberOrNull(support.proposedTrafficPct ?? params.proposedTrafficPct),
+      design: (support.design ?? params.design) ?? null,
+      metricRefs,
+      evidenceRefs,
+    };
+    const parsed = croExperimentProposalPayloadSchema.safeParse(payloadCandidate);
+    if (!parsed.success) return null;
+    return {
+      actionType: "CRO_EXPERIMENT_PROPOSAL",
+      title,
+      identityKey,
+      payload: parsed.data as unknown as Record<string, unknown>,
+      modelSuggestedRiskLevel: isRiskLevel(modelRisk) ? modelRisk : null,
+    };
+  }
+
+  if (kind === "REVIEW") {
+    const payloadCandidate = {
+      title,
+      observation: decision.observation.slice(0, 2000),
+      question: (str(support.hypothesis, 2000) ?? decision.reasoningSummary).slice(0, 2000),
+      expectedImpact: str(support.expectedImpact, 600),
+      limitations: strArray(support.limitations, 8, 300),
+      periodDays: numberOrNull(support.periodDays ?? params.periodDays),
+      metricRefs,
+      evidenceRefs,
+    };
+    const parsed = reviewActionPayloadSchema.safeParse(payloadCandidate);
+    if (!parsed.success) return null;
+    return {
+      actionType: "CRO_REVIEW",
+      title,
+      identityKey,
+      payload: parsed.data as unknown as Record<string, unknown>,
+      modelSuggestedRiskLevel: isRiskLevel(modelRisk) ? modelRisk : null,
+    };
+  }
+
+  return null;
+}
+
+const numberOrNull = (v: unknown): number | null =>
+  typeof v === "number" && Number.isFinite(v) ? v : null;
+
+/**
+ * Dispatch by agent type. Unknown agent types map to null — a new agent
+ * gets no action taxonomy by accident.
+ */
+export function mapAgentDecisionToAction(decision: MappableDecision): MappedAction | null {
+  if (decision.agentType === "ceo") return mapDecisionToAction(decision);
+  if (decision.agentType === "cro") return mapCroDecisionToAction(decision);
+  return null;
 }

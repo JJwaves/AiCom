@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import Script from "next/script";
 import { getCatalogProduct, listCatalogProducts } from "@/lib/commerce/catalog";
+import { resolveProductPrimaryCta, resolveProductShippingMessage } from "@/lib/experiments/server";
 import { BUSINESS, isDemoPricing } from "@/config/business";
 import { baseUnitPriceCents, startingUnitPriceCents } from "@/modules/pricing";
 import { ProductConfigurator } from "@/components/product/ProductConfigurator";
@@ -31,6 +32,16 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
   const { slug } = await params;
   const product = await getCatalogProduct(slug);
   if (!product) notFound();
+
+  /* Session 11: experiment targets are resolved SERVER-SIDE so the HTML the
+   * browser receives already contains the right arm (no flicker, no
+   * hydration mismatch). With EXPERIMENT_ENGINE off these read nothing and
+   * return null overrides — the page renders exactly as before. */
+  const path = `/products/${slug}`;
+  const [shippingMessage, primaryCta] = await Promise.all([
+    resolveProductShippingMessage(path),
+    resolveProductPrimaryCta(path),
+  ]);
 
   // Product structured data — omit price when demo pricing is active so the
   // feed/schema never publishes fake numbers.
@@ -84,7 +95,10 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
       </nav>
 
       <section className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
-        <ProductConfigurator product={product} />
+        <ProductConfigurator
+          product={product}
+          experiments={{ shippingMessage: shippingMessage.override, primaryCta: primaryCta.override }}
+        />
       </section>
 
       <section className="mx-auto max-w-6xl border-t border-rule px-4 py-12 sm:px-6">

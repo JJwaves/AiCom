@@ -53,6 +53,46 @@ limits, refund authorization, agent autonomy, approvals.
 
 ## Current project stage
 
+**Session 11 "Experiment Engine + CRO Agent" COMPLETE (2026-08-12) — a
+controlled experimentation system in which the AI proposes and DETERMINISTIC
+software decides. `modules/experiments` (no `lib/ai`, no `db/` import) owns
+eligibility, allocation, assignment, exposure semantics, metric definitions,
+the sample gate and the statistical result: a CLOSED target registry (3
+presentation surfaces — product.shipping_message / product.primary_cta /
+homepage.hero, each naming its rendering component and its protected
+fields), CLOSED typed variant schemas (`safeText` refuses angle brackets,
+braces, template interpolation, `javascript:`/`data:` URLs and inline
+handlers — no HTML/JS/CSS is storable or renderable anywhere), PURE
+FNV-1a assignment (sticky before a row exists; the row is a record, not the
+source of truth; per-experiment salt keeps arms independent), fail-closed
+eligibility (an unknown device is not a desktop; admin and bot traffic never
+enrol), allocations validated to total exactly 100 and capped by
+`resolveTrafficCap()` (a null `maximumExperimentTrafficPct` BLOCKS in
+production naming the config path, applies a documented 50% ceiling in
+non-production, and is NEVER read as 100%), and a two-sided two-proportion
+z-test with 7 explicit result states — RUNNING / INSUFFICIENT_DATA /
+CONTROL_WIN / VARIANT_WIN / NO_CLEAR_WINNER / STOPPED / INVALID.
+**No winner below 1,000 exposed sessions per arm** (a documented development
+floor an experiment may raise, never lower). Resolution happens during the
+SERVER render (no flicker, no hydration mismatch); ASSIGNMENT ≠ EXPOSURE
+(`exposed_at` stamped once ⇒ one `experiment_exposed` event per session, no
+write per page view); conversions count only at/after exposure, once per
+session. The CRO agent (`lib/ai/agents/cro`, RECOMMEND) has NO tools, one
+REASONING structured call, and its output is registry- and
+reference-validated (unknown target / mismatched type / markup / fabricated
+metric ref ⇒ DROPPED; audience, allocation and sample floor are server-
+derived) → AgentDecision → `CRO_EXPERIMENT_PROPOSAL` or `CRO_REVIEW` in the
+Action Center. A business/product problem routes to REVIEW, never to a copy
+test that hides an objection. **Launch is an EXPLICIT HUMAN admin route, not
+an executor — `modules/guardrails/executors.ts` is still EMPTY** — guardrail-
+evaluated (verdict + policy version + missing configuration snapshotted onto
+the row), traffic-capped, idempotent, `stateVersion`-guarded, one running
+experiment per target (DB unique index), audited in `experiment_events`.
+Stopping deletes nothing and freezes the readout. A VARIANT_WIN changes no
+site content — promotion stays a human source change. Migration 0005;
+`/admin/experiments` behind the S08 auth + `EXPERIMENT_ENGINE`. 661 tests.
+Next milestone: Session 12 "Pricing Intelligence Agent".**
+
 **Session 10 "Central Guardrail Engine + AI Action Center" COMPLETE
 (2026-08-12) — the system-wide safety and approval layer every future AI
 action passes through. `modules/guardrails` is the ONE authority: a CLOSED
@@ -99,19 +139,21 @@ with AI off/down; CEO review generates ONLY from the explicit admin
 button. MEASURE→SYNTHESIZE→EXPLAIN→RECOMMEND, never execute. Next
 milestone: Session 10 "Guardrails + AI Action Center" — DONE, see above.**
 
-## Current architecture (2026-08-12, post-Session 10)
+## Current architecture (2026-08-12, post-Session 11)
 
 Working B2B storefront, verified end-to-end (see
 docs/CURRENT_SYSTEM_AUDIT.md + its Session-02 resolution note):
-- Next.js 16.3 App Router · React 19 · TS · Tailwind v4 · zod · vitest (451 tests)
+- Next.js 16.3 App Router · React 19 · TS · Tailwind v4 · zod · vitest (661 tests)
   · Drizzle ORM + Postgres (PGlite embedded dev/test, node-postgres prod).
-- **Database (Session 03; +1 table Session 08; +1 Session 09):**
-  `db/schema.ts` (22 tables: sessions, events, customers, businesses,
+- **Database (Session 03; +1 table S08; +1 S09; +3 S10; +1 S11):**
+  `db/schema.ts` (26 tables: sessions, events, customers, businesses,
   orders+lines, quotes, artworks, configurations, conversations+messages,
   conversation_classifications (S08), ceo_reports (S09), need profiles,
-  ai_usage, agent_decisions, approvals, agent_configs, insights,
-  opportunities, experiments, assignments) + additive SQL migrations in
-  `db/migrations/` (0000–0003).
+  ai_usage, agent_decisions, approvals, agent_configs, agent_actions +
+  guardrail_evaluations + agent_action_events (S10), insights,
+  opportunities, experiments + experiment_assignments +
+  experiment_events (S11)) + additive SQL migrations in
+  `db/migrations/` (0000–0005).
   `DATABASE_URL` unset ⇒ embedded PGlite at `.data/pglite` self-migrates
   (zero-setup dev; tests use `memory://`); set ⇒ real Postgres, migrations
   applied explicitly via `npm run db:migrate`. **`NODE_ENV=production`
@@ -403,6 +445,66 @@ docs/CURRENT_SYSTEM_AUDIT.md + its Session-02 resolution note):
   preserves the original (SUPERSEDED) and RE-EVALUATES a new revision (no
   inherited verdict; evidence refs may narrow, never grow). Sync is
   deterministic — it reads pending CEO decisions, no model call.
+- **Experiment Engine + CRO Agent (Session 11 — docs/EXPERIMENTATION.md +
+  docs/CRO_AGENT.md are authoritative):** `modules/experiments` is the
+  DETERMINISTIC measurement authority, with NO `lib/ai` and NO `db/` import
+  (asserted structurally, like S08/S09/S10). targets.ts = the CLOSED
+  registry of experimentable surfaces (product.shipping_message,
+  product.primary_cta, homepage.hero — each declares its one experiment
+  type, strict variant schema, targetVersion, routes, rendering component,
+  protected fields and `describeControl()`); variants.ts = CLOSED typed
+  records (HeroCopy/CtaCopy/ShippingMessage) whose `safeText` refuses
+  markup, braces, template interpolation, `javascript:`/`data:` URLs, inline
+  handlers and control characters — there is no code path anywhere turning
+  experiment data into markup; allocation.ts = whole-percent arms totalling
+  exactly 100, control required, MVP capped at control + one variant;
+  assignment.ts = PURE FNV-1a bucketing (deterministic, sticky before
+  persistence, per-experiment salt); eligibility.ts = route/source/campaign/
+  device/visitor selectors where AMBIGUITY NEVER ENROLS, plus admin/bot
+  exclusion; statistics.ts = two-sided two-proportion z-test (pooled SE,
+  α=0.05, A&S 7.1.26 normal CDF, min 5 per cell) with its assumptions and
+  limitations documented in code; results.ts = the 7 result states and the
+  minimum-sample gate; proposal.ts = THE one experiment-design schema shared
+  by the CRO agent, the guardrail payload and draft creation.
+  `config/experiments.ts` holds processing policy + `resolveTrafficCap()`
+  (owner limit → non-production-only 50% dev ceiling → BLOCKED in
+  production; null is never 100%). Runtime: `lib/experiments/server.ts`
+  resolves targets during the SERVER render (flag off ⇒ reads nothing and
+  pages stay static; flag on ⇒ `/` and `/products/[slug]` become dynamic, so
+  toggling needs a redeploy), enrols only sessions that already have a
+  first-party `bd_sid` (a brand-new browser's first render sees control —
+  costs sample, not validity), records ASSIGNMENT and EXPOSURE separately
+  (`experiment_assignments.exposed_at` stamped once ⇒ exactly one
+  `experiment_exposed` event per session), and degrades to control on any
+  error. `lib/data/experiment-metrics-service.ts` counts distinct exposed
+  sessions with the metric event AT OR AFTER exposure (pre-exposure
+  conversions are never credited; repeats count once) over closed
+  primary/secondary/guardrail metric lists — "checkout error rate", "AI
+  failure rate" and contribution profit are deliberately ABSENT because no
+  deterministic per-session source exists. `modules/business-intelligence/
+  dropoff.ts` adds the sequential drop-off view with explicit denominators.
+  CRO agent `lib/ai/agents/cro` (RECOMMEND): NO tools, one REASONING
+  `generateStructuredObject` over a PII-free context that prints the
+  deterministic numbers AND the closed target list; server validation drops
+  proposals with an unknown target, a mismatched type, a variant config that
+  fails the target's strict schema, or no surviving metric reference, and
+  the SERVER derives audience (from the target's routes), allocation
+  (`min(request, cap, 50)`) and the sample floor; identity-stable dedup with
+  human verdicts frozen; kind=REVIEW routes business/product problems to
+  `CRO_REVIEW` instead of an objection-hiding copy test. Persistence
+  (migration 0005): `experiments` EXTENDED additively (S03 columns kept;
+  `controlJson` = launch snapshot, `trafficSplitJson` = whole percents),
+  `experiment_assignments` + `exposedAt`, new append-only
+  `experiment_events`; partial unique indexes give ONE running experiment
+  per target and one experiment per approved action. Admin:
+  `/admin/experiments` (+ `/[id]`: what is being tested, how many saw it,
+  what happened, can we trust it, provenance + timeline) behind the S08
+  HTTP Basic + `EXPERIMENT_ENGINE`, fail-closed 404; POST
+  `/api/admin/experiments/{create,materialize,cro-review,[id]/launch,
+  [id]/stop,[id]/archive}` behind `lib/admin/write-guard.ts`. **Launch is a
+  human admin route, NOT an executor** — the guardrail executor registry
+  remains EMPTY — and every launch is guardrail-evaluated with its verdict,
+  policy version and missing configuration snapshotted onto the row.
 - `lib/commerce` — provider abstraction; `mock` active, `shopify`
   Storefront skeleton env-gated (variant mapping TODO, needs real store).
   **All catalog reads go through `lib/commerce/catalog.ts`** (provider-
@@ -1186,6 +1288,99 @@ commerce file modified).
    section), BUSINESS_CONFIG_TODO (+Guardrail limits, split into
    currently-required vs required-before-GUARDED_AUTO), .env.example.
 
+## Completed in Session 11 (2026-08-12) — Experiment Engine + CRO Agent
+
+Observation → hypothesis → proposal → guardrail → human approval → explicit
+human launch → assignment → deterministic measurement → result. **The AI
+proposes and explains; software decides.** Storefront/commerce verified
+untouched (every S02–S10 test green; no commerce file modified).
+
+1. **`modules/experiments/`** — the deterministic authority (no `lib/ai`, no
+   `db/`): types.ts (8 experiment types + 2 named-as-unsupported deferred
+   ones, 7 result states, closed primary/secondary/guardrail metric lists,
+   protected surfaces), variants.ts (`safeText` + 3 strict variant schemas),
+   targets.ts (the CLOSED 3-target registry), allocation.ts, assignment.ts
+   (pure FNV-1a), eligibility.ts (ambiguity never enrols; admin/bot
+   excluded), statistics.ts (two-proportion z-test + documented assumptions
+   and limitations), results.ts (states + minimum-sample gate),
+   proposal.ts (THE shared design schema), lifecycle.ts.
+2. **`config/experiments.ts`** — processing policy (minimum sample 1,000/arm
+   as a documented DEVELOPMENT default, α=0.05, min 5 per cell, MVP 2 arms)
+   + `resolveTrafficCap()`: owner limit → non-production-only 50% ceiling →
+   BLOCKED in production naming `config/guardrails.ts →
+   GUARDRAIL_LIMITS.maximumExperimentTrafficPct`. Never 100%.
+3. **Schema (migration `0005_experiment_engine.sql`, additive)** —
+   `experiments` gains experimentType/targetKey/variantKey/targetVersion/
+   audienceJson/secondaryMetricsJson/assignmentSalt/policyVersion+snapshot/
+   sourceDecisionId+sourceActionId/createdBy/launched*/stopped*/archivedAt/
+   stateVersion + `UNIQUE(target_key) WHERE status='running'` and
+   `UNIQUE(source_action_id)`; `experiment_assignments` gains `exposed_at`;
+   new append-only `experiment_events`. Two S03 semantics pinned down (the
+   table had no runtime, so no data migrated): `controlJson` = launch-time
+   control SNAPSHOT, `trafficSplitJson` = whole percents totalling 100.
+4. **Runtime** — `lib/experiments/server.ts` (server-side resolution +
+   sticky assignment + once-per-session exposure + `experiment_exposed`
+   event; reads NOTHING while the flag is off; degrades to control on any
+   error), `lib/experiments/readout.ts`, `lib/experiments/materialize.ts`
+   (approved proposal → DRAFT, re-validated against the CURRENT registry and
+   cap, idempotent), `lib/data/experiment-service.ts` (row-locked
+   `stateVersion` transitions, idempotent launch/stop, DB-level overlap
+   rule), `lib/data/experiment-metrics-service.ts` (post-exposure-only,
+   once-per-session conversions), `modules/business-intelligence/dropoff.ts`.
+5. **Storefront integration (narrow, 3 targets)** — `ProductConfigurator`
+   accepts `experiments` (shipping message + CTA label/helper; defaults null
+   ⇒ the pre-S11 UI byte-for-byte), and the homepage hero reads an optional
+   headline/sub/CTA override. Nothing about pricing, validation, cart
+   payloads or button behaviour is experimentable.
+6. **CRO agent** — `lib/ai/agents/cro/{schema,context,agent}.ts` + prompt
+   `ai_cro_experiment_review` v1.0.0. RECOMMEND, no tools, one structured
+   call; server-side validation drops unknown targets, mismatched types,
+   markup/unknown-key variant configs and fabricated references, and derives
+   audience/allocation/sample-floor itself. kind=REVIEW keeps business
+   problems out of objection-hiding copy tests.
+7. **Guardrails/Action Center integration** — `GUARDRAIL_POLICY_VERSION` →
+   `2026-08-12.s11.1`; `CRO_EXPERIMENT_PROPOSAL` gained a nullable
+   registry-validated `design`; `CRO_EXPERIMENT_LAUNCH` gained a nullable
+   `experimentId` (still NOT_IMPLEMENTED); `CRO_AGENT` default autonomy
+   OBSERVE → RECOMMEND (ceiling unchanged, allow-list still empty);
+   `mapCroDecisionToAction` + `mapAgentDecisionToAction`;
+   `syncDecisionsToActions` now covers ceo AND cro decisions.
+8. **Admin** — `/admin/experiments` + `/[id]` and POST
+   `/api/admin/experiments/{create,materialize,cro-review,[id]/launch,
+   [id]/stop,[id]/archive}` behind the S08 auth + `EXPERIMENT_ENGINE` and
+   `lib/admin/write-guard.ts`. Actors are server-derived; a client sending a
+   status, an actor or a traffic number gets 422.
+9. **Tests 521 → 661** (all green; zero credentials/network/AI provider):
+   experiments-engine (variant markup rejection, closed registry, allocation
+   + cap, assignment determinism/independence/distribution, eligibility
+   ambiguity, z-test fixtures incl. 1000/50 vs 1000/80 and 100/5 vs 100/7,
+   all 7 result states, zero baseline, design validation, lifecycle),
+   experiments-runtime (draft creation, launch idempotency + policy
+   snapshot + stale CONFLICT + TARGET_BUSY + parallel targets, stop
+   idempotency/preservation/return-to-control, flag-off = no writes, no
+   session / bot / admin exclusion, stickiness + single exposure event,
+   assignment vs exposure counts, post-exposure-only metrics, deterministic
+   readout, INVALID on registry drift), experiments-admin (404/401/flag
+   gates, cross-origin 403, no-Origin 403, form-post 415, strict bodies,
+   launch/stop through the routes, materialize idempotency + approval gate),
+   cro-agent (context whitelists + no PII, structured call with no tools,
+   fabricated-ref drop, unknown target drop, markup drop, traffic clamp,
+   sample floor, REVIEW routing, price-experiment refusal, dedup + frozen
+   verdicts, Action Center mapping, provider/budget/flag failure = nothing
+   persisted), experiments-separation (no lib/ai or db in
+   modules/experiments, no clock/randomness in assignment or statistics,
+   CRO cannot launch/stop/assign/approve, commerce untouched, no
+   price/checkout target, executor registry still empty, launchExperiment
+   called only from the admin route).
+10. **Docs** — new docs/EXPERIMENTATION.md + docs/CRO_AGENT.md; updated
+    ARCHITECTURE (module map + 6 decision-log entries), DATABASE_SCHEMA
+    (experiments section rewritten + experiment_events), AI_AGENT_ARCHITECTURE
+    (CRO agent spec = IMPLEMENTED), GUARDRAILS (S11 additions),
+    AI_ACTION_CENTER (CRO decisions), BUSINESS_INTELLIGENCE (drop-off),
+    AI_PLATFORM_ROADMAP (Stage F complete), prompts/00-INDEX (11 ✅, 12
+    next), LAUNCH_CHECKLIST (+Experiments section), BUSINESS_CONFIG_TODO
+    (+Experimentation), .env.example.
+
 ## Important decisions (and why)
 
 1. **Database is the first ADD** — every roadmap capability consumes
@@ -1388,6 +1583,70 @@ commerce file modified).
     Documented as a tested control set, NOT a claim of full security
     compliance; per-user RBAC stays deferred.
 
+38. **(S11) Experiment assignment is a pure hash, and the stored row is a
+    RECORD of it** — `assignVariant(experimentId, salt, sessionId,
+    allocation)` has no randomness and no I/O, so a session's arm is decided
+    before any row exists. Stickiness is structural (not a lucky write), a
+    lost write cannot move a customer between arms, and editing an
+    allocation mid-flight cannot re-randomise anyone. The per-experiment
+    salt keeps arms independent across experiments. Chosen over a random
+    draw persisted at first sight.
+39. **(S11) Experiments resolve during the SERVER render, and the cost is
+    stated rather than hidden** — the HTML the browser receives already
+    contains the right arm: no client swap, no flicker, no hydration
+    mismatch, no bias in the very metric being measured. The price is that
+    reading the session cookie makes the hosting page dynamic, so the engine
+    reads NOTHING while the flag is off (pages stay static, exactly as
+    before S11) and enabling it requires a redeploy. `cookies()`/`headers()`
+    are called before the DB lookup and OUTSIDE the defensive try/catch —
+    both were bugs first: querying first short-circuits during the build and
+    silently prerenders the page, and catching Next's dynamic-usage signal
+    does the same. Enrolment also needs an existing first-party session, so
+    a brand-new browser's first render sees control; that costs sample, not
+    validity, because non-enrolment happens before an arm is chosen.
+40. **(S11) Variants are closed typed records, never content** — a variant
+    is a strict schema of presentation VALUES an existing component already
+    renders; no code path turns experiment data into markup, and `safeText`
+    refuses angle brackets, braces, template interpolation,
+    `javascript:`/`data:` URLs and inline handlers on top of React's
+    escaping. The CONTROL arm renders the app's own UI with NO override at
+    all; `control_json` is a launch-time snapshot kept only so historical
+    reports stay interpretable. Chosen over a generic remote-content CMS,
+    which is the shape this feature keeps trying to become.
+41. **(S11) The engine decides, the model explains** — `modules/experiments`
+    imports neither `lib/ai` nor `db/`, so eligibility, assignment,
+    exposure, counting, the sample gate and the two-proportion z-test are
+    structurally beyond model influence. "Inconclusive" is a first-class
+    result, no winner exists below the documented minimum sample, and the
+    CRO agent receives result STATES rather than producing them. Chosen over
+    letting an LLM read a dashboard and call a winner.
+42. **(S11) Launch is a human admin route, NOT the first executor** —
+    `CRO_EXPERIMENT_LAUNCH` stays NOT_IMPLEMENTED and
+    `modules/guardrails/executors.ts` stays EMPTY, so S10's invariant
+    ("approving executes nothing") holds system-wide. Launching is instead
+    an explicit human action that is guardrail-EVALUATED (verdict + policy
+    version + missing configuration snapshotted onto the row),
+    traffic-capped, idempotent, `stateVersion`-guarded, limited to one
+    running experiment per target by a DB unique index, and audited in
+    `experiment_events`. An executor would have been permanently blocked
+    anyway while `maximumExperimentTrafficPct` is unset — a
+    registered-but-unusable executor is exactly the fake the doctrine
+    forbids.
+43. **(S11) A missing traffic limit blocks in production and applies a
+    documented development ceiling elsewhere** — `resolveTrafficCap()` uses
+    the owner's `maximumExperimentTrafficPct` when set, otherwise a 50%
+    ceiling in NON-PRODUCTION ONLY, otherwise it refuses the launch and
+    names the exact config path. `null` is never "no limit" and never 100%.
+    Same doctrine as the S02 cost model: ship the refusal, not an invented
+    number.
+44. **(S11) A legitimate objection is never "solved" by hiding it** — the
+    CRO agent's `kind` is EXPERIMENT or REVIEW, and evidence pointing at a
+    business/product problem (MOQ, real delivery times, a product we do not
+    make) maps to `CRO_REVIEW`. A REVIEW carries no design, so it cannot be
+    materialized into a running experiment even by relabelling. Dark
+    patterns are barred by the prompt AND by variant schemas that cannot
+    express a countdown, a scarcity claim, a price or a guarantee.
+
 ## Known issues
 
 - ~~Configurator state is six `useState` hooks local to
@@ -1516,6 +1775,40 @@ commerce file modified).
   with a per-row query — fine at current volume, revisit alongside the
   S08/S09 bounded-load items if action counts grow.
 
+- (S11) Enabling `EXPERIMENT_ENGINE` changes how `/` and `/products/[slug]`
+  render (static → dynamic), so the flag must be set at BUILD time: a build
+  made with it off will never enrol anyone even if the flag is on at
+  runtime. Documented in .env.example + LAUNCH_CHECKLIST.
+- (S11) A brand-new browser's FIRST page render is not enrolled — session
+  rows are minted by persisting API routes (`/api/events`) and a Server
+  Component cannot set a cookie. Enrolment starts from the next navigation.
+  This reduces sample; it cannot bias control vs variant, because
+  non-enrolment happens before an arm is chosen.
+- (S11) The `visitor` (new vs returning) audience selector exists but never
+  enrols, because the signal is not deterministically known yet — ambiguity
+  fails closed by design.
+- (S11) Interaction between concurrent experiments on DIFFERENT targets is
+  not modelled (arms are independent by salt, but a page can host two
+  experiments at once). Fine at current volume; revisit with real traffic.
+- (S11) No sequential-testing correction: read results at the sample
+  threshold, not continuously. The minimum-sample gate is the only defence
+  against peeking, and the default (1,000 exposed sessions per arm) is a
+  documented development floor, NOT a power calculation.
+- (S11) Guardrail metrics are event-based only. "Checkout error rate" and
+  "AI failure rate" are deliberately unavailable (no per-session
+  deterministic source), and contribution profit stays out while
+  `config/costs.ts` is unconfigured — an unavailable metric is never turned
+  into an experiment guardrail.
+- (S11) The draft-experiment form is a JSON design editor, not a per-field
+  builder (same posture as the S10 Modify control): fully validated
+  server-side, but it expects an operator comfortable with the payload.
+- (S11) `/admin/experiments` inherits the storefront layout chrome and the
+  S08–S10 bounded-load posture (500 rows), and computes each experiment's
+  readout with per-experiment queries — fine at current volume.
+- (S11) Exposure is written during a Server Component render; React's dev
+  double-render can call it twice, which the `exposed_at` dedup makes a
+  no-op.
+
 ## Business configuration still needed
 
 See `BUSINESS_CONFIG_TODO.md` — notably: real prices (site shows DEMO
@@ -1527,7 +1820,10 @@ legal review, Shopify store + variant mapping, production `DATABASE_URL`
 (+ `npm run db:migrate` at deploy), consent-policy review for first-party
 events, AI provider key + budget caps + **model pricing
 (`config/ai-pricing.ts`, null placeholders — budget caps fail closed until
-filled)**, guardrail thresholds, escalation destination.
+filled)**, guardrail thresholds — including
+**`maximumExperimentTrafficPct`, which is REQUIRED before running any
+experiment in production (the launch route refuses while it is null and
+never assumes 100%)** — and escalation destination.
 
 ## Deferred work
 
@@ -1536,10 +1832,15 @@ Explicitly preserved for later sessions: **human escalation delivery**
 docs/AI_ACTION_CENTER.md must be satisfied first), **GUARDED_AUTO
 promotion** (needs operating history + the guardrail limits in
 config/guardrails.ts + an explicit human decision, Stage J), **per-user
-admin RBAC** (single Basic credential today), **CRO Agent** + experiment
-runtime (S11),
+admin RBAC** (single Basic credential today),
 **Pricing Agent/Intelligence** (S12 — the CEO may recommend "review
-pricing", never compute optimal prices), **Google Ads Agent** (S13+ —
+pricing", never compute optimal prices; PRICE_EXPERIMENT stays unsupported
+until then), **winner auto-promotion** (a VARIANT_WIN never changes site
+content — promotion is a human source/config change), **GUARDED_AUTO CRO**
+and a real `CRO_EXPERIMENT_LAUNCH` executor (need operating history, the
+guardrail limits, and the full executor contract), **adaptive traffic /
+bandits / RL** (deliberately never at this stage), **multi-arm experiments**
+(needs a multiple-comparison correction), **scheduled CRO reviews**, **Google Ads Agent** (S13+ —
 until then NO ad-spend ingestion, NO CAC/ROAS anywhere), **Meta Ads
 Agent**, autonomous commerce/background actions (never — every commerce
 mutation traces to an explicit customer message or tap; S08/S09
@@ -1584,24 +1885,23 @@ the 03.5 hardening pass (small blast radius, none block Session 04):
 
 ## Recommended next session
 
-**Session 11 — Experiment Engine + CRO Agent** — run `prompts/11-cro.md`.
-Prerequisites now exist: the `experiments` + `experiment_assignments`
-tables have been live schema since S03 (no runtime), first-party events
-give exposure/outcome measurement, `modules/business-intelligence`
-supplies denominator-honest conversion metrics, and S10 supplies the
-approval spine a CRO agent must go through — `CRO_EXPERIMENT_PROPOSAL`
-(review-only, LOW) and `CRO_EXPERIMENT_LAUNCH` (MEDIUM,
-`executionStatus = NOT_SUPPORTED`) are already registered action types,
-and `CRO_AGENT` is already permitted exactly those.
+**Session 12 — Pricing Intelligence Agent** — run
+`prompts/12-pricing-intelligence.md`.
 
-Boundaries that stay: the CRO agent proposes, it never launches — a launch
-executor is the first executor this codebase would ever have, so it must
-satisfy the full contract in docs/AI_ACTION_CENTER.md (fresh evaluation,
-approval, idempotency key, before/after, audit, rollback) and register in
-`modules/guardrails/executors.ts`. `maximumExperimentTrafficPct` is
-`[TO BE PROVIDED]`, so any launch action reports missing configuration and
-cannot be execution-eligible until the owner sets it. Checkout must stay a
-protected page. No insufficient-sample winners — reuse the existing
-threshold doctrine in `config/business-intelligence.ts`.
+Prerequisites now exist: `modules/pricing` is the sole pricing authority
+with a fail-closed `evaluatePriceFloor`, S09 supplies denominator-honest
+conversion and (when costs are configured) contribution metrics, S10
+supplies the approval spine — `PRICE_CHANGE` and `PRICE_EXPERIMENT` are
+already registered types with `PRICING_AGENT` permitted exactly those — and
+S11 supplies a working experiment runtime with a documented statistical
+method and sample gate.
 
-Do not start it automatically.
+Boundaries that stay: the pricing agent RECOMMENDS; it never computes a
+"correct" price and never mutates one. Price experiments are Session 12's
+own decision to make, and they must reuse the S11 engine rather than fork
+it — but `config/costs.ts` is still entirely `[TO BE PROVIDED]`, so the
+margin floor fails closed and no price-affecting action can be
+execution-eligible regardless. `maximumPriceDecreasePct` /
+`maximumPriceIncreasePct` are also still null, so those actions report
+missing configuration by design. Do not invent economics to unblock a
+demo.

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { experimentDesignSchema } from "@/modules/experiments/proposal";
 import type { ExecutionSupport, RiskLevel } from "./types";
 
 /**
@@ -127,6 +128,18 @@ export const adCreativeTestPayloadSchema = z
   })
   .strict();
 
+/**
+ * CRO experiment proposal (S10 shape, EXTENDED in S11).
+ *
+ * `design` is the fully-specified, registry-validated experiment
+ * (modules/experiments) that a human can later materialize into a draft.
+ * It is NULLABLE on purpose: a proposal without one is a "this friction is
+ * worth testing" note, and approving it approves a direction, not a launch.
+ * A proposal WITH a design still launches nothing — approval ≠ launch
+ * (spec §25) — but the design is guaranteed to name a registered target, a
+ * closed metric, and a variant config that satisfies that target's strict
+ * schema, so an approved concept cannot mutate into arbitrary content.
+ */
 export const croExperimentProposalPayloadSchema = z
   .object({
     page: z.string().min(1).max(200),
@@ -136,6 +149,8 @@ export const croExperimentProposalPayloadSchema = z
     primaryMetric: z.string().min(1).max(120),
     /** Design intent only — a proposal launches nothing. */
     proposedTrafficPct: percent.nullable().default(null),
+    /** Session 11: the validated experiment design, when the agent supplied one. */
+    design: experimentDesignSchema.nullable().default(null),
     ...refs,
   })
   .strict();
@@ -143,6 +158,8 @@ export const croExperimentProposalPayloadSchema = z
 export const croExperimentLaunchPayloadSchema = z
   .object({
     experimentName: z.string().min(1).max(200),
+    /** Session 11: the draft experiment this launch refers to, when it exists. */
+    experimentId: z.string().min(1).max(64).nullable().default(null),
     page: z.string().min(1).max(200),
     trafficPct: percent,
     primaryMetric: z.string().min(1).max(120),

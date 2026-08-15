@@ -142,6 +142,7 @@ Human Approval (/admin/ai-actions)  |  Guarded auto-execution (later)
 | `modules/guardrails` + `lib/data/agent-action-service` + `app/admin/ai-actions` | DONE (Session 10) | THE central safety layer: closed proposed-action taxonomy with strict per-type schemas, pure `evaluateAgentAction()` (no lib/ai, no db, no clock), policy-clamped autonomy modes, deterministic risk, hard/soft rules, append-only guardrail evaluations, and the human approve/reject/modify surface. Executor registry is EMPTY — approval records intent, never a mutation. See GUARDRAILS.md + AI_ACTION_CENTER.md. (S04's budget guard covers AI spend only.) |
 | `modules/customer-intelligence` + `lib/ai/agents/customer-intelligence` + `lib/data/intelligence-service` | DONE (Session 08) | Deterministic aggregation authority (taxonomies, qualified rule, catalog-support verdicts, insights/opportunities — NO lib/ai import) + LOW_COST message labeling with server-validated evidence + idempotent explicit processing. See CUSTOMER_INTELLIGENCE.md. |
 | `modules/business-intelligence` + `lib/ai/agents/ceo` + `lib/data/{business-intelligence,ceo-report}-service` | DONE (Session 09) | Deterministic business-metrics authority (metric availability AVAILABLE/PARTIAL/UNAVAILABLE, revenue/funnel/AI-cost/profitability/segments/attribution/trends, BusinessHealthSnapshot — NO lib/ai import) + recommendation-only CEO agent (REASONING structured output, NO tools, server-validated metric/evidence refs, AgentDecision + ceo_reports persistence). See BUSINESS_INTELLIGENCE.md. |
+| `modules/experiments` + `lib/experiments` + `lib/ai/agents/cro` + `app/admin/experiments` | DONE (Session 11) | Deterministic experiment authority (closed target registry, closed typed variant schemas, pure hash assignment, eligibility, allocation caps, two-proportion z-test, result states — NO lib/ai and NO db import) + server-side resolution/exposure + recommendation-only CRO agent (REASONING structured output, NO tools, registry- and reference-validated proposals) + the human launch/stop admin surface. No executor: launching is an explicit human action. See EXPERIMENTATION.md + CRO_AGENT.md. |
 | `modules/ads/google`, `modules/ads/meta` | DEFER | Read-only first, much later. |
 | `config/flags.ts` | DONE (Session 04) | Feature flags (`AI_RUNTIME`, `AI_SALES`, …); all default OFF, env-enabled (`*_ENABLED=true`). |
 | `app/admin/*` | STARTED (Session 08) | `customer-intelligence` (S08), `business-intelligence` (S09) + `ai-actions` (S10, the first admin MUTATION routes — POST + same-origin + JSON content type + strict schema) live behind HTTP Basic (`proxy.ts` + per-route checks, fail-closed 404) + their feature flags; ai-usage remains a future session. |
@@ -175,6 +176,55 @@ Human Approval (/admin/ai-actions)  |  Guarded auto-execution (later)
    need.
 
 ## Decision log
+
+- **2026-08-12 · (S11) Experiment assignment is a pure hash, and the row is
+  a record of it.** `assignVariant(experimentId, salt, sessionId,
+  allocation)` has no randomness and no I/O, so a session's arm is decided
+  before any row exists: stickiness is structural, a lost write cannot move
+  a customer between arms, and a mid-flight allocation edit cannot
+  re-randomise anyone. The per-experiment salt keeps arms independent across
+  experiments. Chosen over a random draw persisted at first sight.
+- **2026-08-12 · (S11) Experiments resolve during the SERVER render, and the
+  cost is stated rather than hidden.** The HTML the browser receives already
+  contains the right arm — no client swap, no flicker, no hydration
+  mismatch, no bias in the metric being measured. The price is that reading
+  the session cookie makes the hosting page dynamic, so the engine reads
+  NOTHING while `EXPERIMENT_ENGINE` is off (pages stay static exactly as
+  before) and enabling the flag requires a redeploy. Enrolment also requires
+  an existing first-party session, so a brand-new browser's first render
+  sees control — that costs sample, not validity, because non-enrolment
+  happens before an arm is chosen.
+- **2026-08-12 · (S11) Variants are closed typed records, never content.**
+  A variant is a strict schema of presentation VALUES an existing component
+  already renders; there is no code path turning experiment data into
+  markup, and `safeText` refuses angle brackets, braces, template
+  interpolation, `javascript:`/`data:` URLs and inline handlers on top of
+  React's escaping. The control arm renders the app's own UI with NO
+  override; `control_json` is a launch-time snapshot for historical
+  reporting only. Chosen over a generic remote-content CMS.
+- **2026-08-12 · (S11) The experiment engine decides; the model explains.**
+  `modules/experiments` imports neither `lib/ai` nor `db/`, so eligibility,
+  assignment, exposure, counting, the sample gate and the two-proportion
+  z-test are structurally beyond model influence. "Inconclusive" is a
+  first-class result state, and no winner may be declared below the
+  documented minimum sample. Chosen over letting an LLM read a dashboard and
+  call a winner.
+- **2026-08-12 · (S11) Launch is a human admin route, NOT the first
+  executor.** `CRO_EXPERIMENT_LAUNCH` stays `NOT_IMPLEMENTED` and the
+  guardrail executor registry stays EMPTY, so the Session-10 invariant
+  ("approving executes nothing") holds system-wide. A launch is instead an
+  explicit human action that is guardrail-EVALUATED (verdict, policy version
+  and missing configuration snapshotted onto the row), traffic-capped,
+  idempotent, `stateVersion`-guarded and audited in `experiment_events`. An
+  executor would have been permanently blocked anyway while
+  `maximumExperimentTrafficPct` is unset — a registered-but-unusable
+  executor is exactly the fake this doctrine forbids.
+- **2026-08-12 · (S11) A missing traffic limit blocks in production and
+  applies a documented development ceiling elsewhere.** `null` is never read
+  as "no limit" and never as 100%: `resolveTrafficCap()` uses the owner's
+  `maximumExperimentTrafficPct` when set, otherwise a 50% ceiling in
+  NON-PRODUCTION ONLY, otherwise it refuses the launch and names the exact
+  config path. Chosen over shipping an invented production number.
 
 - **2026-08-08 · Keep Shopify-behind-interface, no Stripe.** Checkout,
   payments, tax, discounts stay delegated; the AI layer operates above the

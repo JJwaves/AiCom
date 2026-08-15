@@ -6,7 +6,7 @@ import { agentActionEvents, agentActions, agentConfigs, agentDecisions, approval
 import {
   evaluateAgentAction,
   getActionTypeSpec,
-  mapDecisionToAction,
+  mapAgentDecisionToAction,
   policyDefaultAutonomy,
   type ActionSource,
   type ActionStatus,
@@ -590,20 +590,30 @@ export type SyncResult = {
 };
 
 /**
- * Materialize proposed actions from persisted CEO recommendations
- * (spec §20). Deterministic and idempotent: no AI call happens here, and a
- * decision that already has a root action is skipped (also enforced by a
- * unique index, so a race cannot duplicate).
+ * Materialize proposed actions from persisted agent recommendations
+ * (S10 spec §20; extended to CRO decisions in S11 spec §24). Deterministic
+ * and idempotent: no AI call happens here, and a decision that already has
+ * a root action is skipped (also enforced by a unique index, so a race
+ * cannot duplicate).
  *
  * Only decisions that still await a verdict are materialized — an already
  * approved/rejected recommendation is history, not a pending question.
+ *
+ * The mapping is agent-scoped and closed: CEO categories map to *_REVIEW
+ * types, CRO proposals map to CRO_EXPERIMENT_PROPOSAL / CRO_REVIEW, and any
+ * other agent type maps to nothing at all.
  */
-export async function syncDecisionsToActions(actor = "system:ceo_sync"): Promise<SyncResult> {
+export async function syncDecisionsToActions(actor = "system:decision_sync"): Promise<SyncResult> {
   const db = await getDb();
   const decisions = await db
     .select()
     .from(agentDecisions)
-    .where(and(eq(agentDecisions.agentType, "ceo"), eq(agentDecisions.approvalStatus, "pending")))
+    .where(
+      and(
+        inArray(agentDecisions.agentType, ["ceo", "cro"]),
+        eq(agentDecisions.approvalStatus, "pending"),
+      ),
+    )
     .orderBy(desc(agentDecisions.createdAt))
     .limit(ACTION_CENTER_MAX_ROWS);
 
@@ -620,7 +630,7 @@ export async function syncDecisionsToActions(actor = "system:ceo_sync"): Promise
       result.skippedExisting += 1;
       continue;
     }
-    const mapped = mapDecisionToAction({
+    const mapped = mapAgentDecisionToAction({
       id: decision.id,
       agentType: decision.agentType,
       observation: decision.observation,
@@ -636,7 +646,7 @@ export async function syncDecisionsToActions(actor = "system:ceo_sync"): Promise
     }
 
     const { action, decision: verdict } = await proposeAction({
-      source: "CEO_AGENT",
+      source: decision.agentType === "cro" ? "CRO_AGENT" : "CEO_AGENT",
       actionType: mapped.actionType,
       payload: mapped.payload,
       title: mapped.title,

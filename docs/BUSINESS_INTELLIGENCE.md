@@ -282,6 +282,21 @@ MAX_RECOMMENDATIONS_PER_REVIEW 10, CEO_CONTEXT_MAX_CHARS 16000,
 MAX_ROWS_PER_QUERY 5000). They gate when the system SPEAKS, not what it
 claims. Flag: `AI_BUSINESS_INTELLIGENCE_ENABLED` (default off).
 
+## Session 11 addition — funnel drop-off
+
+`modules/business-intelligence/dropoff.ts` adds the sequential CRO view on
+top of the S09 funnel: product views → configurator starts → price views →
+cart adds → checkout starts → purchases, each step carrying an EXPLICIT
+denominator ("distinct sessions with <event> in period"), the raw counts
+alongside the rate, and the same minimum-denominator suppression as every
+other percentage. Purchases still come from the orders table, not events.
+
+Ordering is the site's funnel, **not** proof a session passed through the
+earlier step — sessions can enter mid-funnel (a direct link to a product
+page), which is exactly why raw counts always render next to the rate. It
+feeds the CRO agent's context (docs/CRO_AGENT.md); the
+`BusinessHealthSnapshot` shape is unchanged.
+
 ## Known limitations
 
 - Bounded corpus loads (5,000 rows/period per table) — same S08 posture;

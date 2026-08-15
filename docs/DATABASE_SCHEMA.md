@@ -408,19 +408,54 @@ rows are frozen. Reports contain aggregates only (no PII) and are exempt
 from the customer-deletion cascade by construction — see
 docs/BUSINESS_INTELLIGENCE.md.
 
-## Experiments (schema only — NO runtime until Stage F)
+## Experiments (Session 03 schema · Session 11 runtime — migration 0005)
 
 ```
-experiments   id · nameᵁ · hypothesis · status (draft|running|stopped|decided)
-              · primaryMetric · guardrailMetricsJson? · controlJson? ·
-              variantsJson? · trafficSplitJson? · audience? ·
+experiments   id · nameᵁ · hypothesis ·
+              status (draft|approved|running|stopped|decided|archived) ·
+              primaryMetric · secondaryMetricsJson? · guardrailMetricsJson? ·
+              controlJson?      ← launch-time CONTROL SNAPSHOT (never rendered)
+              variantsJson?     ← { [variantKey]: validated variant config }
+              trafficSplitJson? ← { control: 50, variant_b: 50 } WHOLE PERCENTS, total 100
+              audience? (label) · audienceJson? (structured rules) ·
               minimumSampleSize? · startAt? · endAt? · resultJson? · winner? ·
-              timestamps
+              experimentType? · targetKey? · variantKey? · targetVersion? ·
+              assignmentSalt? · policyVersion? · policySnapshotJson? ·
+              sourceDecisionId?→agent_decisions · sourceActionId?→agent_actions ·
+              createdBy? · launchedBy? · launchedAt? · stoppedBy? · stoppedAt? ·
+              stopReason? · archivedAt? · stateVersion · timestamps
+              INDEX (status, createdAt)
+              UNIQUE (targetKey) WHERE status='running'      ← one per target
+              UNIQUE (sourceActionId) WHERE not null         ← materialize idempotency
+
 experiment_assignments
               (experimentId→experiments, sessionId→sessions) pk · variant ·
-              assignedAt        — sticky: first assignment per session wins
-Exposure      = events row (name=experiment_exposed, experimentId link)
+              assignedAt · exposedAt?      INDEX (experimentId, variant)
+              — sticky: the first assignment per session wins
+              — exposedAt stamped ONCE, the first time the session actually
+                rendered the surface (assignment ≠ exposure)
+
+experiment_events   (append-only audit)
+              id · experimentId→experiments · type (experiment_created|
+              approved|launched|stopped|decided|archived) · actor
+              (SERVER-DERIVED "admin:<user>") · detailJson? · createdAt
+              INDEX (experimentId, createdAt)
+
+Exposure event = events row (name=experiment_exposed, experimentId link,
+                 props {experiment, variant, target}) — one per exposed session
 ```
+
+Two Session-03 column semantics were PINNED DOWN in Session 11 (the table had
+no runtime and therefore no rows, so nothing migrated): `controlJson` is the
+launch-time control snapshot rather than page content to render, and
+`trafficSplitJson` holds whole percents totalling 100 rather than fractions.
+
+Services: `lib/data/experiment-service.ts` (lifecycle + assignment/exposure,
+row-locked `stateVersion` transitions, idempotent launch/stop) and
+`lib/data/experiment-metrics-service.ts` (`::float8` aggregates; conversions
+counted only at/after a session's exposure, once per session). Deterministic
+logic lives in `modules/experiments` (no `db/`, no `lib/ai`) — see
+docs/EXPERIMENTATION.md.
 
 ## Privacy & deletion (prepared; hardened S03.5 — tests/privacy.test.ts)
 

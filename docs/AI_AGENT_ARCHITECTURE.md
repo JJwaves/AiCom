@@ -166,19 +166,20 @@ credential access. "Audit" rows are the minimum written record per run.
 | Guardrails | sourceRefs ≥ 1 structural; `MIN_EVIDENCE_FOR_INSIGHT` (3) before persisting a pattern; percentages need denominator ≥ 5; trends need previous base ≥ 5; batch cap 25/run; budget guard fail-closed; flag + admin auth fail-closed 404. |
 | Audit | AiUsage row per model call (prompt id+version, agentType customer_intelligence); classification rows carry classifier/prompt/model versions + processedAt; run log with candidate/processed/failed/remaining counts. |
 
-### 3 · CRO Agent — Stage F
+### 3 · CRO Agent — Stage F · **IMPLEMENTED (Session 11 — docs/CRO_AGENT.md + docs/EXPERIMENTATION.md are authoritative)**
 
 | Dimension | Specification |
 | --- | --- |
-| Responsibility | Propose conversion experiments from funnel/chat/abandonment analysis; draft hypothesis, variant, metric, sample size. |
-| Inputs | First-party events, insights, experiment history. |
-| Outputs | `AgentDecision` rows containing proposed `Experiment` definitions. |
-| Allowed tools | Read-only analytics queries; experiment-proposal writer (draft status only). |
-| Prohibited | Publishing site changes; starting/stopping experiments; exceeding `maximumExperimentTrafficPct`; declaring winners below minimum sample. |
-| Autonomy | RECOMMEND — a human approves and launches every experiment. |
-| Data access | Read-only analytics + experiments; writes only draft proposals. |
-| Guardrails | Traffic-split caps; guardrail metrics required on every proposal; no simultaneous conflicting experiments. |
-| Audit | AgentDecision + Approval trail; AiUsage per run. |
+| Responsibility | Read deterministic funnel / drop-off / customer-signal data and propose fully-specified experiments, or flag a business problem an experiment would only paper over. |
+| Inputs | The S09 `BusinessHealthSnapshot`, the S11 funnel drop-off, existing experiment READOUTS, and the CLOSED target registry — rendered as one bounded, PII-free context. |
+| Outputs | `AgentDecision` rows (`cro_experiment_proposal` / `cro_review`) carrying a registry-validated experiment design. |
+| Allowed tools | **NONE.** One REASONING `generateStructuredObject` call. No registry, no execute path. |
+| Prohibited | Launching, stopping or assigning traffic; editing source; touching pricing/checkout/catalog/ads; approving its own work (it never imports the action service); declaring a winner; choosing its own audience, allocation or sample floor (the server derives all three). |
+| Autonomy | RECOMMEND (policy default AND ceiling). Every proposal needs human approval, and launching is a further explicit human act. |
+| Data access | Read-only aggregates; writes only AgentDecision audit rows. |
+| Guardrails | Unknown target / mismatched type / markup or unknown-key variant config / fabricated metric or evidence reference ⇒ proposal DROPPED. Traffic clamped to the effective ceiling; `minimumSampleSize` may only be raised. `SOURCE_PERMITTED_ACTION_TYPES.CRO_AGENT` = CRO_REVIEW, CRO_EXPERIMENT_PROPOSAL, CRO_EXPERIMENT_LAUNCH — and the last has no executor. |
+| Audit | AgentDecision + Approval + `agent_actions`/`guardrail_evaluations`; `experiment_events` for every lifecycle transition; AiUsage per run (prompt `ai_cro_experiment_review` v1.0.0). |
+| Failure | Provider down / budget exceeded ⇒ nothing persisted. Running experiments, assignment, exposure, measurement and the admin dashboard are unaffected. |
 
 ### 4 · Pricing Intelligence Agent — Stage G
 

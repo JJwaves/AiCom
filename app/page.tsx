@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { getHeroCatalogProduct, listCatalogProducts } from "@/lib/commerce/catalog";
+import { resolveHomepageHero } from "@/lib/experiments/server";
 import { FAQ_ITEMS } from "@/config/faq";
 import { PricingDemo } from "@/components/landing/PricingDemo";
 import {
@@ -23,22 +24,25 @@ export const metadata: Metadata = {
 export default async function HomePage() {
   const products = await listCatalogProducts();
   const hero = await getHeroCatalogProduct();
+  /* Session 11: server-resolved hero copy experiment. Null override (the
+   * default, and always when EXPERIMENT_ENGINE is off) = the copy below. */
+  const heroCopy = (await resolveHomepageHero("/")).override;
   return (
     <>
       {/* HERO — Workbench: headline left, live pricing panel (product in use) right */}
       <section className="mx-auto max-w-6xl px-4 pb-16 pt-12 sm:px-6 sm:pt-16">
         <div className="grid items-center gap-10 lg:grid-cols-[1.05fr_1fr]">
-          <div>
+          <div data-experiment={heroCopy ? "homepage.hero" : undefined}>
             <h1 className="text-4xl leading-[1.05] sm:text-5xl" style={{ fontWeight: 600 }}>
-              Custom takeout bags, direct from the factory.
+              {heroCopy?.headline ?? "Custom takeout bags, direct from the factory."}
             </h1>
             <p className="mt-4 max-w-lg text-lg text-ink-2">
-              Custom non-woven bags for restaurants, cafes and food businesses. Add your logo, choose your
-              quantity, and order online.
+              {heroCopy?.subheadline ??
+                "Custom non-woven bags for restaurants, cafes and food businesses. Add your logo, choose your quantity, and order online."}
             </p>
             <div className="mt-7 flex flex-wrap gap-3">
               <Link href="/products/custom-non-woven-takeout-bags" className="btn btn--primary">
-                Shop takeout bags
+                {heroCopy?.ctaLabel ?? "Shop takeout bags"}
               </Link>
               <Link href="/bulk-takeout-bags" className="btn btn--secondary">
                 See volume pricing

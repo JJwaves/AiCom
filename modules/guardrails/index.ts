@@ -48,7 +48,14 @@ export {
 
 export { executionSupportFor, executorRegistry, initialExecutionState, type ActionExecutor } from "./executors";
 
-export { CEO_CATEGORY_TO_ACTION_TYPE, mapDecisionToAction, type MappableDecision, type MappedAction } from "./decision-mapping";
+export {
+  CEO_CATEGORY_TO_ACTION_TYPE,
+  mapAgentDecisionToAction,
+  mapCroDecisionToAction,
+  mapDecisionToAction,
+  type MappableDecision,
+  type MappedAction,
+} from "./decision-mapping";
 
 export {
   ACTION_SOURCES,

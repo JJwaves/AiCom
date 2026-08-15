@@ -18,6 +18,7 @@ export * from "./availability";
 export * from "./trend";
 export * from "./revenue";
 export * from "./funnel";
+export * from "./dropoff";
 export * from "./ai-metrics";
 export * from "./profitability";
 export * from "./products";

@@ -48,6 +48,17 @@ take real traffic until they pass.
 - [ ] Any change to `config/guardrails.ts` or the action taxonomy must bump `GUARDRAIL_POLICY_VERSION` (stored evaluations reference it)
 - [ ] Known limitation accepted: single shared admin identity — every `reviewedBy` reads as the configured `ADMIN_USER`; per-user RBAC is deferred
 
+## Experiments (Session 11 — only if enabling EXPERIMENT_ENGINE)
+- [ ] Same admin auth prerequisites as above (shared surface — no separate credentials); HTTPS is mandatory (launch/stop are admin MUTATION routes)
+- [ ] ⛔ Set `GUARDRAIL_LIMITS.maximumExperimentTrafficPct` in `config/guardrails.ts` BEFORE running experiments in production. While it is null the launch route REFUSES in production (it never assumes 100%); the 50% development ceiling applies only when `NODE_ENV !== "production"`
+- [ ] ⛔ Any change to `config/guardrails.ts` must bump `GUARDRAIL_POLICY_VERSION`
+- [ ] Understand the rendering trade-off: with `EXPERIMENT_ENGINE_ENABLED=true`, `/` and `/products/[slug]` render dynamically instead of statically. **Toggling the flag requires a rebuild/redeploy** — a build made with the flag off will never enrol anyone
+- [ ] Review the minimum sample: `EXPERIMENTS.DEFAULT_MINIMUM_SAMPLE_PER_VARIANT` is a conservative development default (1,000 exposed sessions per arm), NOT a power calculation. Raise it per experiment if you want more certainty; it can never be lowered
+- [ ] Verify /admin/experiments answers 404 with the flag off, and that launch/stop/archive are rejected cross-origin (403) and for non-JSON content types (415) on the production build
+- [ ] Read every variant's copy yourself before approving: it is customer-facing, and it must not contain a delivery promise, price, guarantee, certification or claim the factory cannot honour
+- [ ] Understand what a result means: no winner is declared below the minimum sample, "no clear winner" is a real answer, and a `VARIANT_WIN` changes nothing on the site — promoting a winner is a human source/config change
+- [ ] Only if enabling `AI_CRO_AGENT`: the agent needs the AI runtime + provider key + budget caps (see the AI section). Experiments keep running, measuring and reporting when the CRO agent is off or the provider is down
+
 ## Commerce
 - [ ] ⛔ Shopify production credentials in env (`NEXT_PUBLIC_SHOPIFY_*`)
 - [ ] ⛔ Variant mapping complete in `lib/commerce/shopify.ts` (no `REPLACE_ME` ids)

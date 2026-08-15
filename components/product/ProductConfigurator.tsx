@@ -11,6 +11,7 @@ import { useCart } from "@/lib/cart/cart-context";
 import { ConfigurationProvider, useConfiguration } from "@/lib/configuration/context";
 import type { TrackedField } from "@/lib/configuration/store";
 import { formatDimensions, formatMoney, formatPct, formatQty, formatUnitPrice } from "@/lib/format";
+import type { CtaCopyVariant, ShippingMessageVariant } from "@/modules/experiments/variants";
 import type { Product } from "@/types/commerce";
 import { ArtworkUploader } from "./ArtworkUploader";
 import { TierPricingTable } from "./TierPricingTable";
@@ -26,11 +27,28 @@ import { BagIllustration } from "./BagIllustration";
  * reads and updates. AI changes arrive server-validated over the sync bus,
  * update these controls visibly (highlight + aria-live announcement), and
  * re-price through the same engine call as manual changes.
+ *
+ * Session 11: `experiments` carries SERVER-RESOLVED, SERVER-VALIDATED
+ * presentation overrides for two registered targets. They are plain text
+ * values rendered as React children — never markup — and both default to
+ * null, which renders exactly the pre-Session-11 UI. Nothing about pricing,
+ * validation, cart payloads or button behaviour is experimentable.
  */
-export function ProductConfigurator({ product }: { product: Product }) {
+export type ConfiguratorExperiments = {
+  shippingMessage?: ShippingMessageVariant | null;
+  primaryCta?: CtaCopyVariant | null;
+};
+
+export function ProductConfigurator({
+  product,
+  experiments,
+}: {
+  product: Product;
+  experiments?: ConfiguratorExperiments;
+}) {
   return (
     <ConfigurationProvider product={product}>
-      <ConfiguratorView product={product} />
+      <ConfiguratorView product={product} experiments={experiments} />
     </ConfigurationProvider>
   );
 }
@@ -43,7 +61,7 @@ const FIELD_ANNOUNCE_LABELS: Record<string, string> = {
   quantity: "quantity",
 };
 
-function ConfiguratorView({ product }: { product: Product }) {
+function ConfiguratorView({ product, experiments }: { product: Product; experiments?: ConfiguratorExperiments }) {
   const router = useRouter();
   const { addLine } = useCart();
   const { state, config, setSize, setMaterial, setColor, setPrintOption, setQuantity, setArtwork, flushSync } =
@@ -59,6 +77,12 @@ function ConfiguratorView({ product }: { product: Product }) {
   const [announcement, setAnnouncement] = useState("");
 
   const { sizeId, materialId, colorId, printOptionId: printId, quantity, artwork } = config;
+
+  /* Session 11 experiment overrides — presentation only, already validated
+   * server-side. `null` everywhere means "render the normal UI". */
+  const shippingMessage = experiments?.shippingMessage ?? null;
+  const ctaLabel = experiments?.primaryCta?.ctaLabel ?? "Add to cart";
+  const ctaHelperText = experiments?.primaryCta?.helperText ?? null;
 
   const quote = useMemo(() => quoteConfiguration(product, config), [product, config]);
   const needsQuote = requiresCustomQuote(product, config);
@@ -504,6 +528,11 @@ function ConfiguratorView({ product }: { product: Product }) {
 
         {/* 9 · Add to cart */}
         <div className="mt-6">
+          {shippingMessage && shippingMessage.placement === "above_cta" && (
+            <p data-experiment="product.shipping_message" className="mb-3 rounded-[6px] bg-accent-soft px-3 py-2 text-sm text-ink-2">
+              {shippingMessage.message}
+            </p>
+          )}
           <button
             type="button"
             className="btn btn--primary w-full !py-4 text-base"
@@ -511,8 +540,18 @@ function ConfiguratorView({ product }: { product: Product }) {
             onClick={handleAdd}
             data-state={added ? "success" : undefined}
           >
-            {added ? "✓ Added — opening cart" : "Add to cart"}
+            {added ? "✓ Added — opening cart" : ctaLabel}
           </button>
+          {ctaHelperText && (
+            <p data-experiment="product.primary_cta" className="mt-2 text-center text-xs text-ink-3">
+              {ctaHelperText}
+            </p>
+          )}
+          {shippingMessage && shippingMessage.placement === "below_cta" && (
+            <p data-experiment="product.shipping_message" className="mt-3 rounded-[6px] bg-accent-soft px-3 py-2 text-sm text-ink-2">
+              {shippingMessage.message}
+            </p>
+          )}
           {missingArtwork && (
             <p className="mt-2 text-xs text-error" role="alert">
               Upload your logo above (or switch printing to “No logo”) to continue.
@@ -551,7 +590,7 @@ function ConfiguratorView({ product }: { product: Product }) {
               disabled={!quote || missingArtwork || needsQuote || added}
               onClick={handleAdd}
             >
-              {added ? "✓ Added" : "Add to cart"}
+              {added ? "✓ Added" : ctaLabel}
             </button>
           </div>
         </div>

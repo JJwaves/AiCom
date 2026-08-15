@@ -69,11 +69,26 @@ Exit: ✅ AgentDecision → guardrail → human approval loop operating
 end-to-end on real CEO recommendations. Execution remains deferred (no
 executor exists for any business action type).
 
-## Stage F — CRO
-- Experiment engine (model from DATABASE_SCHEMA.md; flag
-  `EXPERIMENT_ENGINE`); exposure as first-party events
-- CRO agent proposes experiments; human approval to launch; no
-  insufficient-sample winners
+## Stage F — CRO ✅ COMPLETE (Session 11, 2026-08-12)
+- Experiment engine (`modules/experiments` + `lib/experiments`, flag
+  `EXPERIMENT_ENGINE`): CLOSED target registry (3 presentation surfaces),
+  CLOSED typed variant schemas (no HTML/JS/CSS anywhere), pure-hash sticky
+  assignment, fail-closed eligibility, allocation validation capped by
+  `maximumExperimentTrafficPct` (a `null` limit BLOCKS in production, never
+  reads as 100%), server-side resolution with exposure recorded ONCE per
+  session as a first-party `experiment_exposed` event, post-exposure-only
+  measurement, two-proportion z-test, and 7 explicit result states —
+  "inconclusive" included. No winner below the documented minimum sample.
+- CRO agent (flag `AI_CRO_AGENT`, RECOMMEND): NO tools, one structured call
+  over deterministic data, registry/reference-validated proposals →
+  AgentDecision → `CRO_EXPERIMENT_PROPOSAL` / `CRO_REVIEW` in the Action
+  Center. Business/product problems route to REVIEW, never to a copy test
+  that hides an objection.
+- Launch/stop are EXPLICIT HUMAN admin actions (`/admin/experiments`),
+  guardrail-evaluated, traffic-capped, idempotent, `stateVersion`-guarded
+  and audited. **The guardrail executor registry stays EMPTY** — approving
+  still executes nothing. Winner promotion remains a human source change.
+- See docs/EXPERIMENTATION.md + docs/CRO_AGENT.md.
 ## Stage G — Pricing Intelligence
 - Pricing agent (RECOMMEND) analyzing price↔conversion↔margin↔segment;
   objective = expected contribution profit; bounded price experiments only

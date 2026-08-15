@@ -230,6 +230,27 @@ table: that taxonomy is the customer journey (every row requires a session)
 and its rows feed third-party analytics copies. Business-action payloads
 stay first-party only and are never sent to third-party analytics.
 
+## Session 11 — CRO decisions enter here too
+
+`syncDecisionsToActions` now materializes PENDING decisions from BOTH the CEO
+and CRO agents (still deterministic, still no model call, still idempotent at
+the database level):
+
+| CRO proposal kind | Action type | Risk | Execution |
+| --- | --- | --- | --- |
+| `EXPERIMENT` | `CRO_EXPERIMENT_PROPOSAL` (carries the validated design) | LOW | `REVIEW_ONLY` → `NOT_APPLICABLE` |
+| `REVIEW` | `CRO_REVIEW` (business/product question) | LOW | `REVIEW_ONLY` → `NOT_APPLICABLE` |
+
+Any other agent type maps to nothing — a new agent gets no action taxonomy by
+accident.
+
+**Approving a CRO_EXPERIMENT_PROPOSAL still executes nothing.** It records
+"yes, this concept is approved". Turning that into live traffic takes two
+further explicit human acts on `/admin/experiments`: *Create drafts from
+approved proposals* (deterministic, idempotent, re-validated against the
+CURRENT target registry and traffic ceiling) and *Launch*. The executor
+registry remains empty — see docs/EXPERIMENTATION.md §19.
+
 ## Known limitations
 
 - Single shared admin identity (Basic auth); no per-user RBAC or per-person

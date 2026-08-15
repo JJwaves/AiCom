@@ -720,30 +720,101 @@ export const ceoReports = pgTable(
 );
 
 /* ------------------------------------------------------------------ */
-/* Experiments (schema only — no runtime until Stage F)                */
+/* Experiments (Session 03 schema, Session 11 runtime)                  */
 /* ------------------------------------------------------------------ */
 
-export const experiments = pgTable("experiments", {
-  id: text("id").primaryKey(),
-  name: text("name").notNull().unique(),
-  hypothesis: text("hypothesis").notNull(),
-  /** draft | running | stopped | decided */
-  status: text("status").notNull().default("draft"),
-  primaryMetric: text("primary_metric").notNull(),
-  guardrailMetricsJson: jsonb("guardrail_metrics_json").$type<string[]>(),
-  controlJson: jsonb("control_json").$type<Record<string, unknown>>(),
-  variantsJson: jsonb("variants_json").$type<Record<string, unknown>>(),
-  trafficSplitJson: jsonb("traffic_split_json").$type<Record<string, number>>(),
-  audience: text("audience"),
-  minimumSampleSize: integer("minimum_sample_size"),
-  startAt: ts("start_at"),
-  endAt: ts("end_at"),
-  resultJson: jsonb("result_json").$type<Record<string, unknown>>(),
-  winner: text("winner"),
-  createdAt: createdAt(),
-  updatedAt: updatedAt(),
-});
+/**
+ * Experiment records (S03 table, EXTENDED additively in S11 migration 0005).
+ *
+ * The S03 columns are kept and reused rather than replaced — the table has
+ * never had a runtime, so no data migration exists. Two S03 semantics are
+ * pinned down (they were unspecified before):
+ *  - `controlJson` is the launch-time CONTROL SNAPSHOT (what the normal UI
+ *    showed), not page content to render. The control arm renders the
+ *    application's own UI with no override at all (spec §8).
+ *  - `trafficSplitJson` stores WHOLE PERCENTS keyed by arm and must total
+ *    100 (spec §10).
+ */
+export const experiments = pgTable(
+  "experiments",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull().unique(),
+    hypothesis: text("hypothesis").notNull(),
+    /** draft | approved | running | stopped | decided | archived */
+    status: text("status").notNull().default("draft"),
+    primaryMetric: text("primary_metric").notNull(),
+    guardrailMetricsJson: jsonb("guardrail_metrics_json").$type<string[]>(),
+    /** Launch-time snapshot of the control experience (spec §42). */
+    controlJson: jsonb("control_json").$type<Record<string, unknown>>(),
+    /** { [variantKey]: validated variant config } — typed values, never markup. */
+    variantsJson: jsonb("variants_json").$type<Record<string, unknown>>(),
+    /** { control: 50, variant_b: 50 } — whole percents totalling 100. */
+    trafficSplitJson: jsonb("traffic_split_json").$type<Record<string, number>>(),
+    /** Human-readable audience label (S03); the structured rules are audienceJson. */
+    audience: text("audience"),
+    minimumSampleSize: integer("minimum_sample_size"),
+    startAt: ts("start_at"),
+    endAt: ts("end_at"),
+    /** Frozen final readout, written once when the experiment is stopped/decided. */
+    resultJson: jsonb("result_json").$type<Record<string, unknown>>(),
+    winner: text("winner"),
 
+    /* ---- Session 11 additions ---- */
+    /** Closed experiment taxonomy (modules/experiments/types.ts). */
+    experimentType: text("experiment_type"),
+    /** Closed target registry key (modules/experiments/targets.ts). */
+    targetKey: text("target_key"),
+    /** The single non-control arm's key (MVP: control + one variant). */
+    variantKey: text("variant_key"),
+    /** Target contract version at launch — historical reports stay interpretable. */
+    targetVersion: text("target_version"),
+    /** Structured eligibility rules (modules/experiments/eligibility.ts). */
+    audienceJson: jsonb("audience_json").$type<Record<string, unknown>>(),
+    secondaryMetricsJson: jsonb("secondary_metrics_json").$type<string[]>(),
+    /** Per-experiment assignment salt — keeps arms independent across experiments. */
+    assignmentSalt: text("assignment_salt"),
+    /** Guardrail policy version + evaluated verdict at launch (spec §42). */
+    policyVersion: text("policy_version"),
+    policySnapshotJson: jsonb("policy_snapshot_json").$type<Record<string, unknown>>(),
+    /** Provenance: the CRO recommendation / approved action this came from. */
+    sourceDecisionId: text("source_decision_id").references(() => agentDecisions.id, { onDelete: "set null" }),
+    sourceActionId: text("source_action_id").references(() => agentActions.id, { onDelete: "set null" }),
+    createdBy: text("created_by"),
+    launchedBy: text("launched_by"),
+    launchedAt: ts("launched_at"),
+    stoppedBy: text("stopped_by"),
+    stoppedAt: ts("stopped_at"),
+    stopReason: text("stop_reason"),
+    archivedAt: ts("archived_at"),
+    /** Optimistic-concurrency token — every lifecycle transition increments it. */
+    stateVersion: integer("state_version").notNull().default(1),
+
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index("experiments_status_idx").on(t.status, t.createdAt),
+    /** ONE running experiment per target (spec §45) — enforced by the database. */
+    uniqueIndex("experiments_running_target_idx")
+      .on(t.targetKey)
+      .where(sql`status = 'running' and target_key is not null`),
+    /** One draft per approved action — launch/materialize idempotency. */
+    uniqueIndex("experiments_source_action_idx")
+      .on(t.sourceActionId)
+      .where(sql`source_action_id is not null`),
+  ],
+);
+
+/**
+ * Sticky per-session assignment (S03 table, S11 adds exposure).
+ *
+ * ASSIGNMENT ≠ EXPOSURE (spec §12): a row here means "this session belongs
+ * to this arm"; `exposedAt` is stamped the first time the session actually
+ * RENDERED the experiment surface. Unique exposed sessions are counted from
+ * `exposedAt is not null`, assignments from the row count — separately, and
+ * without a write per page view.
+ */
 export const experimentAssignments = pgTable(
   "experiment_assignments",
   {
@@ -755,6 +826,35 @@ export const experimentAssignments = pgTable(
       .references(() => sessions.id, { onDelete: "cascade" }),
     variant: text("variant").notNull(),
     assignedAt: ts("assigned_at").notNull().defaultNow(),
+    /** First time this session saw the surface. Null = assigned, never exposed. */
+    exposedAt: ts("exposed_at"),
   },
-  (t) => [primaryKey({ columns: [t.experimentId, t.sessionId] })],
+  (t) => [
+    primaryKey({ columns: [t.experimentId, t.sessionId] }),
+    index("experiment_assignments_variant_idx").on(t.experimentId, t.variant),
+  ],
+);
+
+/**
+ * Append-only experiment audit trail (Session 11 spec §43, §49).
+ *
+ * Like `agent_action_events`, these are first-party ADMIN events and
+ * deliberately do NOT go into the customer `events` taxonomy (which requires
+ * a session and feeds third-party copies). Actors are server-derived.
+ */
+export const experimentEvents = pgTable(
+  "experiment_events",
+  {
+    id: text("id").primaryKey(),
+    experimentId: text("experiment_id")
+      .notNull()
+      .references(() => experiments.id, { onDelete: "cascade" }),
+    /** created | approved | launched | stopped | decided | archived */
+    type: text("type").notNull(),
+    /** "admin:<username>" or "system:<process>" — never client-supplied. */
+    actor: text("actor").notNull(),
+    detailJson: jsonb("detail_json").$type<Record<string, unknown>>(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("experiment_events_experiment_idx").on(t.experimentId, t.createdAt)],
 );

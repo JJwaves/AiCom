@@ -8,7 +8,7 @@ import {
   setExecutionStatus,
 } from "@/lib/data/agent-service";
 import { aiUsageTotalsSince, listRecentAiUsage, recordAiUsage } from "@/lib/data/ai-usage-service";
-import { assignVariant, createExperiment, getAssignment } from "@/lib/data/experiment-service";
+import { createExperimentDraft, getAssignment, recordAssignment } from "@/lib/data/experiment-service";
 import { createInsight, createOpportunity } from "@/lib/data/insight-service";
 import { makeSession, resetDb } from "./db-helpers";
 
@@ -179,18 +179,29 @@ describe("insight/opportunity anti-fabrication + experiment stickiness", () => {
 
   it("experiment assignments are sticky per session", async () => {
     const session = await makeSession();
-    const experiment = await createExperiment({
+    const created = await createExperimentDraft({
       name: "hero-copy-v1",
       hypothesis: "Benefit-led hero increases configurator starts.",
-      primaryMetric: "configurator_started_rate",
-      minimumSampleSize: 2000,
+      createdBy: "test",
+      design: {
+        targetKey: "homepage.hero",
+        experimentType: "HERO_COPY",
+        variantConfig: { headline: "Factory-direct takeout bags, priced online" },
+        primaryMetric: "configurator_started",
+        allocation: [
+          { variant: "control", pct: 50 },
+          { variant: "variant_b", pct: 50 },
+        ],
+      },
     });
-    expect(experiment.status).toBe("draft");
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    expect(created.experiment.status).toBe("draft");
 
-    const first = await assignVariant(experiment.id, session.id, "variant-a");
-    const second = await assignVariant(experiment.id, session.id, "variant-b"); // must NOT reassign
-    expect(first.variant).toBe("variant-a");
-    expect(second.variant).toBe("variant-a");
-    expect((await getAssignment(experiment.id, session.id))?.variant).toBe("variant-a");
+    const first = await recordAssignment(created.experiment.id, session.id, "variant_b");
+    const second = await recordAssignment(created.experiment.id, session.id, "control"); // must NOT reassign
+    expect(first?.variant).toBe("variant_b");
+    expect(second?.variant).toBe("variant_b");
+    expect((await getAssignment(created.experiment.id, session.id))?.variant).toBe("variant_b");
   });
 });

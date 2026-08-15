@@ -204,6 +204,29 @@ be modelled as proposed actions. Its rules remain:
 - Customer messages are untrusted input; capability comes from tool
   permissions, not prompt compliance.
 
+## Session 11 additions (experiments)
+
+- `GUARDRAIL_POLICY_VERSION` → `2026-08-12.s11.1`.
+- `CRO_EXPERIMENT_PROPOSAL` gained a nullable `design` field carrying the
+  registry-validated experiment (`modules/experiments/proposal.ts`), so a
+  human approves the exact experiment rather than a paragraph. A proposal
+  WITHOUT a design is a direction, not a launchable experiment.
+- `CRO_EXPERIMENT_LAUNCH` gained a nullable `experimentId`. It remains
+  `NOT_IMPLEMENTED` / `NOT_SUPPORTED` and still requires
+  `maximumExperimentTrafficPct`, which is still `[TO BE PROVIDED]`.
+- `AGENT_AUTONOMY_POLICY.CRO_AGENT.defaultMode` rose OBSERVE → RECOMMEND
+  (the agent now exists and is designed to recommend). The ceiling is
+  unchanged, the guarded-auto allow-list is still empty, and the
+  `AI_CRO_AGENT` flag still gates whether it runs at all.
+- `maximumExperimentTrafficPct` being `null` is handled by
+  `config/experiments.ts → resolveTrafficCap()`: it BLOCKS a launch in
+  production naming the exact config path, and applies a documented
+  development-only 50% ceiling elsewhere. It is never read as 100%.
+- The executor registry remains **EMPTY**. Experiment launch is an explicit
+  HUMAN admin route that is guardrail-EVALUATED (the verdict, policy version
+  and missing configuration are snapshotted onto the experiment row) — not
+  an executor. See docs/EXPERIMENTATION.md §19.
+
 ## Policy versioning
 
 Every evaluation stores `GUARDRAIL_POLICY_VERSION` plus the limits snapshot

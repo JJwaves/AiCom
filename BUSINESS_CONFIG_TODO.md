@@ -154,6 +154,17 @@ zero, nothing estimates. Classification:
 | Cost model (see above) | Profitability metrics stay "Unavailable — configure manufacturing costs" until `config/costs.ts` is complete; the dashboard lists the missing inputs verbatim |
 | AI model pricing | `config/ai-pricing.ts` (see AI section) — AI spend metrics show unavailable/partial while calls are unpriced; an unpriced call is never $0 |
 
+## Experimentation (Session 11)
+
+| Item | Where |
+| --- | --- |
+| Experiment engine on/off | `.env` → `EXPERIMENT_ENGINE_ENABLED` (default false; `/admin/experiments` and every experiment API route 404 while off, no assignment or exposure happens, and the storefront renders its normal control experience). **Toggling requires a redeploy** — the flag decides whether the hosting pages render dynamically |
+| CRO agent on/off | `.env` → `AI_CRO_AGENT_ENABLED` (default false). Requires the AI runtime + provider key; experiments run, measure and report perfectly well without it |
+| **Maximum experiment traffic share** | `config/guardrails.ts` → `maximumExperimentTrafficPct` — **REQUIRED before production experiments.** While it is null the launch route refuses in production and names this path; a documented 50% ceiling applies only in non-production. It is never interpreted as 100% |
+| Minimum sample per arm | `config/experiments.ts` → `DEFAULT_MINIMUM_SAMPLE_PER_VARIANT` (1,000 exposed sessions). A deliberately conservative DEVELOPMENT DEFAULT, not a power calculation — a real minimum detectable effect needs a baseline conversion rate and an effect size you have not provided yet. An experiment may raise it; nothing lowers it |
+| Significance threshold | `config/experiments.ts` → `SIGNIFICANCE_ALPHA` (0.05, two-sided). Documented method and its limitations: docs/EXPERIMENTATION.md §13 |
+| Variant copy review | Human. Every variant is customer-facing text you approve in `/admin/ai-actions` before it can become a draft — it must not contain a delivery promise, price, guarantee or capability claim the factory cannot honour |
+
 ## Guardrail limits (Session 10 — `config/guardrails.ts`)
 
 Every value below ships as an explicit `null` `[TO BE PROVIDED]`. The
@@ -189,7 +200,7 @@ evaluations reference it so past verdicts stay explainable.
 | Maximum campaign budget change per action | `config/guardrails.ts` → `maximumCampaignBudgetChangePct` |
 | Maximum total daily ad spend | `config/guardrails.ts` → `maximumDailyAdSpendCents` |
 | Maximum new-campaign test budget | `config/guardrails.ts` → `maximumNewCampaignTestBudgetCents` |
-| Maximum experiment traffic share | `config/guardrails.ts` → `maximumExperimentTrafficPct` |
+| Maximum experiment traffic share | `config/guardrails.ts` → `maximumExperimentTrafficPct` — **also required for HUMAN-launched experiments in production** (Session 11, see "Experimentation" above); the rest of this list is GUARDED_AUTO-only |
 | High-value order threshold (forces human review) | `config/guardrails.ts` → `highValueOrderThresholdCents` |
 | Refund approval threshold | `config/guardrails.ts` → `refundApprovalThresholdCents` (refunds stay CRITICAL and permanently non-automated regardless — this only sets the review threshold) |
 | Maximum MOQ change per action | `config/guardrails.ts` → `maximumMoqChangePct` |
