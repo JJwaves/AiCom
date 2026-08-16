@@ -143,9 +143,10 @@ Human Approval (/admin/ai-actions)  |  Guarded auto-execution (later)
 | `modules/customer-intelligence` + `lib/ai/agents/customer-intelligence` + `lib/data/intelligence-service` | DONE (Session 08) | Deterministic aggregation authority (taxonomies, qualified rule, catalog-support verdicts, insights/opportunities — NO lib/ai import) + LOW_COST message labeling with server-validated evidence + idempotent explicit processing. See CUSTOMER_INTELLIGENCE.md. |
 | `modules/business-intelligence` + `lib/ai/agents/ceo` + `lib/data/{business-intelligence,ceo-report}-service` | DONE (Session 09) | Deterministic business-metrics authority (metric availability AVAILABLE/PARTIAL/UNAVAILABLE, revenue/funnel/AI-cost/profitability/segments/attribution/trends, BusinessHealthSnapshot — NO lib/ai import) + recommendation-only CEO agent (REASONING structured output, NO tools, server-validated metric/evidence refs, AgentDecision + ceo_reports persistence). See BUSINESS_INTELLIGENCE.md. |
 | `modules/experiments` + `lib/experiments` + `lib/ai/agents/cro` + `app/admin/experiments` | DONE (Session 11) | Deterministic experiment authority (closed target registry, closed typed variant schemas, pure hash assignment, eligibility, allocation caps, two-proportion z-test, result states — NO lib/ai and NO db import) + server-side resolution/exposure + recommendation-only CRO agent (REASONING structured output, NO tools, registry- and reference-validated proposals) + the human launch/stop admin surface. No executor: launching is an explicit human action. See EXPERIMENTATION.md + CRO_AGENT.md. |
+| `modules/pricing-intelligence` + `lib/ai/agents/pricing` + `lib/data/{pricing-intelligence,pricing-report}-service` + `app/admin/pricing-intelligence` | DONE (Session 12) | Deterministic pricing-analytics authority (pricing funnel with co-occurrence + real ordering, three quantity lanes, catalog-derived tier bands, MOQ intelligence, price-realization check, evidence-graded signals, cost/margin readiness, PricingReadiness, the elasticity refusal, PricingIntelligenceSnapshot — NO lib/ai import, NO price mutation path) + recommendation-only Pricing Agent (REASONING structured output, NO tools, an output schema with NO price field at all, server-validated refs and product/tier scope, server-recomputed prerequisites) + `pricing_reports` persistence. `modules/pricing` remains the sole pricing authority; no PRICE_CHANGE executor exists. See PRICING_INTELLIGENCE.md. |
 | `modules/ads/google`, `modules/ads/meta` | DEFER | Read-only first, much later. |
 | `config/flags.ts` | DONE (Session 04) | Feature flags (`AI_RUNTIME`, `AI_SALES`, …); all default OFF, env-enabled (`*_ENABLED=true`). |
-| `app/admin/*` | STARTED (Session 08) | `customer-intelligence` (S08), `business-intelligence` (S09) + `ai-actions` (S10, the first admin MUTATION routes — POST + same-origin + JSON content type + strict schema) live behind HTTP Basic (`proxy.ts` + per-route checks, fail-closed 404) + their feature flags; ai-usage remains a future session. |
+| `app/admin/*` | STARTED (Session 08) | `customer-intelligence` (S08), `business-intelligence` (S09), `ai-actions` (S10, the first admin MUTATION routes — POST + same-origin + JSON content type + strict schema), `experiments` (S11) and `pricing-intelligence` (S12) live behind HTTP Basic (`proxy.ts` + per-route checks, fail-closed 404) + their feature flags; ai-usage remains a future session. |
 
 ## Invariants (enforced across all future sessions)
 
@@ -225,6 +226,52 @@ Human Approval (/admin/ai-actions)  |  Guarded auto-execution (later)
   `maximumExperimentTrafficPct` when set, otherwise a 50% ceiling in
   NON-PRODUCTION ONLY, otherwise it refuses the launch and names the exact
   config path. Chosen over shipping an invented production number.
+
+- **2026-08-15 · (S12) A specific price is UNREPRESENTABLE, not merely
+  refused.** The Pricing Agent's output schema has no
+  `proposedUnitPriceCents`, no `discountPct`, no `proposedMoq` and no
+  `optimalPrice` field, and its closed recommendation taxonomy maps only to
+  REVIEW-ONLY action types. So "lower the price to $0.37" is not caught by a
+  filter that could be misconfigured — there is nowhere to write it. Chosen
+  over a `calculateOptimalPrice()` guarded by validation, which would make
+  correctness depend on every downstream layer behaving.
+- **2026-08-15 · (S12) Elasticity is a refusal with a reason, not an
+  unavailable number.** `assessElasticity()` returns a type whose `estimable`
+  field is the literal `false`; no code path anywhere produces a coefficient,
+  so no model can be asked to fill one in. The platform has never shown two
+  prices for the same configuration to comparable audiences, so every
+  observed price/quantity relationship is confounded. The owner is told why,
+  in plain language, plus exactly what would have to exist first. Chosen over
+  reporting an observational correlation as elasticity.
+- **2026-08-15 · (S12) Price friction requires EXPLICIT evidence; a
+  non-purchase alone is a behavioural observation.** A signal is
+  `isPriceFriction` only when a customer actually said something — an
+  objection, a repeated price question, a handoff after a price, a quote
+  request after a price. Sessions that saw a price and left produce a
+  BEHAVIORAL signal capped at LOW strength and explicitly flagged as not
+  price friction. Strength itself is a documented count-and-diversity rule,
+  never a probability. Chosen over a "price sensitivity index" the data
+  cannot support.
+- **2026-08-15 · (S12) MOQ friction and product gaps are routed AWAY from
+  pricing.** A customer wanting 200 bags has a quantity problem; a customer
+  wanting insulated bags has a product problem. Neither is evidence that the
+  unit price is wrong, and lowering it would sell them nothing. MOQ signals
+  carry `route: MOQ_REVIEW` and `isPriceFriction: false`; product gaps
+  produce no pricing signal at all. Chosen over letting a pricing layer claim
+  every unclosed sale.
+- **2026-08-15 · (S12) Repricing is reported as NOT INSTRUMENTED rather
+  than derived.** `/api/checkout` answers 409 REPRICED and the client
+  re-confirms, but no first-party event records it — so repricing counts,
+  post-reprice confirmations and abandonment are unknown. Session 12 names
+  the two events that would need to exist instead of inferring a figure from
+  cart abandonment. Same doctrine as the S02 cost model: ship the refusal.
+- **2026-08-15 · (S12) Pricing reviews live in a dedicated append-only
+  table.** `pricing_reports` versions the document (period / prompt / model /
+  the exact snapshot the model saw / the validated review / decision links),
+  mirroring `ceo_reports` for the same reason: a failed generation must leave
+  the last good review visible, and an audit must be able to replay what the
+  model actually saw. AgentDecision stays the per-recommendation approval
+  spine. Chosen over stuffing a document into a decision row.
 
 - **2026-08-08 · Keep Shopify-behind-interface, no Stripe.** Checkout,
   payments, tax, discounts stay delegated; the AI layer operates above the

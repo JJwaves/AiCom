@@ -388,7 +388,22 @@ export function isReviewOnlyActionType(actionType: string): boolean {
  */
 export const SOURCE_PERMITTED_ACTION_TYPES: Record<string, readonly string[]> = {
   CEO_AGENT: [...REVIEW_TYPES.map(([t]) => t), "CRO_EXPERIMENT_PROPOSAL"],
-  PRICING_AGENT: ["PRICING_REVIEW", "PRICE_CHANGE", "PRICE_EXPERIMENT", "MOQ_REVIEW"],
+  /**
+   * Session 12 adds `DATA_QUALITY_REVIEW` — a REVIEW-ONLY type granting zero
+   * authority. It is not a convenience: the Pricing Agent's closed
+   * recommendation taxonomy includes a DATA_QUALITY class precisely so a
+   * pricing question we CANNOT answer ("we have no manufacturing costs")
+   * routes honestly instead of being forced into a PRICING_REVIEW, which
+   * would misrepresent a configuration gap as a price problem.
+   *
+   * `PRICE_CHANGE` / `PRICE_EXPERIMENT` remain listed from Session 10 and
+   * remain unreachable in practice: the Pricing Agent's output schema has no
+   * price field, and its recommendation→action table
+   * (`config/pricing-intelligence.ts`) maps to review types only. They are
+   * reachable solely by an explicit HUMAN_ADMIN proposal, which the price
+   * floor still fails closed on while costs are unconfigured.
+   */
+  PRICING_AGENT: ["PRICING_REVIEW", "MOQ_REVIEW", "DATA_QUALITY_REVIEW", "PRICE_CHANGE", "PRICE_EXPERIMENT"],
   CRO_AGENT: ["CRO_REVIEW", "CRO_EXPERIMENT_PROPOSAL", "CRO_EXPERIMENT_LAUNCH"],
   GOOGLE_ADS_AGENT: ["MARKETING_REVIEW", "AD_BUDGET_CHANGE", "AD_PAUSE", "AD_RESUME", "AD_CREATIVE_TEST"],
   META_ADS_AGENT: ["MARKETING_REVIEW", "AD_BUDGET_CHANGE", "AD_PAUSE", "AD_RESUME", "AD_CREATIVE_TEST"],

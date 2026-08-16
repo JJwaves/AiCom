@@ -308,3 +308,22 @@ feeds the CRO agent's context (docs/CRO_AGENT.md); the
   later session.
 - CEO report `snapshotJson` grows with data volume; acceptable for the
   current scale (reports are explicit, not scheduled).
+
+## Session 12 — pricing intelligence consumes this layer
+
+`modules/pricing-intelligence` (docs/PRICING_INTELLIGENCE.md) is a SIBLING
+deterministic authority, not a replacement:
+
+- it reuses this module's `Period`, `compareTrend()` and the S08 conversation
+  corpus, so all three intelligence layers agree about windows and trend
+  states;
+- it reuses `isCostModelFullyConfigured()`'s doctrine (never null→zero) and
+  reports cost readiness by exact config path;
+- it does NOT recompute revenue, AOV or profitability — those stay here.
+  Per-product pricing rows carry gross margin as UNAVAILABLE and point at
+  this dashboard for order-level profit once `config/costs.ts` is filled.
+
+The CEO agent is unchanged. Persisted pricing signals and `pricing_reports`
+rows are structured and referenceable, so a future CEO review can consume
+them; Session 12 does NOT trigger a CEO report and does not modify the CEO
+context.

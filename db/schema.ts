@@ -719,6 +719,47 @@ export const ceoReports = pgTable(
   (t) => [index("ceo_reports_period_idx").on(t.periodDays, t.generatedAt)],
 );
 
+/**
+ * Pricing-intelligence reviews (Session 12) — one row per explicit
+ * "Generate Pricing Review" run, structurally identical to `ceo_reports`
+ * and for the same reason: a review is a versioned DOCUMENT (period +
+ * prompt + model + the exact PricingIntelligenceSnapshot the model saw),
+ * while each recommendation inside it is persisted as its own AgentDecision
+ * row (linked via decisionIdsJson) and reviewed in the Action Center.
+ *
+ * Why a table and not a decision row (spec §39): the executive summary and
+ * the signal narrative are only coherent as one document, and the dashboard
+ * must keep showing the LAST good review when the provider is down. A
+ * decision row cannot hold a document without pretending to be one.
+ *
+ * Append-only: no update or delete path exists. Nothing in this table has
+ * pricing authority — it records what an advisor said, not what anything is
+ * priced at.
+ */
+export const pricingReports = pgTable(
+  "pricing_reports",
+  {
+    id: text("id").primaryKey(),
+    periodStart: ts("period_start").notNull(),
+    periodEnd: ts("period_end").notNull(),
+    /** Whole days covered — the admin page selects reports by this. */
+    periodDays: integer("period_days").notNull(),
+    promptId: text("prompt_id"),
+    promptVersion: text("prompt_version"),
+    model: text("model"),
+    provider: text("provider"),
+    /** The PricingIntelligenceSnapshot the model received (deterministic, PII-free). */
+    snapshotJson: jsonb("snapshot_json").$type<Record<string, unknown>>().notNull(),
+    /** Server-validated Pricing Agent output (metric/evidence refs already filtered). */
+    reviewJson: jsonb("review_json").$type<Record<string, unknown>>().notNull(),
+    /** AgentDecision ids persisted from this review's recommendations. */
+    decisionIdsJson: jsonb("decision_ids_json").$type<string[]>().notNull(),
+    generatedAt: ts("generated_at").notNull().defaultNow(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("pricing_reports_period_idx").on(t.periodDays, t.generatedAt)],
+);
+
 /* ------------------------------------------------------------------ */
 /* Experiments (Session 03 schema, Session 11 runtime)                  */
 /* ------------------------------------------------------------------ */

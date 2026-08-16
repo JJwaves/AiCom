@@ -193,6 +193,76 @@ export function mapCroDecisionToAction(decision: MappableDecision): MappedAction
 const numberOrNull = (v: unknown): number | null =>
   typeof v === "number" && Number.isFinite(v) ? v : null;
 
+/* ------------------------------------------------------------------ */
+/* Session 12 — Pricing decisions                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The Pricing Agent's CLOSED recommendation types → the CLOSED action
+ * taxonomy (Session 12 spec §27).
+ *
+ * EVERY entry is a REVIEW-ONLY action type. `PRICE_CHANGE` and
+ * `PRICE_EXPERIMENT` are deliberately ABSENT: a pricing recommendation
+ * cannot become an executable price action by any mapping, whatever the
+ * model wrote — and the agent's output schema has no price field to carry
+ * one anyway.
+ *
+ * Duplicated from `config/pricing-intelligence.ts` on purpose: this module
+ * is deterministic authority and must not import a config that could later
+ * grow a dependency on the model layer. A test asserts the two tables agree.
+ */
+export const PRICING_RECOMMENDATION_TO_ACTION_TYPE: Record<string, string> = {
+  PRICING_REVIEW: "PRICING_REVIEW",
+  TIER_STRUCTURE_REVIEW: "PRICING_REVIEW",
+  PRICE_PRESENTATION_REVIEW: "PRICING_REVIEW",
+  PRICE_EXPERIMENT_REVIEW: "PRICING_REVIEW",
+  MOQ_REVIEW: "MOQ_REVIEW",
+  DATA_QUALITY: "DATA_QUALITY_REVIEW",
+};
+
+/**
+ * Map one pricing decision to a review-shaped proposed action, or null when
+ * it carries no recognised recommendation type (nothing is invented from
+ * prose — same rule as CEO and CRO decisions).
+ */
+export function mapPricingDecisionToAction(decision: MappableDecision): MappedAction | null {
+  const params = (decision.proposedActionJson?.params ?? {}) as Record<string, unknown>;
+  const support = decision.supportingDataJson ?? {};
+
+  const recommendationType = str(support.recommendationType, 64) ?? str(params.recommendationType, 64);
+  if (!recommendationType) return null;
+  const actionType = PRICING_RECOMMENDATION_TO_ACTION_TYPE[recommendationType];
+  if (!actionType) return null;
+
+  const title = str(support.title, 200) ?? str(params.title, 200) ?? `${recommendationType} recommendation`;
+  const scope = [str(support.productId, 100), numberOrNull(support.quantityTier)]
+    .filter((v) => v !== null && v !== undefined)
+    .join(" · ");
+
+  const payloadCandidate = {
+    title,
+    observation: decision.observation.slice(0, 2000),
+    question: (str(params.recommendation, 2000) ?? decision.reasoningSummary).slice(0, 2000),
+    expectedImpact: scope.length > 0 ? `Scope: ${scope}`.slice(0, 600) : null,
+    limitations: strArray(support.limitations, 8, 300),
+    periodDays: numberOrNull(support.periodDays ?? params.periodDays),
+    metricRefs: strArray(support.supportingMetricRefs ?? params.supportingMetricRefs, 16, 120),
+    evidenceRefs: strArray(support.evidenceRefs ?? params.evidenceRefs, 16, 64),
+  };
+
+  const parsed = reviewActionPayloadSchema.safeParse(payloadCandidate);
+  if (!parsed.success) return null;
+
+  const modelRisk = DECISION_RISK_TO_LEVEL[decision.riskLevel] ?? null;
+  return {
+    actionType,
+    title,
+    identityKey: str(params.identityKey, 200),
+    payload: parsed.data as unknown as Record<string, unknown>,
+    modelSuggestedRiskLevel: isRiskLevel(modelRisk) ? modelRisk : null,
+  };
+}
+
 /**
  * Dispatch by agent type. Unknown agent types map to null — a new agent
  * gets no action taxonomy by accident.
@@ -200,5 +270,6 @@ const numberOrNull = (v: unknown): number | null =>
 export function mapAgentDecisionToAction(decision: MappableDecision): MappedAction | null {
   if (decision.agentType === "ceo") return mapDecisionToAction(decision);
   if (decision.agentType === "cro") return mapCroDecisionToAction(decision);
+  if (decision.agentType === "pricing") return mapPricingDecisionToAction(decision);
   return null;
 }

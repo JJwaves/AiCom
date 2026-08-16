@@ -251,6 +251,33 @@ approved proposals* (deterministic, idempotent, re-validated against the
 CURRENT target registry and traffic ceiling) and *Launch*. The executor
 registry remains empty — see docs/EXPERIMENTATION.md §19.
 
+## Session 12 — pricing decisions enter here too
+
+`syncDecisionsToActions` now materializes PENDING decisions from the CEO, CRO
+**and Pricing Intelligence** agents. Every pricing recommendation type maps to
+a REVIEW-ONLY action type:
+
+| Pricing recommendation type | Action type | Risk | Execution |
+| --- | --- | --- | --- |
+| `PRICING_REVIEW` | `PRICING_REVIEW` | LOW | `REVIEW_ONLY` → `NOT_APPLICABLE` |
+| `TIER_STRUCTURE_REVIEW` | `PRICING_REVIEW` | LOW | `REVIEW_ONLY` → `NOT_APPLICABLE` |
+| `PRICE_PRESENTATION_REVIEW` | `PRICING_REVIEW` | LOW | `REVIEW_ONLY` → `NOT_APPLICABLE` |
+| `PRICE_EXPERIMENT_REVIEW` | `PRICING_REVIEW` | LOW | `REVIEW_ONLY` → `NOT_APPLICABLE` |
+| `MOQ_REVIEW` | `MOQ_REVIEW` | LOW | `REVIEW_ONLY` → `NOT_APPLICABLE` |
+| `DATA_QUALITY` | `DATA_QUALITY_REVIEW` | LOW | `REVIEW_ONLY` → `NOT_APPLICABLE` |
+
+`PRICE_CHANGE` and `PRICE_EXPERIMENT` are deliberately **absent from that
+table**, so no pricing recommendation can become an executable price action by
+any mapping — and the agent's output schema has no price field to carry one
+anyway (docs/PRICING_INTELLIGENCE.md §14).
+
+A human admin may still propose `PRICE_CHANGE` directly. It is evaluated, and
+today it always lands as PENDING_APPROVAL with `executionEligible: false`,
+`executionStatus: NOT_SUPPORTED`, `price_floor_unverified` violated, and
+missing configuration naming `config/costs.ts → marginPolicy.*` plus
+`config/guardrails.ts → GUARDRAIL_LIMITS.maximumPrice{Decrease,Increase}Pct`.
+Approving it records the owner's decision and changes no price.
+
 ## Known limitations
 
 - Single shared admin identity (Basic auth); no per-user RBAC or per-person

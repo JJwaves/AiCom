@@ -99,8 +99,8 @@ so a wrong or tampered database row can never grant execution.
 | Agent | Default (policy) | Ceiling | Notes |
 | --- | --- | --- | --- |
 | CEO / Business Review | RECOMMEND | RECOMMEND | Permanently recommendation-only (S09). May propose review-shaped actions only. |
-| Pricing | OBSERVE | RECOMMEND | Agent not implemented. |
-| CRO | OBSERVE | RECOMMEND | Agent not implemented. |
+| Pricing Intelligence | RECOMMEND | RECOMMEND | Implemented S12. May propose review-shaped actions only; its output schema cannot express a price. |
+| CRO | RECOMMEND | RECOMMEND | Implemented S11. May propose experiments; launching is a separate human action. |
 | Google Ads | OBSERVE | RECOMMEND | Agent not implemented; no API connected. |
 | Meta Ads | OBSERVE | RECOMMEND | Agent not implemented; no API connected. |
 | Human admin | RECOMMEND | RECOMMEND | A human proposal is still guardrail-checked. |
@@ -227,6 +227,37 @@ be modelled as proposed actions. Its rules remain:
   and missing configuration are snapshotted onto the experiment row) — not
   an executor. See docs/EXPERIMENTATION.md §19.
 
+## Session 12 additions (pricing intelligence)
+
+- `GUARDRAIL_POLICY_VERSION` → `2026-08-15.s12.1`.
+- `SOURCE_PERMITTED_ACTION_TYPES.PRICING_AGENT` gained exactly one entry:
+  **`DATA_QUALITY_REVIEW`** — a REVIEW-ONLY type granting zero authority. The
+  Pricing Agent's closed recommendation taxonomy includes a `DATA_QUALITY`
+  class precisely so a pricing question we CANNOT answer ("we have no
+  manufacturing costs") routes honestly, instead of being forced into a
+  `PRICING_REVIEW` that would misrepresent a configuration gap as a price
+  problem. Nothing else was widened.
+- `PRICE_CHANGE` and `PRICE_EXPERIMENT` remain listed for `PRICING_AGENT`
+  from Session 10 and remain **unreachable in practice**: the agent's output
+  schema has no price field, and
+  `modules/guardrails/decision-mapping.ts → PRICING_RECOMMENDATION_TO_ACTION_TYPE`
+  contains neither. They are reachable only by an explicit `HUMAN_ADMIN`
+  proposal — which the cost-model price floor still refuses to bless while
+  `config/costs.ts` is unconfigured (tested).
+- `AGENT_AUTONOMY_POLICY.PRICING_AGENT.defaultMode` rose OBSERVE →
+  RECOMMEND (the agent now exists and is designed to recommend), exactly as
+  CEO did in S09 and CRO in S11. The ceiling is unchanged, the guarded-auto
+  allow-list is still empty, and `AI_PRICING_AGENT` still gates whether it
+  runs at all.
+- `syncDecisionsToActions()` now covers `ceo`, `cro` AND `pricing` decisions.
+- The executor registry remains **EMPTY**. There is no `PRICE_CHANGE`
+  executor, and none may be registered until the full executor contract in
+  docs/AI_ACTION_CENTER.md is satisfied AND real costs, margin policy and
+  price-movement limits exist.
+- `maximumPriceDecreasePct`, `maximumPriceIncreasePct`, `maximumDiscountPct`
+  and `maximumMoqChangePct` are all still `null`. Session 12 reports each as
+  MISSING CONFIGURATION by exact config path — never as "no limit".
+
 ## Policy versioning
 
 Every evaluation stores `GUARDRAIL_POLICY_VERSION` plus the limits snapshot
@@ -247,12 +278,15 @@ contract.
 
 ```
 AI_RUNTIME · AI_SALES · AI_CUSTOMER_INTELLIGENCE · AI_BUSINESS_INTELLIGENCE
-AI_ACTION_CENTER · AI_PRICING_AGENT · AI_CRO_AGENT
+AI_ACTION_CENTER · PRICING_INTELLIGENCE · AI_PRICING_AGENT · AI_CRO_AGENT
 AI_GOOGLE_ADS_AGENT · AI_META_ADS_AGENT · AI_AUTO_PRICING · AI_AUTO_ADS
 EXPERIMENT_ENGINE
 ```
 
 `AI_ACTION_CENTER` gates the ADMIN SURFACE only: the Guardrail Engine
-evaluates proposed actions whether or not the flag is on. The storefront
+evaluates proposed actions whether or not the flag is on.
+`PRICING_INTELLIGENCE` likewise gates the pricing dashboard and its route,
+while `AI_PRICING_AGENT` separately gates whether the model may be called —
+the deterministic pricing analytics need no AI configuration at all. The storefront
 does not depend on it. Any flag off ⇒ its surfaces disappear and its agents
 cannot run; commerce must be fully functional with every flag off.

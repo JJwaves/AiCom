@@ -105,7 +105,15 @@ decides catalog support — docs/CUSTOMER_INTELLIGENCE.md), and the
 Session 09 CEO review (`ai_ceo_business_review` — REASONING
 interpretation of the deterministic BusinessHealthSnapshot; output
 untrusted, server validates every metric/evidence reference against the
-context actually sent — docs/BUSINESS_INTELLIGENCE.md).
+context actually sent — docs/BUSINESS_INTELLIGENCE.md), the Session 11
+CRO review (`ai_cro_experiment_review` — REASONING experiment proposals
+validated against the closed target registry and strict variant schemas —
+docs/CRO_AGENT.md), and the Session 12 pricing review
+(`ai_pricing_intelligence_review` — REASONING interpretation of the
+deterministic PricingIntelligenceSnapshot; the prompt states the
+never-an-optimal-price, never-an-elasticity and revenue-is-not-profit rules,
+and the output schema has NO price field at all, so a specific price is
+unrepresentable rather than filtered — docs/PRICING_INTELLIGENCE.md).
 Every runtime call made with a registry prompt stamps
 `prompt_id` + `prompt_version` onto its AiUsage row, so any output can be
 traced to the exact prompt+model that produced it.

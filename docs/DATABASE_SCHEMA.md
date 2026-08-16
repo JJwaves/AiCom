@@ -408,6 +408,45 @@ rows are frozen. Reports contain aggregates only (no PII) and are exempt
 from the customer-deletion cascade by construction — see
 docs/BUSINESS_INTELLIGENCE.md.
 
+## Pricing reviews (Session 12 — migration 0006)
+
+```
+pricing_reports  id · periodStart · periodEnd · periodDays (admin selects
+                 latest report by this) · promptId? · promptVersion? ·
+                 model? · provider? · snapshotJson (the deterministic,
+                 PII-free PricingIntelligenceSnapshot the model actually
+                 saw) · reviewJson (server-validated Pricing Agent output —
+                 metric/evidence/signal refs already filtered, product/tier
+                 scope already validated, prerequisites already recomputed)
+                 · decisionIdsJson [agent_decisions ids] · generatedAt ·
+                 createdAt
+                 index (periodDays, generatedAt)
+```
+
+Structurally identical to `ceo_reports`, and for the same reason (spec §39):
+a review is a versioned DOCUMENT that must survive a provider outage, while
+each recommendation inside it is its own `agent_decisions` row (agentType
+`pricing`, decisionType `pricing_recommendation`, approvalRequired true ⇒
+pending approval row, executionStatus stays `none`). Dedup identity lives in
+`proposedActionJson.params.identityKey`
+(`PRICING:<type>:<productId|all>:<tier|all>:<sorted refs>:<periodDays>d`):
+pending rows update in place on regeneration, human-reviewed rows are frozen.
+
+**No table stores a price.** Session 12 introduces no pricing table, no
+price override column and no discount record — `config/products.ts` (via the
+catalog provider) remains the only place a sell price is defined, and
+`modules/pricing` the only thing that computes one. Reports contain
+aggregates only (no PII) and are exempt from the customer-deletion cascade by
+construction — see docs/PRICING_INTELLIGENCE.md.
+
+Session 12 reads existing tables only: `events`, `orders`, `order_lines`,
+`product_configurations`, `customer_need_profiles`, `conversations`,
+`conversation_classifications`, `customer_insights`, `product_opportunities`.
+`lib/data/pricing-intelligence-service.ts` adds the four new READ queries
+(session/product event facts with first/last timestamps, quantity-bearing
+events, priced order lines); everything else reuses the Session 08 bounded
+reads in `intelligence-service.ts`.
+
 ## Experiments (Session 03 schema · Session 11 runtime — migration 0005)
 
 ```

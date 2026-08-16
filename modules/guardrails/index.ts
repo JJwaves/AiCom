@@ -50,9 +50,11 @@ export { executionSupportFor, executorRegistry, initialExecutionState, type Acti
 
 export {
   CEO_CATEGORY_TO_ACTION_TYPE,
+  PRICING_RECOMMENDATION_TO_ACTION_TYPE,
   mapAgentDecisionToAction,
   mapCroDecisionToAction,
   mapDecisionToAction,
+  mapPricingDecisionToAction,
   type MappableDecision,
   type MappedAction,
 } from "./decision-mapping";

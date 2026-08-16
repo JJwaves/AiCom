@@ -26,6 +26,14 @@ export const FEATURE_FLAGS = [
    * mutation routes, which 404 while it is off.
    */
   "AI_ACTION_CENTER",
+  /**
+   * Pricing Intelligence admin surface (Session 12). Same split as
+   * EXPERIMENT_ENGINE vs AI_CRO_AGENT: this flag gates the deterministic
+   * /admin/pricing-intelligence dashboard and its routes (404 while off);
+   * AI_PRICING_AGENT additionally gates whether the model may be called.
+   * The deterministic analytics need no AI configuration at all.
+   */
+  "PRICING_INTELLIGENCE",
   "AI_PRICING_AGENT",
   "AI_CRO_AGENT",
   "AI_GOOGLE_ADS_AGENT",

@@ -20,7 +20,7 @@
  */
 
 /** Bump on every policy/limit/taxonomy change. Recorded on every evaluation. */
-export const GUARDRAIL_POLICY_VERSION = "2026-08-12.s11.1";
+export const GUARDRAIL_POLICY_VERSION = "2026-08-15.s12.1";
 
 /**
  * Hard business limits — all [TO BE PROVIDED] (BUSINESS_CONFIG_TODO.md →
@@ -71,7 +71,15 @@ export type GuardrailLimitKey = keyof typeof GUARDRAIL_LIMITS;
  */
 export const AGENT_AUTONOMY_POLICY = {
   CEO_AGENT: { defaultMode: "RECOMMEND", maxMode: "RECOMMEND" },
-  PRICING_AGENT: { defaultMode: "OBSERVE", maxMode: "RECOMMEND" },
+  /**
+   * Session 12: the Pricing Intelligence Agent is implemented and DESIGNED
+   * to recommend, so its default rises to RECOMMEND — the same treatment the
+   * CEO agent got in S09 and the CRO agent in S11. The ceiling is unchanged,
+   * the guarded-auto allow-list is still empty, `AI_PRICING_AGENT` still
+   * gates whether the agent runs at all, and its output schema cannot
+   * express a price. It can raise a review; it can never change one.
+   */
+  PRICING_AGENT: { defaultMode: "RECOMMEND", maxMode: "RECOMMEND" },
   /**
    * Session 11: the CRO agent is implemented and DESIGNED to recommend, so
    * its default rises to RECOMMEND — the same treatment the CEO agent got

@@ -59,6 +59,16 @@ take real traffic until they pass.
 - [ ] Understand what a result means: no winner is declared below the minimum sample, "no clear winner" is a real answer, and a `VARIANT_WIN` changes nothing on the site — promoting a winner is a human source/config change
 - [ ] Only if enabling `AI_CRO_AGENT`: the agent needs the AI runtime + provider key + budget caps (see the AI section). Experiments keep running, measuring and reporting when the CRO agent is off or the provider is down
 
+## Pricing intelligence (Session 12 — only if enabling PRICING_INTELLIGENCE)
+- [ ] Same admin auth prerequisites as above (shared surface — no separate credentials); HTTPS is mandatory (the review route is an admin MUTATION route)
+- [ ] Understand what the dashboard can and cannot tell you TODAY: it measures pricing behaviour from real data, but with `config/costs.ts` unfilled it cannot tell you whether any price is profitable, what a safe price is, or how demand responds to price. It says so on every affected card rather than showing a zero
+- [ ] ⛔ Before acting on ANY pricing conclusion: replace demo prices (`config/products.ts` + `NEXT_PUBLIC_DEMO_PRICING=false`). Until then every tier price analysed is a placeholder, and the dashboard's DEMO_PRICING_ACTIVE warning says exactly that
+- [ ] ⛔ Before any specific price change is even representable as safe: fill the cost model AND `marginPolicy` in `config/costs.ts` AND `maximumPriceDecreasePct` / `maximumPriceIncreasePct` in `config/guardrails.ts` (bumping `GUARDRAIL_POLICY_VERSION`). Until then `SPECIFIC_PRICE_CHANGE` reads BLOCKED and the price floor refuses to verify anything
+- [ ] Know that there is no elasticity figure anywhere in this system and there will not be one until a controlled price experiment exists. Any number claiming to be one did not come from this platform
+- [ ] Keep MOQ and price separate when reading the dashboard: below-minimum demand is a quantity finding routed to MOQ review, never evidence that the unit price is too high
+- [ ] Verify /admin/pricing-intelligence answers 404 with the flag off, and that the review route is rejected cross-origin (403) and for non-JSON content types (415) on the production build
+- [ ] Only if enabling `AI_PRICING_AGENT`: the agent needs the AI runtime + provider key + budget caps (see the AI section). Every number on the dashboard is computed without it, and a provider outage leaves the last review visible
+
 ## Commerce
 - [ ] ⛔ Shopify production credentials in env (`NEXT_PUBLIC_SHOPIFY_*`)
 - [ ] ⛔ Variant mapping complete in `lib/commerce/shopify.ts` (no `REPLACE_ME` ids)

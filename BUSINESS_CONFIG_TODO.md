@@ -92,11 +92,23 @@ margins as **"Unavailable — configure manufacturing costs"** — listing the
 exact missing inputs — until every row below is filled. Nothing substitutes
 zero, nothing estimates. Classification:
 
-- **REQUIRED FOR LAUNCH** (price guardrails fail closed without them):
-  payment fee + margin policy floors.
-- **REQUIRED FOR PROFIT INTELLIGENCE** (dashboards + future pricing/ads
-  optimization are blind without them): every per-product manufacturing /
-  size / material / printing / packaging / shipping / other-variable input.
+- **REQUIRED FOR CURRENT SALES** — nothing here. The storefront prices,
+  carts and checks out correctly today; the cost model is invisible to
+  customers. (Real *sell* prices are a separate item — see "Price per
+  configuration" and `NEXT_PUBLIC_DEMO_PRICING`.)
+- **REQUIRED FOR PROFIT INTELLIGENCE** (dashboards are blind without them):
+  every per-product manufacturing / size / material / printing / packaging /
+  shipping / other-variable input, plus the payment fee. Until these exist,
+  `/admin/business-intelligence` and `/admin/pricing-intelligence` both
+  report margin and profit impact as **unavailable** — never zero, never
+  estimated — and revenue is explicitly not used as a proxy for profit.
+- **REQUIRED BEFORE PRICE ACTIONS** (Session 12): everything above **plus**
+  the margin policy floors below **plus**
+  `config/guardrails.ts → maximumPriceDecreasePct / maximumPriceIncreasePct`.
+  Until all of them exist, `/admin/pricing-intelligence` reports
+  `SPECIFIC_PRICE_CHANGE: BLOCKED` and the Pricing Agent can only ever raise
+  a *review* — it has no way to propose a number, and the deterministic price
+  floor refuses to verify one.
 - Not needed yet (later sessions): advertising cost feeds (Google/Meta) —
   the dashboard already labels contribution "before paid media" and never
   fabricates CAC/ROAS.
@@ -164,6 +176,34 @@ zero, nothing estimates. Classification:
 | Minimum sample per arm | `config/experiments.ts` → `DEFAULT_MINIMUM_SAMPLE_PER_VARIANT` (1,000 exposed sessions). A deliberately conservative DEVELOPMENT DEFAULT, not a power calculation — a real minimum detectable effect needs a baseline conversion rate and an effect size you have not provided yet. An experiment may raise it; nothing lowers it |
 | Significance threshold | `config/experiments.ts` → `SIGNIFICANCE_ALPHA` (0.05, two-sided). Documented method and its limitations: docs/EXPERIMENTATION.md §13 |
 | Variant copy review | Human. Every variant is customer-facing text you approve in `/admin/ai-actions` before it can become a draft — it must not contain a delivery promise, price, guarantee or capability claim the factory cannot honour |
+
+## Pricing intelligence (Session 12)
+
+Pricing analytics run today with **zero** configuration — the funnel,
+quantity lanes, tier performance, MOQ friction and evidence-graded signals
+are all computed from real first-party data. What is missing is everything
+needed to turn an observation into a *number*.
+
+| Item | Where | Blocks |
+| --- | --- | --- |
+| Pricing dashboard on/off | `.env` → `PRICING_INTELLIGENCE_ENABLED` (default false; `/admin/pricing-intelligence` and its route 404 while off) | the surface |
+| Pricing agent on/off | `.env` → `AI_PRICING_AGENT_ENABLED` (default false). Requires the AI runtime + provider key; every number on the dashboard works without it | the AI review only |
+| **Manufacturing / printing / setup / packaging / freight cost** | `config/costs.ts` → `products.<id>.*` (**already listed under "Cost model"**) | margin, profit impact, minimum safe price, any specific price change |
+| **Payment processing fee** | `config/costs.ts` → `paymentFee` | contribution margin |
+| **Minimum gross margin** | `config/costs.ts` → `marginPolicy.minimumGrossMarginBps` | the price floor (fails closed while null) |
+| **Minimum contribution margin** | `config/costs.ts` → `marginPolicy.minimumContributionMarginBps` | the price floor |
+| Target contribution margin | `config/costs.ts` → `marginPolicy.targetContributionMarginBps` | evaluating a proposed price against a goal |
+| **Maximum price decrease / increase per change** | `config/guardrails.ts` → `maximumPriceDecreasePct` / `maximumPriceIncreasePct` | any specific price change |
+| Maximum MOQ change per action | `config/guardrails.ts` → `maximumMoqChangePct` | any specific MOQ change |
+| Shipping subsidy rules, if any | Not modelled yet — `config/costs.ts → products.<id>.shipping` records the REAL freight cost even when shipping is advertised as free. Tell us if a subsidy rule exists so it can be represented explicitly rather than hidden in a cost | contribution accuracy |
+| Future price-experiment limits | `config/guardrails.ts` → `maximumExperimentTrafficPct` **plus** a separate authority-aware design (docs/EXPERIMENTATION.md §24). The experiment engine deliberately cannot run price variants today | any price test |
+| Real sell prices | `config/products.ts` + `NEXT_PUBLIC_DEMO_PRICING=false` (**already listed**). Until then every pricing conclusion is about a placeholder price list, and the dashboard says so | the meaning of every pricing metric |
+
+Two things Session 12 will never do, whatever you configure: estimate price
+elasticity from observational data (there is no controlled price variation to
+estimate it from), and change a price by itself (no executor exists and none
+may be registered until the full contract in docs/AI_ACTION_CENTER.md is
+satisfied).
 
 ## Guardrail limits (Session 10 — `config/guardrails.ts`)
 

@@ -60,6 +60,18 @@ const SOURCE_TO_AGENT_TYPE: Record<ActionSource, (typeof AGENT_TYPES)[number] | 
 };
 
 /**
+ * The inverse map, for materializing a persisted decision into an action.
+ * A decision from an agent type absent here is never materialized (the
+ * decision query already restricts to the mapped set) — a new agent gets no
+ * proposal authority by accident.
+ */
+const DECISION_AGENT_TO_SOURCE: Record<string, ActionSource> = {
+  ceo: "CEO_AGENT",
+  cro: "CRO_AGENT",
+  pricing: "PRICING_AGENT",
+};
+
+/**
  * Effective autonomy for a source: the stored AgentConfig row when one
  * exists, otherwise the designed default from policy. The evaluator clamps
  * the result to the policy ceiling regardless — this function can only ever
@@ -591,17 +603,19 @@ export type SyncResult = {
 
 /**
  * Materialize proposed actions from persisted agent recommendations
- * (S10 spec §20; extended to CRO decisions in S11 spec §24). Deterministic
- * and idempotent: no AI call happens here, and a decision that already has
- * a root action is skipped (also enforced by a unique index, so a race
- * cannot duplicate).
+ * (S10 spec §20; extended to CRO decisions in S11 spec §24 and to PRICING
+ * decisions in S12 spec §27). Deterministic and idempotent: no AI call
+ * happens here, and a decision that already has a root action is skipped
+ * (also enforced by a unique index, so a race cannot duplicate).
  *
  * Only decisions that still await a verdict are materialized — an already
  * approved/rejected recommendation is history, not a pending question.
  *
  * The mapping is agent-scoped and closed: CEO categories map to *_REVIEW
- * types, CRO proposals map to CRO_EXPERIMENT_PROPOSAL / CRO_REVIEW, and any
- * other agent type maps to nothing at all.
+ * types, CRO proposals map to CRO_EXPERIMENT_PROPOSAL / CRO_REVIEW, pricing
+ * recommendations map to PRICING_REVIEW / MOQ_REVIEW / DATA_QUALITY_REVIEW
+ * (never to PRICE_CHANGE or PRICE_EXPERIMENT), and any other agent type maps
+ * to nothing at all.
  */
 export async function syncDecisionsToActions(actor = "system:decision_sync"): Promise<SyncResult> {
   const db = await getDb();
@@ -610,7 +624,7 @@ export async function syncDecisionsToActions(actor = "system:decision_sync"): Pr
     .from(agentDecisions)
     .where(
       and(
-        inArray(agentDecisions.agentType, ["ceo", "cro"]),
+        inArray(agentDecisions.agentType, ["ceo", "cro", "pricing"]),
         eq(agentDecisions.approvalStatus, "pending"),
       ),
     )
@@ -646,7 +660,7 @@ export async function syncDecisionsToActions(actor = "system:decision_sync"): Pr
     }
 
     const { action, decision: verdict } = await proposeAction({
-      source: decision.agentType === "cro" ? "CRO_AGENT" : "CEO_AGENT",
+      source: DECISION_AGENT_TO_SOURCE[decision.agentType] ?? "CEO_AGENT",
       actionType: mapped.actionType,
       payload: mapped.payload,
       title: mapped.title,

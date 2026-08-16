@@ -537,3 +537,38 @@ Price experiments belong to Session 12 Pricing Intelligence.
 - Exposure is written during a Server Component render; in dev, React's
   double-render can call it twice — the `exposed_at` dedup makes that a
   no-op.
+
+## 24. Session 12 — price experiments remain unsupported
+
+Session 12 (docs/PRICING_INTELLIGENCE.md) added a pricing intelligence layer
+and **preserved this engine's boundary exactly**:
+
+- the target registry still contains only presentation surfaces
+  (`product.shipping_message`, `product.primary_cta`, `homepage.hero`);
+- `EXPERIMENT_TYPES` still contains no price type, and no target key matches
+  `/price|pricing|checkout|payment/`;
+- `modules/pricing-intelligence` exposes `PRICE_EXPERIMENT_SUPPORTED = false`
+  so its readiness model states the fact rather than probing for it;
+- no pricing-intelligence or Pricing Agent file imports `lib/experiments`, or
+  calls `createExperimentDraft` / `launchExperiment` (asserted structurally);
+- the Pricing Agent's permitted action types contain neither
+  `CRO_EXPERIMENT_PROPOSAL` nor `CRO_EXPERIMENT_LAUNCH`.
+
+**Why a price test is not a copy test.** A CTA-copy variant changes what a
+sentence says. A price variant changes real money on real orders, cart totals
+and checkout, what a *returning* customer sees, and margin safety — and the
+S07 drift detection (`expectedTotalCents`, 409 `REPRICED`) assumes ONE
+authoritative price per configuration. Which arm's price is the real price at
+checkout? What happens when a customer's arm changes between visits? What does
+a repriced cart mean mid-experiment? None of those have answers yet, and
+`config/costs.ts` has no floor to check a variant price against. So price
+experimentation needs a separate, authority-aware design and stays deferred.
+
+A `PRICE_EXPERIMENT_REVIEW` recommendation from the Pricing Agent is a request
+that such a test be *designed*, mapped to a review-only `PRICING_REVIEW`
+action. It launches nothing.
+
+**Presentation is not price.** `PRICING_PRESENTATION` stays presentation-only:
+`"$0.42 each — $2,100 total"` vs `"$2,100 total ($0.42 each)"` is allowed
+because every number is identical and comes from the engine. A different
+monetary price is not, ever.

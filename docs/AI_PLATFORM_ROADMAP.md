@@ -89,10 +89,28 @@ executor exists for any business action type).
   and audited. **The guardrail executor registry stays EMPTY** — approving
   still executes nothing. Winner promotion remains a human source change.
 - See docs/EXPERIMENTATION.md + docs/CRO_AGENT.md.
-## Stage G — Pricing Intelligence
-- Pricing agent (RECOMMEND) analyzing price↔conversion↔margin↔segment;
-  objective = expected contribution profit; bounded price experiments only
-  within guardrails
+## Stage G — Pricing Intelligence ✅ COMPLETE (Session 12, 2026-08-15)
+- `modules/pricing-intelligence` = the DETERMINISTIC pricing-analytics
+  authority (no `lib/ai` import, no price-mutation path): pricing funnel
+  (co-occurrence + real event ordering), the three quantity lanes preserved
+  from S08, catalog-derived tier bands, MOQ intelligence kept separate from
+  price, a price-realization integrity check, evidence-graded pricing
+  signals, cost/margin readiness, `PricingReadiness`, and the elasticity
+  refusal → ONE `PricingIntelligenceSnapshot`.
+- Pricing Agent (`lib/ai/agents/pricing`, RECOMMEND): NO tools, one REASONING
+  structured call, and an output schema that **cannot express a price** — no
+  `proposedUnitPriceCents`, no discount, no MOQ, no optimal price. Every
+  reference, product id and tier is server-validated; the cost/experiment
+  prerequisites are server-recomputed → `AgentDecision` + `pricing_reports`
+  → review-only actions in the Action Center.
+- **Objective is NOT "expected contribution profit" yet** — and cannot be:
+  `config/costs.ts` is entirely `[TO BE PROVIDED]`, so margin and profit
+  impact are UNAVAILABLE and no specific price change can be shown to be
+  safe. Session 12 ships the refusal, not an estimate.
+- **Bounded price experiments are NOT enabled.** The experiment engine still
+  cannot run price variants (docs/EXPERIMENTATION.md §24), and no
+  `PRICE_CHANGE` executor exists. Both remain deferred.
+- See docs/PRICING_INTELLIGENCE.md.
 ## Stage H — Google Ads   (read-only → recommend → approval → guarded auto)
 ## Stage I — Meta Ads     (same progression)
 ## Stage J — Guarded Autonomy

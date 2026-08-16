@@ -53,6 +53,56 @@ limits, refund authorization, agent autonomy, approvals.
 
 ## Current project stage
 
+**Session 12 "Pricing Intelligence Agent" COMPLETE (2026-08-15) — the
+platform can now UNDERSTAND its own pricing without acquiring any power over
+it. `modules/pricing-intelligence` (no `lib/ai` import, no price-mutation
+path, asserted structurally) is the deterministic pricing-analytics
+authority: a pricing funnel built on CO-OCCURRENCE and REAL EVENT ORDERING
+(price→cart counts sessions that did both; "handoff after price" requires the
+handoff to actually come after), quantity bands derived from the REAL tier
+ladder + MOQ (never invented ranges), the S08 three quantity lanes preserved
+and provenance-split (requested [stated vs inferred] / configured /
+purchased — "requested 300 · configured 500 · purchased 5,000" is three
+findings, not a contradiction), per-tier performance with checkout reported
+as UNAVAILABLE rather than 0 (the event carries no product/quantity) and
+conversations attributed by configured-or-stated quantity, a price-realization
+integrity check (paid snapshot vs today's engine quote ⇒ `catalog_price_changed`,
+never "leakage" — there are no discounts), MOQ intelligence kept strictly
+SEPARATE from price, and evidence-graded signals. **Price friction requires
+someone to have SAID something**: a signal is `isPriceFriction` only with
+EXPLICIT evidence (objection / repeated price question / handoff after price /
+quote after price); sessions that saw a price and left produce a BEHAVIORAL
+signal capped at LOW and flagged `isPriceFriction: false`. Strength is a
+documented count-and-diversity rule (HIGH needs ≥10 conversations AND ≥2
+evidence types), never a probability. **Elasticity is NOT ESTIMABLE and no
+code path produces a coefficient** — `assessElasticity()` returns
+`estimable: false` as a literal type, with an owner-language reason and the
+exact preconditions. Cost/margin readiness names every unfilled
+`config/costs.ts` path; null is never zero, margin is UNAVAILABLE, and
+revenue is never used as a proxy for profit. `PricingReadiness`:
+PRICING_REVIEW AVAILABLE · SPECIFIC_PRICE_CHANGE BLOCKED · PRICE_EXPERIMENT
+BLOCKED · AUTOMATED_PRICE_CHANGE NOT_SUPPORTED. The Pricing Agent
+(`lib/ai/agents/pricing`, RECOMMEND) has NO tools, makes ONE REASONING
+structured call over the PII-free snapshot, and **its output schema CANNOT
+EXPRESS A PRICE** — no `proposedUnitPriceCents`, no discount, no MOQ, no
+optimal price — so "lower it to $0.37" is unwritable rather than filtered.
+Server-side it validates every metric/evidence/signal ref against exactly
+what the context printed (none surviving ⇒ dropped), validates `productId`
+against the real catalog and `quantityTier` against that product's real
+tiers, and RECOMPUTES `requiresCostConfiguration`/`requiresExperiment`.
+Persistence: append-only `pricing_reports` (migration 0006, the exact
+snapshot the model saw) + identity-deduped AgentDecisions with human verdicts
+frozen → review-only actions (`PRICING_REVIEW`/`MOQ_REVIEW`/
+`DATA_QUALITY_REVIEW`) in the Action Center. **`PRICE_CHANGE` and
+`PRICE_EXPERIMENT` are absent from the mapping table, the executor registry
+is still EMPTY, and the experiment engine still cannot run price variants.**
+`GUARDRAIL_POLICY_VERSION` → `2026-08-15.s12.1`; PRICING_AGENT default
+autonomy OBSERVE → RECOMMEND (ceiling unchanged); one permission added
+(`DATA_QUALITY_REVIEW`, review-only). `/admin/pricing-intelligence` behind
+the S08 auth + the new `PRICING_INTELLIGENCE` flag; deterministic analytics
+need zero AI configuration. 763 tests. Next milestone: Session 13 "Google Ads
+Read-Only Intelligence".**
+
 **Session 11 "Experiment Engine + CRO Agent" COMPLETE (2026-08-12) — a
 controlled experimentation system in which the AI proposes and DETERMINISTIC
 software decides. `modules/experiments` (no `lib/ai`, no `db/` import) owns
@@ -139,21 +189,22 @@ with AI off/down; CEO review generates ONLY from the explicit admin
 button. MEASURE→SYNTHESIZE→EXPLAIN→RECOMMEND, never execute. Next
 milestone: Session 10 "Guardrails + AI Action Center" — DONE, see above.**
 
-## Current architecture (2026-08-12, post-Session 11)
+## Current architecture (2026-08-15, post-Session 12)
 
 Working B2B storefront, verified end-to-end (see
 docs/CURRENT_SYSTEM_AUDIT.md + its Session-02 resolution note):
-- Next.js 16.3 App Router · React 19 · TS · Tailwind v4 · zod · vitest (661 tests)
+- Next.js 16.3 App Router · React 19 · TS · Tailwind v4 · zod · vitest (763 tests)
   · Drizzle ORM + Postgres (PGlite embedded dev/test, node-postgres prod).
-- **Database (Session 03; +1 table S08; +1 S09; +3 S10; +1 S11):**
-  `db/schema.ts` (26 tables: sessions, events, customers, businesses,
+- **Database (Session 03; +1 table S08; +1 S09; +3 S10; +1 S11; +1 S12):**
+  `db/schema.ts` (27 tables: sessions, events, customers, businesses,
   orders+lines, quotes, artworks, configurations, conversations+messages,
-  conversation_classifications (S08), ceo_reports (S09), need profiles,
+  conversation_classifications (S08), ceo_reports (S09),
+  pricing_reports (S12), need profiles,
   ai_usage, agent_decisions, approvals, agent_configs, agent_actions +
   guardrail_evaluations + agent_action_events (S10), insights,
   opportunities, experiments + experiment_assignments +
   experiment_events (S11)) + additive SQL migrations in
-  `db/migrations/` (0000–0005).
+  `db/migrations/` (0000–0006).
   `DATABASE_URL` unset ⇒ embedded PGlite at `.data/pglite` self-migrates
   (zero-setup dev; tests use `memory://`); set ⇒ real Postgres, migrations
   applied explicitly via `npm run db:migrate`. **`NODE_ENV=production`
@@ -505,6 +556,77 @@ docs/CURRENT_SYSTEM_AUDIT.md + its Session-02 resolution note):
   human admin route, NOT an executor** — the guardrail executor registry
   remains EMPTY — and every launch is guardrail-evaluated with its verdict,
   policy version and missing configuration snapshotted onto the row.
+- **Pricing Intelligence + Pricing Agent (Session 12 —
+  docs/PRICING_INTELLIGENCE.md is authoritative):**
+  `modules/pricing-intelligence` is the DETERMINISTIC pricing-analytics
+  authority, with NO `lib/ai` import and NO price-mutation path (both asserted
+  structurally). tiers.ts derives quantity BANDS from the REAL catalog
+  (`[tier.minQty, nextTier.minQty)` + a below-MOQ band from `minQuantity`) and
+  catalog-wide buckets from the distinct tier breakpoints — no invented
+  ranges; funnel.ts counts CO-OCCURRENCE over documented denominators
+  (price→cart = sessions that did BOTH, over sessions that saw a price) and
+  enforces real ORDERING for "after price" (per-session min/max
+  `occurred_at`), plus the conversation-level PRICE/MOQ counts where a
+  QUESTION is never an OBJECTION; demand.ts keeps the S08 three lanes
+  separate with the requested lane provenance-split (USER_STATED vs
+  AI_INFERRED; CONFIGURATOR/ORDER_DATA excluded so nothing double-counts);
+  tier-performance.ts aggregates per band (checkout = `null` "unavailable",
+  never 0 — the event carries no product/quantity; conversations attributed by
+  configured-then-stated quantity, the rest counted as `unattributed`);
+  realization.ts re-quotes stored order configurations against today's engine
+  (a difference is `catalog_price_changed`, NEVER leakage — no discount
+  mechanism exists) and reports checkout repricing as NOT INSTRUMENTED naming
+  the two events that would be needed; moq.ts is its own section because
+  wanting 200 bags is a QUANTITY problem, not a price one; signals.ts grades
+  evidence — `isPriceFriction` requires EXPLICIT evidence (objection /
+  repeated price question / handoff after price / quote after price /
+  tier-concentrated objections), a price-view-then-nothing pattern is
+  BEHAVIORAL, capped at LOW, and explicitly NOT friction, MOQ friction routes
+  to MOQ_REVIEW and a product gap produces no pricing signal at all; strength
+  is LOW/MEDIUM/HIGH from counted evidence AND evidence diversity (HIGH needs
+  ≥10 conversations and ≥2 types), never a probability; readiness.ts names
+  every unfilled `config/costs.ts` / `config/guardrails.ts` path (null is
+  never zero and never "no limit"), returns `assessElasticity()` with
+  `estimable: false` as a LITERAL type (no code path anywhere produces a
+  coefficient) and the four-class `PricingReadiness` (PRICING_REVIEW
+  AVAILABLE · SPECIFIC_PRICE_CHANGE BLOCKED · PRICE_EXPERIMENT BLOCKED ·
+  AUTOMATED_PRICE_CHANGE NOT_SUPPORTED) → ONE PricingIntelligenceSnapshot
+  (JSON-serializable, PII-free). `config/pricing-intelligence.ts` holds the
+  documented thresholds + the CLOSED recommendation taxonomy and its
+  review-only action mapping. Data access: `lib/data/pricing-intelligence-service.ts`
+  (4 new READ queries: session/product event facts with first+last timestamps,
+  quantity-bearing events, priced order lines) — everything else reuses the S08
+  bounded reads, so there is no second pricing analytics source of truth.
+  Pricing Agent `lib/ai/agents/pricing` (RECOMMEND): NO tools, ONE REASONING
+  `generateStructuredObject` over a bounded PII-free context that prints the
+  ENFORCEMENT RULES FIRST (truncation-safe) then cost truth, elasticity,
+  signals and readiness before the long tables; prompt
+  `ai_pricing_intelligence_review` v1.0.0. **The output schema cannot express
+  a price** — no `proposedUnitPriceCents`, no `discountPct`, no `proposedMoq`,
+  no `optimalPrice` — so a specific price change is UNREPRESENTABLE, not
+  merely refused. Server-side: metric/evidence/signal refs filtered against
+  exactly what the context printed (none surviving ⇒ recommendation DROPPED),
+  `productId` validated against the real catalog and `quantityTier` against
+  that product's real tiers (else null), and
+  `requiresCostConfiguration`/`requiresExperiment` RECOMPUTED (a model
+  disagreement is logged, never honoured). Persistence: append-only
+  `pricing_reports` (migration 0006 — period, prompt+version, model, provider,
+  the exact snapshot, the validated review, decision ids) + identity-deduped
+  AgentDecisions (`PRICING:<type>:<product|all>:<tier|all>:<refs>:<days>d`,
+  pending rows refresh in place, human verdicts frozen). Guardrails:
+  `GUARDRAIL_POLICY_VERSION` → `2026-08-15.s12.1`, `PRICING_AGENT` default
+  autonomy OBSERVE → RECOMMEND (ceiling unchanged at RECOMMEND, allow-list
+  still empty), ONE permission added (`DATA_QUALITY_REVIEW` — review-only, so
+  a "we have no costs" finding routes honestly instead of masquerading as a
+  price problem), `mapPricingDecisionToAction` + `syncDecisionsToActions` now
+  covering ceo/cro/pricing. **`PRICE_CHANGE` and `PRICE_EXPERIMENT` are absent
+  from the mapping table** and remain executor-less; the experiment engine
+  still cannot run price variants. Admin: `/admin/pricing-intelligence` +
+  POST `/api/admin/pricing-intelligence/pricing-review` behind the S08 auth +
+  the new `PRICING_INTELLIGENCE` flag (agent generation additionally behind
+  `AI_PRICING_AGENT`), `lib/admin/write-guard.ts` on the mutation route;
+  deterministic analytics render with zero AI configuration and a provider
+  outage leaves the previous review visible.
 - `lib/commerce` — provider abstraction; `mock` active, `shopify`
   Storefront skeleton env-gated (variant mapping TODO, needs real store).
   **All catalog reads go through `lib/commerce/catalog.ts`** (provider-
@@ -1381,6 +1503,83 @@ untouched (every S02–S10 test green; no commerce file modified).
     next), LAUNCH_CHECKLIST (+Experiments section), BUSINESS_CONFIG_TODO
     (+Experimentation), .env.example.
 
+## Completed in Session 12 (2026-08-15) — Pricing Intelligence Agent
+
+PRICING DATA → DETERMINISTIC ANALYSIS → SIGNALS → AI INTERPRETATION →
+RECOMMENDATION → GUARDRAILS → ACTION CENTER → HUMAN. **The agent explains
+pricing; the engine still owns it.** Storefront/commerce verified untouched
+(every S02–S11 test green; no commerce, cart, checkout, configuration or
+`modules/pricing` file modified; product page prices byte-identical).
+
+1. **`modules/pricing-intelligence/`** — the deterministic authority (no
+   `lib/ai`, no price mutation): types.ts (signal kinds, strengths, evidence
+   kinds, readiness, the elasticity refusal type), tiers.ts (catalog-derived
+   bands + buckets), funnel.ts (co-occurrence + real ordering + PRICE/MOQ
+   question-vs-objection counts), demand.ts (three lanes, provenance-split),
+   tier-performance.ts (per-band, checkout `null`, conversation attribution),
+   realization.ts (engine re-quote + repricing NOT INSTRUMENTED),
+   moq.ts, products.ts (margin UNAVAILABLE, revenue ≠ profit), breakdowns.ts
+   (segments/attribution/AI-sales — descriptive only), signals.ts (the
+   explicit-evidence rule + strength rules), readiness.ts (cost/limit
+   readiness, `assessElasticity`, `PricingReadiness`), snapshot.ts, report.ts.
+2. **`config/pricing-intelligence.ts`** — documented thresholds (% ≥5
+   denominator, signal ≥3 explicit conversations, MEDIUM ≥5, HIGH ≥10 with ≥2
+   evidence types, behavioural observation ≥20 price-view sessions) + the
+   CLOSED 6-type recommendation taxonomy and its review-only action mapping.
+3. **Schema (migration `0006_pricing_intelligence.sql`, additive)** — ONE new
+   table `pricing_reports`, mirroring `ceo_reports`. **No table stores a
+   price**; every other pricing number is read from existing rows.
+4. **Data access** — `lib/data/pricing-intelligence-service.ts` (session and
+   product event facts with min/max `occurred_at`, quantity-bearing events,
+   priced order lines) + `lib/data/pricing-report-service.ts`. The S08 reads
+   are reused, not duplicated.
+5. **Pricing Agent** — `lib/ai/agents/pricing/{schema,context,agent}.ts` +
+   prompt `ai_pricing_intelligence_review` v1.0.0. No tools, one structured
+   call, a schema with no price field, server-validated refs and scope, and
+   server-recomputed prerequisites. Provider/budget failure persists NOTHING.
+6. **Guardrails / Action Center** — `GUARDRAIL_POLICY_VERSION` →
+   `2026-08-15.s12.1`; `PRICING_AGENT` default OBSERVE → RECOMMEND;
+   `+DATA_QUALITY_REVIEW` permission (review-only, justified);
+   `mapPricingDecisionToAction` + `PRICING_RECOMMENDATION_TO_ACTION_TYPE`;
+   `syncDecisionsToActions` covers ceo/cro/pricing.
+7. **Admin** — `/admin/pricing-intelligence` (overview, funnel, three lanes,
+   tier table, friction, other observations, MOQ, cost/margin readiness,
+   readiness classes, price sensitivity, trends, review, data quality) + POST
+   `/api/admin/pricing-intelligence/pricing-review` behind the S08 auth, the
+   new `PRICING_INTELLIGENCE` flag and `lib/admin/write-guard.ts`.
+8. **Tests 661 → 763** (all green; zero credentials/network/real model):
+   pricing-intelligence-metrics (41 — catalog-derived bands, funnel
+   co-occurrence + ordering + suppression, question≠objection for PRICE and
+   MOQ, three-lane separation + provenance exclusion, multi-line orders,
+   cancelled exclusion, checkout-unavailable, band attribution, realization +
+   repricing, MOQ, the non-purchase-is-not-friction rule, strength grading,
+   product-gap routing, null-cost/limit availability, elasticity refusal,
+   readiness, snapshot assembly + trend states + PII-freedom, segment gating),
+   pricing-agent (22 — context whitelists, one no-tools call, fabricated
+   metric/evidence/signal drops, unknown product and tier removal,
+   prerequisite override, price-unrepresentable, closed-enum rejection,
+   limitation requirement, dedup + frozen verdicts, Action Center mapping,
+   provider/flag/budget failure), pricing-intelligence-admin (11 — fail-closed
+   auth, both flag gates, cross-origin 403, no-Origin 403, form-post 415,
+   strict bodies, deterministic report without AI, honest 503),
+   pricing-intelligence-separation (28 — no lib/ai, no mutation, no optimal
+   price, no elasticity coefficient, no personalized pricing, no tools,
+   schema key set, closed taxonomy, mapping-table agreement, commerce
+   untouched, costs and limits still null, empty executor registry,
+   HUMAN_ADMIN price change still floor-blocked, no price experiment target,
+   ethical-boundary scan).
+9. **Docs** — new docs/PRICING_INTELLIGENCE.md (authoritative); updated
+   ARCHITECTURE (module row + admin row + 6 decision-log entries),
+   DATABASE_SCHEMA (`pricing_reports` + the "no table stores a price" note),
+   AI_AGENT_ARCHITECTURE (agent #4 = IMPLEMENTED), AI_RUNTIME (prompt),
+   GUARDRAILS (Session 12 additions + autonomy table + flags),
+   AI_ACTION_CENTER (pricing decisions), BUSINESS_INTELLIGENCE (sibling
+   layer), EXPERIMENTATION (§24 why price experiments are different),
+   AI_PLATFORM_ROADMAP (Stage G ✅ with the honest caveats),
+   prompts/00-INDEX (12 ✅, 13 next), LAUNCH_CHECKLIST (+pricing section),
+   BUSINESS_CONFIG_TODO (three-way cost split + a pricing section),
+   .env.example.
+
 ## Important decisions (and why)
 
 1. **Database is the first ADD** — every roadmap capability consumes
@@ -1647,6 +1846,44 @@ untouched (every S02–S10 test green; no commerce file modified).
     patterns are barred by the prompt AND by variant schemas that cannot
     express a countdown, a scarcity claim, a price or a guarantee.
 
+45. **(S12) A specific price is UNREPRESENTABLE, not merely refused** — the
+    Pricing Agent's output schema has no `proposedUnitPriceCents`, no
+    `discountPct`, no `proposedMoq` and no `optimalPrice`, and its closed
+    recommendation taxonomy maps only to REVIEW-ONLY action types. "Lower it
+    to $0.37" is not caught by a filter that could be misconfigured — there
+    is nowhere to write it. Chosen over a validated `calculateOptimalPrice()`,
+    which would make correctness depend on every downstream layer behaving.
+46. **(S12) Elasticity is a refusal with a reason, not an unavailable
+    number** — `assessElasticity()` returns a type whose `estimable` field is
+    the literal `false`; no code path produces a coefficient, so no model can
+    be asked to fill one in. The platform has never shown two prices for the
+    same configuration to comparable audiences, so every observed
+    price/quantity relationship is confounded. The owner is told why in plain
+    language plus exactly what would have to exist first. Chosen over
+    reporting an observational correlation as elasticity.
+47. **(S12) Price friction requires EXPLICIT evidence; a non-purchase is a
+    behavioural observation** — `isPriceFriction` is true only when a customer
+    actually said something (objection, repeated price question, handoff after
+    price, quote after price). Price-view-then-nothing is BEHAVIORAL, capped
+    at LOW, and flagged `isPriceFriction: false` with its own limitations.
+    Strength is a documented count-and-diversity rule, never a probability —
+    there is no "price sensitivity index" because there is nothing to compute
+    one from.
+48. **(S12) MOQ friction and product gaps are routed AWAY from pricing** —
+    a customer wanting 200 bags has a QUANTITY problem and a customer wanting
+    insulated bags has a PRODUCT problem; neither is evidence that the unit
+    price is wrong, and lowering it would sell them nothing. MOQ signals carry
+    `route: MOQ_REVIEW` + `isPriceFriction: false`; product gaps produce no
+    pricing signal at all. Chosen over letting a pricing layer claim every
+    unclosed sale.
+49. **(S12) Repricing is reported as NOT INSTRUMENTED rather than derived** —
+    `/api/checkout` answers 409 REPRICED and the client re-confirms, but no
+    first-party event records it, so repricing counts, post-reprice
+    confirmations and abandonment are unknown. Session 12 names the two events
+    that would need to exist instead of inferring a figure from cart
+    abandonment. Same doctrine as the S02 cost model: ship the refusal, not an
+    invented number.
+
 ## Known issues
 
 - ~~Configurator state is six `useState` hooks local to
@@ -1809,13 +2046,45 @@ untouched (every S02–S10 test green; no commerce file modified).
   double-render can call it twice, which the `exposed_at` dedup makes a
   no-op.
 
+- (S12) Pricing question/objection evidence comes from AI sales conversations
+  only — customers who never opened the chat are invisible to every
+  conversation-level pricing metric. Every affected signal states this as a
+  limitation rather than implying full coverage.
+- (S12) Checkout is not attributable to a quantity tier (`checkout_started`
+  records a cart value, not a product and quantity), so that column renders
+  "unavailable", never 0.
+- (S12) Checkout repricing (the 409 REPRICED path) is not instrumented — no
+  first-party event exists, so repricing counts, confirmations and
+  abandonment are genuinely unknown and are not derived from anything else.
+- (S12) A conversation only reaches a per-tier rate when its session has a
+  configured quantity, or a USER_STATED requested quantity together with a
+  `productInterest` matching a catalog product id. The rest are counted as
+  `unattributedConversations` and are absent from every per-tier rate (a
+  data-quality warning says by how many).
+- (S12) The configured demand lane reflects latest-state-in-period, not a
+  history (`product_configurations` is a live mutating row — inherited S08
+  limitation).
+- (S12) The Pricing Agent context is truncated at 16k chars; the enforcement
+  rules, cost truth, elasticity refusal, signals and readiness are printed
+  FIRST precisely so a busy period cannot cut them, but the long tables and
+  the data-quality list can truncate.
+- (S12) Pricing analytics share the S08–S11 bounded-load posture (5,000
+  rows/query, 20,000 session-event pairs) and `/admin/pricing-intelligence`
+  inherits the storefront layout chrome, like every admin page since S08.
+- (S12) Demo pricing is still active, so every tier price analysed today is a
+  placeholder — a DEMO_PRICING_ACTIVE data-quality warning says so, and every
+  pricing conclusion drawn now is a conclusion about the placeholder.
+
 ## Business configuration still needed
 
 See `BUSINESS_CONFIG_TODO.md` — notably: real prices (site shows DEMO
-notices until `NEXT_PUBLIC_DEMO_PRICING=false`), the entire cost model
-(now structured in `config/costs.ts`, every value a `null`
-`[TO BE PROVIDED]` placeholder — margins stay "unavailable" and price
-guardrails fail closed until filled), factory identity/photos, policies
+notices until `NEXT_PUBLIC_DEMO_PRICING=false`; until then every S12 pricing
+conclusion is about a placeholder price list, and the dashboard says so), the
+entire cost model (now structured in `config/costs.ts`, every value a `null`
+`[TO BE PROVIDED]` placeholder — margins stay "unavailable", price guardrails
+fail closed, and **S12's `SPECIFIC_PRICE_CHANGE` readiness stays BLOCKED**
+until filled together with `maximumPriceDecreasePct` /
+`maximumPriceIncreasePct`), factory identity/photos, policies
 legal review, Shopify store + variant mapping, production `DATABASE_URL`
 (+ `npm run db:migrate` at deploy), consent-policy review for first-party
 events, AI provider key + budget caps + **model pricing
@@ -1833,9 +2102,16 @@ docs/AI_ACTION_CENTER.md must be satisfied first), **GUARDED_AUTO
 promotion** (needs operating history + the guardrail limits in
 config/guardrails.ts + an explicit human decision, Stage J), **per-user
 admin RBAC** (single Basic credential today),
-**Pricing Agent/Intelligence** (S12 — the CEO may recommend "review
-pricing", never compute optimal prices; PRICE_EXPERIMENT stays unsupported
-until then), **winner auto-promotion** (a VARIANT_WIN never changes site
+**real price experiments** (the
+experiment engine deliberately cannot run price variants — a price test
+changes cart totals, checkout, repricing semantics and what a returning
+customer sees, so it needs an authority-aware design; docs/EXPERIMENTATION.md
+§24), **a PRICE_CHANGE executor** (none exists; requires the full executor
+contract PLUS real costs, a margin policy and price-movement limits),
+**guarded-auto pricing** (allow-list empty, ceiling RECOMMEND),
+**competitive/market pricing inputs** (no external price data is ingested
+anywhere), **repricing instrumentation** (the two events named in
+docs/PRICING_INTELLIGENCE.md §8), **winner auto-promotion** (a VARIANT_WIN never changes site
 content — promotion is a human source/config change), **GUARDED_AUTO CRO**
 and a real `CRO_EXPERIMENT_LAUNCH` executor (need operating history, the
 guardrail limits, and the full executor contract), **adaptive traffic /
@@ -1885,23 +2161,33 @@ the 03.5 hardening pass (small blast radius, none block Session 04):
 
 ## Recommended next session
 
-**Session 12 — Pricing Intelligence Agent** — run
-`prompts/12-pricing-intelligence.md`.
+**Session 13 — Google Ads Read-Only Intelligence** — run
+`prompts/13-google-ads-readonly.md`.
 
-Prerequisites now exist: `modules/pricing` is the sole pricing authority
-with a fail-closed `evaluatePriceFloor`, S09 supplies denominator-honest
-conversion and (when costs are configured) contribution metrics, S10
-supplies the approval spine — `PRICE_CHANGE` and `PRICE_EXPERIMENT` are
-already registered types with `PRICING_AGENT` permitted exactly those — and
-S11 supplies a working experiment runtime with a documented statistical
-method and sample gate.
+Why this and not something else: it is the only remaining input the platform
+is structurally blind to. Every intelligence layer built so far
+(S08 customer, S09 business, S11 conversion, S12 pricing) says the same
+thing in its data-quality section — **advertising spend is not integrated, so
+CAC and ROAS are not computed and attribution shows first-party revenue
+only**. S09 already models first/last touch, landing pages and campaign
+params from real sessions; the missing half is what each campaign COST.
 
-Boundaries that stay: the pricing agent RECOMMENDS; it never computes a
-"correct" price and never mutates one. Price experiments are Session 12's
-own decision to make, and they must reuse the S11 engine rather than fork
-it — but `config/costs.ts` is still entirely `[TO BE PROVIDED]`, so the
-margin floor fails closed and no price-affecting action can be
-execution-eligible regardless. `maximumPriceDecreasePct` /
-`maximumPriceIncreasePct` are also still null, so those actions report
-missing configuration by design. Do not invent economics to unblock a
-demo.
+Prerequisites exist: the guardrail taxonomy already registers
+`AD_BUDGET_CHANGE` / `AD_PAUSE` / `AD_RESUME` / `AD_CREATIVE_TEST` with
+`GOOGLE_ADS_AGENT` permitted exactly those and every one of them
+`NOT_IMPLEMENTED`; the Action Center is the review surface; `AiUsage` and the
+budget guard bound AI spend.
+
+Boundaries that must stay: **READ-ONLY**. No ad-spend mutation, no campaign
+creation, no bid changes, no automated budget moves — `maximumDailyAdSpendCents`
+and `maximumCampaignBudgetChangePct` are still `null`, so any spend action
+reports missing configuration and stays execution-ineligible regardless. Do
+not compute CAC or ROAS until real spend data actually lands, and do not
+invent a conversion-attribution model to make the numbers line up; Google's
+attribution and our first-party attribution will disagree, and the honest
+move is to report both and say why.
+
+Also available if the owner prefers: filling `config/costs.ts` unblocks
+profit intelligence across S09 and S12 at once — margin, minimum safe price,
+and the first class of pricing recommendation that could ever carry a number.
+That is a business-input task, not a coding session.

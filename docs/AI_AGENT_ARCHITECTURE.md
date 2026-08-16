@@ -109,7 +109,7 @@ arbitrary queries.
 | Sales ("AI Packaging Expert") | help customers configure & buy | GUARDED_AUTO within its toolset |
 | Customer Intelligence | aggregate questions/objections/demand | RECOMMEND (read-only analysis) |
 | CEO / Business Review | daily summaries + recommendations | RECOMMEND (implemented S09) |
-| Pricing | analyze price↔conversion↔margin | RECOMMEND (engine stays authority) |
+| Pricing Intelligence | interpret pricing performance, raise reviews | RECOMMEND (implemented S12; engine stays authority) |
 | CRO | propose experiments | RECOMMEND |
 | Google Ads / Meta Ads | (deferred) | OBSERVE |
 
@@ -181,19 +181,26 @@ credential access. "Audit" rows are the minimum written record per run.
 | Audit | AgentDecision + Approval + `agent_actions`/`guardrail_evaluations`; `experiment_events` for every lifecycle transition; AiUsage per run (prompt `ai_cro_experiment_review` v1.0.0). |
 | Failure | Provider down / budget exceeded ⇒ nothing persisted. Running experiments, assignment, exposure, measurement and the admin dashboard are unaffected. |
 
-### 4 · Pricing Intelligence Agent — Stage G
+### 4 · Pricing Intelligence Agent — Stage G · **IMPLEMENTED (Session 12 — docs/PRICING_INTELLIGENCE.md is authoritative)**
 
-| Dimension | Specification |
+| Dimension | Specification (as built) |
 | --- | --- |
-| Responsibility | Analyze price ↔ conversion ↔ margin ↔ segment; recommend tier/delta changes with expected contribution-profit impact. |
-| Inputs | Orders, quotes, conversions, cost model, margin outputs, chat price objections. |
-| Outputs | `AgentDecision` rows (proposed price changes + reasoning + expected effect). Never a live price. |
-| Allowed tools | Read-only sales/pricing queries; decision writer. |
-| Prohibited | Mutating tiers/deltas/engine config; proposals below `minimumAllowedPrice`/`minimumMargin` or beyond `maximumPriceChangePct`; acting while the cost model is unconfigured (fail closed). |
-| Autonomy | RECOMMEND; bounded price *experiments* only via the experiment engine after human approval. |
-| Data access | Read-only commerce + cost config; writes only decisions. |
-| Guardrails | All price-guardrail limits; cost-model-missing ⇒ reject as unverifiable. |
-| Audit | AgentDecision with supporting metrics + confidence; Approval trail; AiUsage. |
+| Responsibility | INTERPRET the deterministic `PricingIntelligenceSnapshot` (pricing funnel, three quantity lanes, tier performance, MOQ friction, evidence-graded signals, cost/margin readiness) and raise pricing REVIEWS for a human. It does not compute price↔margin impact, because `config/costs.ts` is unconfigured and margin is UNAVAILABLE. |
+| Inputs | The snapshot only — a bounded, PII-free rendering. It does not re-read the raw customer corpus. |
+| Outputs | One `pricing_reports` document + `AgentDecision` rows (review recommendations). **Never a price**: the output schema has no price field of any kind. |
+| Allowed tools | **NONE.** One `REASONING` `generateStructuredObject` call, like the S09 CEO and S11 CRO agents. |
+| Prohibited | Proposing a specific price, discount or MOQ (unrepresentable in the schema); estimating elasticity (no code path produces one); mutating tiers/deltas/engine config; launching an experiment; approving its own work. |
+| Autonomy | RECOMMEND (default raised from OBSERVE in S12; ceiling unchanged at RECOMMEND). Guarded-auto allow-list still empty. |
+| Data access | Read-only, via `modules/pricing-intelligence` which itself has no `lib/ai` import and no price-mutation path. Writes only `agent_decisions` + `pricing_reports` audit rows. |
+| Guardrails | Recommendation types map ONLY to review-only action types (`PRICING_REVIEW`, `MOQ_REVIEW`, `DATA_QUALITY_REVIEW`). `PRICE_CHANGE`/`PRICE_EXPERIMENT` remain permitted-but-unreachable: no schema field, no mapping entry, no executor, and the cost-model price floor fails closed regardless. |
+| Audit | AgentDecision (observation, recommendation, validated refs, confidence, risk, limitations) + `pricing_reports` (period, prompt+version, model, provider, the exact snapshot, the validated review, decision ids) + AiUsage (agentType `pricing`). |
+
+Server-side validation of the model's output: metric/evidence/signal
+references are filtered against exactly what the context printed (none
+surviving ⇒ the recommendation is DROPPED), `productId` must be a real
+catalog product, `quantityTier` must be a real tier of that product, and
+`requiresCostConfiguration`/`requiresExperiment` are RECOMPUTED by the server
+(a disagreement with the model is logged, never honoured).
 
 ### 5 · Google Ads Agent — Stage H (deferred)
 

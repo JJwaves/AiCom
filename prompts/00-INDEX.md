@@ -29,8 +29,8 @@ Rules that apply to every session:
 | [09-business-intelligence.md](09-business-intelligence.md) | Contribution profit + CEO agent | E | ✅ 2026-08-12 |
 | [10-guardrails.md](10-guardrails.md) | Guardrail engine + AI Action Center | E | ✅ 2026-08-12 |
 | [11-cro.md](11-cro.md) | Experiment engine + CRO agent | F | ✅ 2026-08-12 |
-| [12-pricing-intelligence.md](12-pricing-intelligence.md) | Pricing agent (RECOMMEND) | G | next |
-| [13-google-ads-readonly.md](13-google-ads-readonly.md) | Google Ads read-only reporting | H | |
+| [12-pricing-intelligence.md](12-pricing-intelligence.md) | Pricing intelligence + Pricing agent (RECOMMEND) | G | ✅ 2026-08-15 |
+| [13-google-ads-readonly.md](13-google-ads-readonly.md) | Google Ads read-only reporting | H | next |
 
 Later phases (Google Ads recommendations/automation, Meta Ads, advanced
 CEO agent, guarded autonomy) get prompt files when their prerequisites are
