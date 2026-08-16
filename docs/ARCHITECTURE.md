@@ -130,7 +130,8 @@ Human Approval (/admin/ai-actions)  |  Guarded auto-execution (later)
 
 | Module | Status | Notes |
 | --- | --- | --- |
-| `lib/commerce` | KEEP | Provider abstraction + `catalog.ts` read facade (Session 02); extend with `getOrder`/order persistence hooks. |
+| `lib/commerce` | DONE (Launch Session 02) | Provider abstraction + production fail-closed guard (`config.ts`), real Shopify draft-order checkout with line-by-line price verification (`shopify.ts` + `shopify-transport.ts`), deterministic merchandise mapping (`config/shopify.ts`), HMAC-verified webhook ingestion and order reconciliation. `catalog.ts` reads the BagDirect catalog directly — the mock fallback is GONE. See SHOPIFY_PRODUCTION.md. |
+| `lib/storage` + `/api/artwork/*` | DONE (Launch Session 02) | Durable S3-compatible artwork storage: server-derived object keys, signed direct upload, server-side magic-byte verification, SVG rejected, artwork → order LINE association. See ARTWORK_STORAGE.md. |
 | `modules/pricing` | DONE (Session 02) | Engine math kept as `engine.ts`; cost model + margins + `minimumAllowedPrice` in `cost-model.ts` (config/costs.ts placeholders, fail-closed); server checkout re-quote at `/api/checkout`. |
 | `lib/analytics` | DONE (Session 03) | `track()` dual-writes: dataLayer unchanged + `first-party.ts` mapping → `/api/events`. |
 | `lib/attribution` | DONE (Session 03) | Same pure merge now also runs server-side; sessions carry immutable first-touch snapshots; orders/quotes carry attribution copies. |
@@ -681,3 +682,115 @@ commerce file imports `assessCostReadiness`, `isCostModelConfigured` or
 the price floor. Only future price/action safety fails closed.
 
 Full specification: `docs/UNIT_ECONOMICS.md`.
+
+---
+
+## Production Launch Session 02 — Real Commerce Termination (2026-08-16)
+
+Full specifications: `docs/SHOPIFY_PRODUCTION.md`, `docs/ARTWORK_STORAGE.md`.
+
+**Decision 62. Production cannot use mock commerce, and the refusal is the
+same shape as the database guard.** `resolveCommerceConfiguration()` THROWS
+rather than degrading: production with missing or partial Shopify
+configuration produces a loud, actionable error naming the variables (never
+their values), and `/api/checkout` answers 503. Partial configuration fails in
+EVERY environment, because half-set credentials always mean Shopify was
+intended. The mock provider additionally refuses to run with
+`NODE_ENV=production` even if imported directly. The failure this prevents is
+specific: mock checkout would have minted `MOCK-*` orders, written Order rows,
+fired the authoritative `purchase_completed` event and marked sessions
+converted — fake revenue that BI, profitability, POAS and ad attribution would
+all have reported as real. Fake revenue is worse than no revenue.
+
+**Decision 63. Checkout is a DRAFT ORDER, because the Storefront cart cannot
+express a BagDirect price.** Shopify's `CartLineInput` has no price field, and
+a BagDirect price is `tier(quantity) + material delta + print delta` — not
+expressible as one variant price without ~1,700 variants encoding arithmetic
+this codebase already does. `draftOrderCreate` accepts `priceOverride`
+alongside `variantId`, giving both the real variant (shipping profile, tax
+code, product identity) and the engine's price. The draft order is then READ
+BACK and verified line by line — unit price, line total, quantity, currency,
+subtotal — and any divergence deletes the draft and fails visibly. The
+customer never reaches a Shopify checkout showing a price BagDirect did not
+compute. Chosen over Storefront-cart checkout (charges the wrong number) and
+over a Cart Transform Function (a Shopify app + deployment pipeline for
+arithmetic we already own).
+
+**Decision 64. The BagDirect catalog is BagDirect's own authority; Shopify is
+merchandise, checkout and payment.** Both providers serve `config/products.ts`
+identically, so `lib/commerce/catalog.ts` no longer hops through a provider at
+all — which is what DELETES the Session 01 hazard rather than disabling it:
+there is no remote catalog read to fail, so there is nothing to fall back
+from, and "Shopify is down" can never become "show the customer demo
+products". Consequences, all deliberate: the storefront renders without
+Shopify, a catalog read needs no credential and makes no network call, and
+`next build` prerenders product pages with commerce unconfigured. A commerce
+misconfiguration surfaces where it matters — at checkout, loudly.
+
+**Decision 65. Merchandise identity is four dimensions; price is not part of
+it.** `product · size · material · color` → one Shopify variant, via a strict
+exact-match table in `config/shopify.ts`. Print option and quantity change the
+PRICE, not the item, so they travel as line attributes. Resolution has no
+nearest match, no default variant, no fuzzy matching and no AI: an unmapped
+configuration fails before Shopify is called and returns a custom-quote
+routing message. Shipping a customer the wrong physical bag is worse than
+failing their checkout. The table ships EMPTY — the mechanism is
+implementation, the ids are owner data.
+
+**Decision 66. The order row is created BEFORE payment, as
+`pending_payment`.** It is the only place the exact server-priced lines, the
+immutable configuration snapshots, the artwork links, the attribution and the
+cost snapshot exist together; its id travels to Shopify as `_bd_order_id` and
+returns on the paid order, so reconciliation is a LOOKUP rather than a
+reconstruction from display attributes (which would silently corrupt what the
+factory prints). `pending_payment` joins `EXCLUDED_ORDER_STATUSES`, so an
+abandoned checkout is honest abandoned-checkout data and never revenue. This
+is the one place "persistence is additive to commerce" does not apply: without
+the row, a paid order could never be linked to a configuration or an artwork
+file.
+
+**Decision 67. Payment truth is Shopify's, delivered by webhook, and
+`purchase_completed` fires from ONE flag.** A browser returning from Shopify
+is never payment authority. `markOrderPaid` flips a `transitioned` boolean
+inside a row-locked transaction, and the purchase event, the conversion mark,
+the `purchased` outcome and the ORDER_DATA enrichment all hang off it — so a
+replay, an `orders/paid` after an already-paid `orders/create`, or two
+concurrent deliveries all do nothing. Shopify's grand total (shipping + tax)
+is deliberately NOT copied over `orders.totalCents`, which stays the BagDirect
+product subtotal every margin divides by.
+
+**Decision 68. Webhook idempotency keys on the SUBJECT, not the delivery.**
+`(provider, topic, order-or-refund id)` with a UNIQUE constraint, claimed by
+insert-first so concurrent deliveries cannot both see "not processed yet".
+`X-Shopify-Webhook-Id` is diagnostics only: a merchant re-sending an event
+from the admin gets a NEW delivery id for the SAME business fact, so
+delivery-id dedupe would process that payment twice. A failed claim is
+RELEASED, so Shopify's retry is real work rather than a skipped duplicate.
+Verification precedes parsing, which precedes any database write — asserted
+structurally, because anyone who could forge this endpoint could mint revenue.
+
+**Decision 69. Artwork is durable, server-verified, and linked to an order
+LINE.** `URL.createObjectURL` produced a reference that died with the tab, so
+a paid printed order held a link nobody could open. Now: the server mints the
+artwork id and therefore the object KEY (the browser cannot name, guess or
+traverse to another object), SIGNS the content type, and refuses to trust the
+upload until it independently HEADs the object and reads its magic bytes.
+Bytes go browser → storage directly, because 25 MB through a serverless route
+handler is not viable. `artworks.order_line_id` is explicit, because
+`order_id` alone cannot answer "which artwork belongs to this line?" on a
+multi-line order, and inference from filename, email or session is not
+determinism.
+
+**Decision 70. SVG is rejected rather than sanitized.** An SVG is an
+executable document; once artwork is durably stored and served back to staff,
+a stored SVG is stored XSS. Sanitisation is an ongoing security commitment
+with a live bypass literature; rejection costs a customer one "export as PDF"
+click, and PDF/AI/EPS all carry vector artwork. Revisit only with a sanitiser
+AND a rendering policy, together.
+
+**Decision 71. One storage backend, no abstraction, no SDK.** S3-compatible
+covers S3, R2, B2, Spaces and MinIO. SigV4 presigning is ~80 lines of
+`node:crypto`; an AWS SDK would add tens of megabytes for no capability we
+need, and a generic storage abstraction over one backend is exactly the
+over-engineering CLAUDE.md forbids. The `ArtworkStorage` port exists solely so
+tests can inject a fake — no test touches the network.

@@ -653,3 +653,83 @@ npm run db:seed       # DEMO-labeled dev data (refuses DATABASE_URL without --fo
   superseded by the Session-03 scope: the AI-ops/insight/experiment tables
   land now, empty, with their validated service interfaces — that
   preparation was this session's purpose.
+
+---
+
+## Production Launch Session 02 — commerce truth (migration `0009_production_commerce.sql`)
+
+Additive. Full architecture: `docs/SHOPIFY_PRODUCTION.md`,
+`docs/ARTWORK_STORAGE.md`.
+
+### `orders` — payment truth
+
+| column | purpose |
+|---|---|
+| `refunded_total_cents` | cumulative amount the PROVIDER reports refunded. Reaching `total_cents` moves `status` to `refunded`; less leaves it `paid`. Per-line allocation is deliberately NOT modelled (§45). |
+| `paid_at` | when the provider confirmed payment. NULL until an authoritative paid event arrives. |
+| `cancelled_at` | when the provider cancelled the order. |
+
+`orders_provider_order_idx` changed from an index to a **UNIQUE index** on
+`(provider, provider_order_id)`. Shopify retries webhooks and can deliver
+`orders/create` and `orders/paid` concurrently; this makes "two rows for one
+provider order" — double revenue — impossible at the storage layer rather
+than only in application logic. Postgres treats NULLs as distinct, so orders
+without a provider order id are unaffected.
+
+**New status: `pending_payment`.** Written by `/api/checkout` when a Shopify
+checkout is created, BEFORE the customer pays. It is in
+`EXCLUDED_ORDER_STATUSES` (`modules/business-intelligence/revenue.ts`), so it
+is excluded from revenue, AOV, profitability and every conversion metric. An
+abandoned Shopify checkout is honest abandoned-checkout data, never a sale.
+
+Status pipeline now: `pending_payment` → `paid` → `artwork_review` →
+`in_production` → `shipped` → `delivered`, with `cancelled` / `refunded` as
+terminal reversals.
+
+`orders.total_cents` remains the **BagDirect product subtotal**. Shopify's
+grand total (shipping + tax) is deliberately not copied over it, because it is
+the figure every margin calculation divides by.
+
+### `artworks` — durable storage
+
+| column | purpose |
+|---|---|
+| `order_line_id` | **the** artwork → order-line association (§28). `order_id` alone cannot answer "which artwork belongs to this line?" on a multi-line order. |
+| `storage_key` | object-storage KEY (not a URL, not a signed link). Server-derived, never client-supplied. Redacted on customer deletion — it embeds the filename. |
+| `storage_provider` | `s3`. NULL on pre-Session-02 metadata-only rows. |
+| `checksum` | SHA-256 when the backend reports a verifiable digest. |
+| `storage_url` | legacy; never written any more. |
+
+New indexes: `artworks_order_line_idx`, `artworks_session_status_idx` (the
+latter serves ownership checks and abandoned-upload queries).
+
+Statuses gained `pending_upload` (a signed upload was issued; bytes NOT
+verified — unusable by commerce), `rejected` (bytes verified and failed) and
+`abandoned`.
+
+### `provider_webhook_events` — exactly-once processing (new table)
+
+| column | purpose |
+|---|---|
+| `provider` / `topic` / `provider_event_id` | the idempotency identity, UNIQUE together |
+| `delivery_id` | `X-Shopify-Webhook-Id` — **diagnostics only** |
+| `order_id` | which order the event touched |
+| `outcome` | `processed` / `ignored` / `failed` |
+| `detail` | short human-readable result |
+
+`provider_event_id` is the provider's stable id for what the event is ABOUT —
+the order id for order topics, the refund id for refunds — **not** the
+delivery id. A merchant re-sending an event from the Shopify admin gets a new
+delivery id for the same business fact, so delivery-id dedupe would process
+that payment twice.
+
+The claim is an insert with `ON CONFLICT DO NOTHING`, so two concurrent
+deliveries cannot both observe "not processed yet". A claim whose processing
+throws is DELETED, so Shopify's retry is real work rather than a skipped
+duplicate.
+
+### Privacy (Session 03.5 semantics preserved)
+
+Customer deletion now also nulls `artworks.storage_key`. The stored OBJECT is
+not deleted by this path — object deletion is documented as deferred retention
+work (`docs/ARTWORK_STORAGE.md` §12).

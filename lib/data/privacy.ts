@@ -71,9 +71,12 @@ export async function deleteCustomerData(customerId: string): Promise<void> {
     // Artwork metadata: the row remains ("an artwork existed for this
     // order/quote") but the raw filename, the storage location that embeds
     // it, and free-text notes are identifying — redact, keep type/size.
+    // Session 02 note: `storageKey` embeds the filename, so it is nulled with
+    // the rest. The stored OBJECT is not deleted here — object deletion is
+    // documented as deferred retention work (docs/ARTWORK_STORAGE.md).
     await tx
       .update(artworks)
-      .set({ fileName: REDACTED, storageUrl: null, notes: null, updatedAt: new Date() })
+      .set({ fileName: REDACTED, storageKey: null, storageUrl: null, notes: null, updatedAt: new Date() })
       .where(eq(artworks.customerId, customerId));
 
     // 4. Identity row last — remaining FKs (orders, quotes, artworks,

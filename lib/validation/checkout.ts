@@ -8,13 +8,29 @@ import { ARTWORK_MAX_BYTES } from "./artwork";
  * engine and never trusts these numbers.
  */
 
-const artworkRefSchema = z.object({
-  fileName: z.string().trim().min(1).max(255),
-  fileType: z.string().trim().max(120),
-  fileSizeBytes: z.number().int().positive().max(ARTWORK_MAX_BYTES),
-  url: z.string().max(2048).optional(),
-  notes: z.string().max(1000).optional(),
-});
+/**
+ * Artwork reference accepted from a browser.
+ *
+ * `artworkId` is the durable server-minted reference (Production Launch
+ * Session 02). `url` is accepted for BACKWARDS COMPATIBILITY with carts
+ * saved in localStorage before durable storage existed — and it is STRIPPED
+ * here rather than stored: it was a `blob:` object URL that died with the
+ * tab, and persisting one would put a permanently broken link on an order
+ * line. A legacy line whose print option requires artwork is caught at
+ * checkout, which requires a real `artworkId` and tells the customer to
+ * re-upload.
+ */
+const artworkRefSchema = z
+  .object({
+    artworkId: z.string().trim().min(1).max(64).optional(),
+    fileName: z.string().trim().min(1).max(255),
+    fileType: z.string().trim().max(120),
+    fileSizeBytes: z.number().int().positive().max(ARTWORK_MAX_BYTES),
+    url: z.string().max(2048).optional(),
+    notes: z.string().max(1000).optional(),
+  })
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- destructured to DROP it
+  .transform(({ url, ...ref }) => ref);
 
 /** ProductConfiguration shape — reused by checkout lines and by lib/data configuration snapshots. */
 export const configurationSchema = z.object({

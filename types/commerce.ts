@@ -84,10 +84,26 @@ export type ProductConfiguration = {
 };
 
 export type ArtworkRef = {
+  /**
+   * Durable BagDirect artwork id (`art_…`) — THE authoritative reference to
+   * the uploaded file, minted by /api/artwork/upload and backed by the
+   * `artworks` row + object storage. Production Launch Session 02 made this
+   * the identity that travels into the cart, the order line and Shopify.
+   *
+   * Optional only for backwards compatibility with configurations persisted
+   * before durable storage existed; every NEW artwork has one, and checkout
+   * for a print option that requires artwork rejects a ref without it.
+   */
+  artworkId?: string;
   fileName: string;
   fileType: string;
   fileSizeBytes: number;
-  /** Object URL / uploaded location. Mock provider keeps a local object URL. */
+  /**
+   * DEPRECATED as a persistence mechanism. Previously a browser
+   * `blob:`/object URL, which died with the tab and could never reach the
+   * factory. Never written by the upload flow any more, never persisted, and
+   * rejected at the API boundary — `artworkId` replaced it.
+   */
   url?: string;
   notes?: string;
 };
@@ -117,5 +133,15 @@ export type PriceQuote = {
 };
 
 export type CheckoutResult =
-  | { kind: "redirect"; url: string }
+  | {
+      kind: "redirect";
+      /** PROVIDER-GENERATED checkout URL. Never accepted from the browser or a model. */
+      url: string;
+      /**
+       * Provider-side handle for the pre-payment checkout (Shopify draft
+       * order GID). Stored as `orders.provider_checkout_ref` so the paid
+       * order arriving by webhook can be correlated back to this session.
+       */
+      reference?: string;
+    }
   | { kind: "mock"; orderId: string };

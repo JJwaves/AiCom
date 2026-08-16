@@ -1,13 +1,23 @@
 "use client";
 
 import { useId, useRef, useState } from "react";
-import { ARTWORK_ACCEPT, validateArtworkFile } from "@/lib/validation/artwork";
+import { uploadArtwork } from "@/lib/artwork/upload-client";
+import { ARTWORK_ACCEPT } from "@/lib/validation/artwork";
 import type { ArtworkRef } from "@/types/commerce";
 
 /**
- * Accessible artwork uploader. Validates type + size client-side, keeps an
- * object URL for preview, and reports an ArtworkRef upward. The file itself
- * is associated with the order at checkout (see lib/commerce).
+ * Accessible artwork uploader.
+ *
+ * Production Launch Session 02: the file is now UPLOADED to durable object
+ * storage and the resulting server-verified `artworkId` is what flows into
+ * the configuration, the cart, the order line and the factory. Previously
+ * this component produced `URL.createObjectURL(file)` — a reference that
+ * died with the browser tab, so a paid order arrived with a logo nobody
+ * could open.
+ *
+ * The ref is reported upward only AFTER the server confirms the stored
+ * bytes; until then the control shows its uploading state and cannot be
+ * mistaken for a completed upload.
  */
 export function ArtworkUploader({
   value,
@@ -22,22 +32,23 @@ export function ArtworkUploader({
   const inputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
-  const handleFile = (file: File | undefined) => {
-    if (!file) return;
-    const check = validateArtworkFile(file);
-    if (!check.ok) {
-      setError(check.reason);
-      return;
-    }
+  const handleFile = async (file: File | undefined) => {
+    if (!file || uploading) return;
     setError(null);
-    onChange({
-      fileName: file.name,
-      fileType: file.type || file.name.split(".").pop() || "unknown",
-      fileSizeBytes: file.size,
-      url: URL.createObjectURL(file),
-      notes: value?.notes,
-    });
+    setUploading(true);
+    try {
+      const result = await uploadArtwork(file);
+      if (!result.ok) {
+        setError(result.reason);
+        return;
+      }
+      // Notes survive a re-upload; everything else comes from the server.
+      onChange({ ...result.artwork, notes: value?.notes });
+    } finally {
+      setUploading(false);
+    }
   };
 
   return (
@@ -65,13 +76,17 @@ export function ArtworkUploader({
         onDrop={(e) => {
           e.preventDefault();
           setDragOver(false);
-          handleFile(e.dataTransfer.files?.[0]);
+          void handleFile(e.dataTransfer.files?.[0]);
         }}
         className={`flex cursor-pointer flex-col items-center justify-center gap-1 rounded-[10px] border border-dashed px-4 py-6 text-center transition-colors ${
           dragOver ? "border-accent bg-accent-soft" : "border-rule-2 bg-paper-2 hover:border-ink-3"
         }`}
       >
-        {value ? (
+        {uploading ? (
+          <span className="text-sm font-medium text-ink-2" role="status">
+            Uploading…
+          </span>
+        ) : value ? (
           <>
             <span className="font-mono text-sm text-ink">{value.fileName}</span>
             <span className="text-xs text-ok" role="status">
@@ -92,7 +107,7 @@ export function ArtworkUploader({
         ) : (
           <>
             <span className="text-sm font-medium text-ink-2">Drop a file or click to browse</span>
-            <span className="text-xs text-ink-3">PNG, JPG, PDF, SVG, AI or EPS · up to 25 MB</span>
+            <span className="text-xs text-ink-3">PNG, JPG, PDF, AI or EPS · up to 25 MB</span>
           </>
         )}
       </div>
@@ -102,7 +117,8 @@ export function ArtworkUploader({
         type="file"
         accept={ARTWORK_ACCEPT}
         className="sr-only"
-        onChange={(e) => handleFile(e.target.files?.[0])}
+        disabled={uploading}
+        onChange={(e) => void handleFile(e.target.files?.[0])}
       />
 
       {error && (

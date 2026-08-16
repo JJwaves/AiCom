@@ -5,13 +5,16 @@ import { checkoutRequestSchema, type CheckoutRequestLine } from "@/lib/validatio
 import { calculatePrice } from "@/modules/pricing";
 import { formatDimensions } from "@/lib/format";
 import { getAiAssistanceForSession } from "@/lib/data/ai-assistance";
+import { isArtworkUsableForSession, linkArtworkToOrderLine } from "@/lib/data/artwork-service";
 import { upsertActiveConfiguration } from "@/lib/data/configuration-service";
 import { markConversationOutcomeForSession } from "@/lib/data/conversation-service";
 import { applyNeedProfileUpdate } from "@/lib/data/customer-need-service";
 import { recordServerEvent } from "@/lib/data/event-service";
-import { createOrder } from "@/lib/data/order-service";
+import { createOrder, setOrderCheckoutRef } from "@/lib/data/order-service";
 import { sessionFromRequest, setSessionCookies } from "@/lib/data/request-session";
 import { markConverted, type SessionRow } from "@/lib/data/session-service";
+import { CommerceConfigurationError } from "@/lib/commerce/config";
+import { ShopifyCheckoutError } from "@/lib/commerce/shopify";
 import type { Cart, CartLine, Product } from "@/types/commerce";
 
 /**
@@ -52,6 +55,15 @@ function validateAndPrice(line: CheckoutRequestLine, product: Product): { ok: tr
   if (!print) return { ok: false, reason: `Unknown print option "${config.printOptionId}"` };
   if (print.requiresArtwork && !config.artwork) {
     return { ok: false, reason: `"${print.label}" requires artwork — upload a logo or choose "No logo"` };
+  }
+  // A durable artwork id is required for anything printed (Session 02 §28).
+  // A cart saved before durable storage carried only a dead `blob:` URL,
+  // which would reach the factory as an un-openable link.
+  if (print.requiresArtwork && config.artwork && !config.artwork.artworkId) {
+    return {
+      ok: false,
+      reason: `Please re-upload your logo for "${print.label}" — the earlier file is no longer available`,
+    };
   }
 
   const calc = calculatePrice(product, config);
@@ -174,13 +186,45 @@ export async function POST(req: Request) {
     })),
   };
 
-  try {
-    const result = await getCommerce().createCheckout(cart, attribution);
-    // Session identity + persistence are additive: commerce never fails
-    // because the data layer hiccuped (loud logs instead).
-    const sessionCtx = await sessionFromRequest(req);
+  // Session identity is resolved BEFORE the provider call: artwork ownership
+  // must be verified before a checkout exists, and Shopify needs the session
+  // as its correlation reference.
+  const sessionCtx = await sessionFromRequest(req);
 
-    if (result.kind === "mock") {
+  // Artwork must be real, verified, and THIS session's (Session 02 §28) —
+  // an id copied from elsewhere must not put someone else's logo on a bag.
+  if (sessionCtx) {
+    const artworkErrors: LineError[] = [];
+    for (const s of serverLines) {
+      const artworkId = s.line.config.artwork?.artworkId;
+      if (!artworkId) continue;
+      const usable = await isArtworkUsableForSession(artworkId, sessionCtx.session.id).catch((err) => {
+        console.error("[checkout] artwork verification failed", err);
+        return false;
+      });
+      if (!usable) {
+        artworkErrors.push({
+          lineId: s.line.lineId,
+          reason: "We couldn't find that uploaded logo — please upload it again",
+        });
+      }
+    }
+    if (artworkErrors.length) {
+      return NextResponse.json(
+        { ok: false, code: "INVALID", error: "Cart validation failed", errors: artworkErrors },
+        { status: 422 },
+      );
+    }
+  }
+
+  try {
+    const commerce = getCommerce();
+
+    if (commerce.name === "mock") {
+      const result = await commerce.createCheckout(cart, attribution, {
+        sessionId: sessionCtx?.session.id ?? null,
+      });
+      if (result.kind !== "mock") throw new Error("mock provider returned a non-mock checkout result");
       if (sessionCtx) {
         await persistMockOrder(sessionCtx.session, serverLines, cart, attribution, result.orderId);
       }
@@ -195,18 +239,94 @@ export async function POST(req: Request) {
       return res;
     }
 
-    // Shopify redirect: the order exists only after payment on Shopify's
-    // checkout — order rows arrive with order webhooks (future session).
-    if (sessionCtx) {
-      // A chat that led to checkout gets its outcome stamped (S06) — non-fatal.
-      await markConversationOutcomeForSession(sessionCtx.session.id, "checkout_started").catch((err) =>
-        console.error("[checkout] conversation outcome stamp failed", err),
+    /* ---------------------------------------------------------------- */
+    /* Shopify: the order row is created BEFORE payment — as PENDING     */
+    /* ---------------------------------------------------------------- */
+    /*
+     * The customer has NOT paid yet, and `pending_payment` says exactly
+     * that: it is excluded from revenue, from AOV, from profitability and
+     * from every conversion metric (modules/business-intelligence/
+     * revenue.ts). No purchase event fires, the session is not marked
+     * converted, and a browser redirect is never treated as payment (§16).
+     *
+     * The row exists at this moment for one reason: it is the ONLY place the
+     * exact server-priced lines, the immutable configuration snapshots, the
+     * artwork links, the attribution and the cost snapshot exist together.
+     * Its id travels to Shopify and comes back on the paid order, so
+     * reconciliation is a lookup instead of a lossy reconstruction from
+     * display attributes.
+     *
+     * If the customer abandons the Shopify checkout, this row simply stays
+     * pending — honest abandoned-checkout data, never revenue.
+     */
+    if (!sessionCtx) {
+      // Without a session there is no artwork ownership check, no
+      // attribution and no way to reconcile the paid order. Refusing beats
+      // taking money for something we cannot fulfil or trace.
+      console.error("[checkout] refusing Shopify checkout without a session (cookies blocked?)");
+      return NextResponse.json(
+        { ok: false, code: "PROVIDER_ERROR", error: "Checkout is temporarily unavailable. Nothing was charged." },
+        { status: 503 },
       );
     }
-    const res = NextResponse.json({ ok: true, result });
-    if (sessionCtx) setSessionCookies(res, sessionCtx.session);
+
+    const pending = await persistPendingShopifyOrder(sessionCtx.session, serverLines, cart, attribution);
+
+    const result = await commerce.createCheckout(cart, attribution, {
+      sessionId: sessionCtx.session.id,
+      orderId: pending.orderId,
+    });
+    if (result.kind !== "redirect") throw new Error("Shopify provider returned a non-redirect checkout result");
+
+    if (result.reference) {
+      await setOrderCheckoutRef({ orderId: pending.orderId, checkoutRef: result.reference }).catch((err) =>
+        console.error(`[checkout] failed to record checkout ref for ${pending.orderId}`, err),
+      );
+    }
+
+    // A chat that led to checkout gets its outcome stamped (S06) — non-fatal.
+    await markConversationOutcomeForSession(sessionCtx.session.id, "checkout_started").catch((err) =>
+      console.error("[checkout] conversation outcome stamp failed", err),
+    );
+    await recordServerEvent({
+      sessionId: sessionCtx.session.id,
+      customerId: sessionCtx.session.customerId,
+      name: "checkout_started",
+      orderId: pending.orderId,
+      props: {
+        totalCents: cart.lines.reduce((sum, l) => sum + l.totalCents, 0),
+        currency: cart.currency,
+        lines: cart.lines.length,
+      },
+    }).catch((err) => console.error("[checkout] checkout_started event failed", err));
+
+    // Only the URL crosses to the browser — never the draft order id.
+    const res = NextResponse.json({ ok: true, result: { kind: "redirect", url: result.url } });
+    setSessionCookies(res, sessionCtx.session);
     return res;
   } catch (err) {
+    // Commerce MISCONFIGURATION is not a transient provider blip — it means
+    // production is running without a way to take money. It is logged as such
+    // and still answered with customer-safe copy (never a stack trace or a
+    // Shopify API message, §42).
+    if (err instanceof CommerceConfigurationError) {
+      console.error("[checkout] COMMERCE IS NOT CONFIGURED — no checkout can be created", err.message);
+      return NextResponse.json(
+        { ok: false, code: "PROVIDER_ERROR", error: "Checkout is temporarily unavailable" },
+        { status: 503 },
+      );
+    }
+    if (err instanceof ShopifyCheckoutError) {
+      console.error(`[checkout] Shopify checkout failed (${err.code})`, err.message);
+      const customerFacing =
+        err.code === "UNMAPPED_CONFIGURATION"
+          ? "That exact combination isn't available to order online yet — request a custom quote and we'll set it up."
+          : "Checkout is temporarily unavailable. Nothing was charged — try again in a moment.";
+      return NextResponse.json(
+        { ok: false, code: err.code === "UNMAPPED_CONFIGURATION" ? "UNAVAILABLE_CONFIGURATION" : "PROVIDER_ERROR", error: customerFacing },
+        { status: err.code === "UNMAPPED_CONFIGURATION" ? 409 : 502 },
+      );
+    }
     console.error("[checkout] provider createCheckout failed", err);
     return NextResponse.json(
       { ok: false, code: "PROVIDER_ERROR", error: "Checkout is temporarily unavailable" },
@@ -238,7 +358,7 @@ async function persistMockOrder(
       return { aiAssisted: false, conversationId: null };
     });
 
-    const { order } = await createOrder({
+    const { order, lines: orderLines } = await createOrder({
       sessionId: session.id,
       customerId: session.customerId ?? undefined,
       businessId: session.businessId ?? undefined,
@@ -260,6 +380,21 @@ async function persistMockOrder(
         artwork: s.line.config.artwork ?? null,
       })),
     });
+
+    // Artwork → ORDER LINE, explicitly (Session 02 §28). Fulfilment can now
+    // answer "which artwork belongs to this line?" without guessing from a
+    // filename, an email address or a browser session.
+    for (let i = 0; i < serverLines.length; i += 1) {
+      const artworkId = serverLines[i].line.config.artwork?.artworkId;
+      const orderLine = orderLines[i];
+      if (!artworkId || !orderLine) continue;
+      await linkArtworkToOrderLine({
+        artworkId,
+        orderId: order.id,
+        orderLineId: orderLine.id,
+        customerId: session.customerId,
+      }).catch((err) => console.error(`[checkout] artwork ${artworkId} link failed`, err));
+    }
 
     for (const s of serverLines) {
       await upsertActiveConfiguration({
@@ -316,4 +451,79 @@ async function persistMockOrder(
   } catch (err) {
     console.error(`[checkout] order persistence failed for ${providerOrderId} — commerce unaffected`, err);
   }
+}
+
+/**
+ * Persist the PRE-PAYMENT Shopify order (Production Launch Session 02 §17).
+ *
+ * Unlike `persistMockOrder`, this fires NO purchase event, marks NO
+ * conversion and stamps NO `purchased` outcome — none of that is true yet.
+ * It records what the customer is ABOUT to pay for, so the paid order
+ * arriving by webhook has something exact to reconcile against.
+ *
+ * Failure here is FATAL to the checkout, deliberately, and this is the one
+ * place in the codebase where "persistence is additive to commerce" does not
+ * apply: without this row a paid Shopify order could never be linked to a
+ * configuration, an artwork file or a session — the factory would receive
+ * money and no printable instructions.
+ */
+async function persistPendingShopifyOrder(
+  session: SessionRow,
+  serverLines: ServerLine[],
+  cart: Cart,
+  attribution: Record<string, string>,
+): Promise<{ orderId: string }> {
+  const assistance = await getAiAssistanceForSession(session.id).catch((err) => {
+    console.error("[checkout] AI-assistance lookup failed (order proceeds unattributed)", err);
+    return { aiAssisted: false, conversationId: null };
+  });
+
+  const { order, lines } = await createOrder({
+    sessionId: session.id,
+    customerId: session.customerId ?? undefined,
+    businessId: session.businessId ?? undefined,
+    conversationId: assistance.conversationId ?? undefined,
+    aiAssisted: assistance.aiAssisted,
+    provider: "shopify",
+    currency: cart.currency,
+    status: "pending_payment",
+    attribution,
+    lines: serverLines.map((s) => ({
+      productId: s.product.id,
+      quantity: s.line.config.quantity,
+      unitPriceCents: s.unitPriceCents,
+      totalCents: s.totalCents,
+      title: s.title,
+      optionSummary: s.optionSummary,
+      config: s.line.config,
+      artwork: s.line.config.artwork ?? null,
+    })),
+  });
+
+  // Artwork → order line, before payment: the association must survive even
+  // if the webhook is delayed (§28). Non-fatal — the order line already
+  // carries the artwork id in its config snapshot.
+  for (let i = 0; i < serverLines.length; i += 1) {
+    const artworkId = serverLines[i].line.config.artwork?.artworkId;
+    const orderLine = lines[i];
+    if (!artworkId || !orderLine) continue;
+    await linkArtworkToOrderLine({
+      artworkId,
+      orderId: order.id,
+      orderLineId: orderLine.id,
+      customerId: session.customerId,
+    }).catch((err) => console.error(`[checkout] artwork ${artworkId} link failed`, err));
+  }
+
+  for (const s of serverLines) {
+    await upsertActiveConfiguration({
+      sessionId: session.id,
+      productId: s.product.id,
+      config: s.line.config,
+      priceSnapshot: { unitPriceCents: s.unitPriceCents, totalCents: s.totalCents, currency: cart.currency },
+      source: "checkout",
+    }).catch((err) => console.error("[checkout] configuration snapshot failed", err));
+  }
+
+  return { orderId: order.id };
 }

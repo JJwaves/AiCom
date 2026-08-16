@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { COST_MODEL } from "@/config/costs";
 import { getDb } from "@/db/client";
@@ -20,11 +20,16 @@ import { newId } from "./id";
  * shipped → delivered (plus cancelled/refunded when webhooks land).
  */
 
+/**
+ * Artwork snapshot stored on an order line. `artworkId` is the durable
+ * reference; `url` is deliberately ABSENT — a browser object URL on a paid
+ * order line is a link the factory can never open (Session 02 §21).
+ */
 const artworkRefSchema = z.object({
+  artworkId: z.string().max(64).optional(),
   fileName: z.string().max(255),
   fileType: z.string().max(120),
   fileSizeBytes: z.number().int().nonnegative(),
-  url: z.string().max(2048).optional(),
   notes: z.string().max(1000).optional(),
 });
 
@@ -164,4 +169,184 @@ export async function getOrder(id: string): Promise<{ order: OrderRow; lines: Or
 export async function listOrdersBySession(sessionId: string): Promise<OrderRow[]> {
   const db = await getDb();
   return db.select().from(orders).where(eq(orders.sessionId, sessionId)).orderBy(desc(orders.createdAt));
+}
+
+/* ------------------------------------------------------------------ */
+/* Provider reconciliation (Production Launch Session 02 §16, §17)     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * ORDER AUTHORITY, stated once:
+ *
+ *   cart            → BagDirect browser state
+ *   price           → BagDirect deterministic pricing engine
+ *   checkout        → Shopify hosted checkout
+ *   PAYMENT TRUTH   → Shopify
+ *   PAID ORDER TRUTH→ Shopify, delivered by webhook
+ *   BagDirect order → RECONCILED from that truth
+ *
+ * A browser returning from Shopify proves nothing and is never treated as
+ * payment. The functions below are the only way an order becomes paid,
+ * cancelled or refunded, and each is idempotent so Shopify's retries cannot
+ * double-count anything.
+ */
+
+/** Terminal-ish statuses a later webhook must not silently undo. */
+const PAID_STATUSES = new Set(["paid", "artwork_review", "in_production", "shipped", "delivered"]);
+
+export async function findOrderByProviderOrderId(
+  provider: string,
+  providerOrderId: string,
+): Promise<OrderRow | null> {
+  const db = await getDb();
+  const [row] = await db
+    .select()
+    .from(orders)
+    .where(and(eq(orders.provider, provider), eq(orders.providerOrderId, providerOrderId)))
+    .limit(1);
+  return row ?? null;
+}
+
+export async function findOrderByCheckoutRef(provider: string, checkoutRef: string): Promise<OrderRow | null> {
+  const db = await getDb();
+  const [row] = await db
+    .select()
+    .from(orders)
+    .where(and(eq(orders.provider, provider), eq(orders.providerCheckoutRef, checkoutRef)))
+    .limit(1);
+  return row ?? null;
+}
+
+/**
+ * Attach the provider's order id to a BagDirect order created at checkout
+ * time. Idempotent: re-attaching the same id is a no-op, and attaching a
+ * DIFFERENT id is refused rather than silently overwriting — that would mean
+ * two Shopify orders claiming one BagDirect order, which is a reconciliation
+ * bug worth failing loudly on.
+ */
+export async function attachProviderOrderId(input: {
+  orderId: string;
+  providerOrderId: string;
+}): Promise<{ attached: boolean; conflict: boolean }> {
+  const db = await getDb();
+  const existing = await getOrder(input.orderId);
+  if (!existing) return { attached: false, conflict: false };
+  if (existing.order.providerOrderId === input.providerOrderId) return { attached: true, conflict: false };
+  if (existing.order.providerOrderId) return { attached: false, conflict: true };
+
+  await db
+    .update(orders)
+    .set({ providerOrderId: input.providerOrderId, updatedAt: new Date() })
+    .where(eq(orders.id, input.orderId));
+  return { attached: true, conflict: false };
+}
+
+export type OrderPaymentResult = {
+  order: OrderRow;
+  /** True only on the transition into paid — the caller fires purchase_completed exactly then. */
+  transitioned: boolean;
+};
+
+/**
+ * Mark an order paid, ONCE.
+ *
+ * The `transitioned` flag is the whole point: `purchase_completed`,
+ * conversion marking and the `purchased` conversation outcome all hang off
+ * it, so a replayed `orders/paid` — or an `orders/paid` arriving after
+ * `orders/create` already reported payment — updates nothing and fires
+ * nothing. The check and the write happen in ONE transaction under a row
+ * lock, so two concurrent deliveries cannot both see "not yet paid".
+ */
+export async function markOrderPaid(input: {
+  orderId: string;
+  paidAt?: Date;
+  /** Provider's authoritative total, when it differs from the BagDirect subtotal. */
+  providerTotalCents?: number | null;
+}): Promise<OrderPaymentResult | null> {
+  const db = await getDb();
+  return db.transaction(async (tx) => {
+    const [locked] = await tx
+      .select()
+      .from(orders)
+      .where(eq(orders.id, input.orderId))
+      .for("update")
+      .limit(1);
+    if (!locked) return null;
+    if (PAID_STATUSES.has(locked.status)) return { order: locked, transitioned: false };
+
+    const [updated] = await tx
+      .update(orders)
+      .set({
+        status: "paid",
+        paidAt: input.paidAt ?? new Date(),
+        ...(typeof input.providerTotalCents === "number" ? { totalCents: input.providerTotalCents } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(orders.id, input.orderId))
+      .returning();
+    return { order: updated, transitioned: true };
+  });
+}
+
+export async function markOrderCancelled(input: {
+  orderId: string;
+  cancelledAt?: Date;
+}): Promise<OrderPaymentResult | null> {
+  const db = await getDb();
+  return db.transaction(async (tx) => {
+    const [locked] = await tx.select().from(orders).where(eq(orders.id, input.orderId)).for("update").limit(1);
+    if (!locked) return null;
+    if (locked.status === "cancelled") return { order: locked, transitioned: false };
+
+    const [updated] = await tx
+      .update(orders)
+      .set({ status: "cancelled", cancelledAt: input.cancelledAt ?? new Date(), updatedAt: new Date() })
+      .where(eq(orders.id, input.orderId))
+      .returning();
+    return { order: updated, transitioned: true };
+  });
+}
+
+/**
+ * Record a refund reported by the provider (§45 — minimal, honest).
+ *
+ * `refundedTotalCents` accumulates. Reaching the order total moves the status
+ * to `refunded` (so business intelligence stops counting it as revenue);
+ * anything less leaves the order `paid` with the partial amount recorded.
+ * Per-LINE refund allocation is deliberately not modelled — Shopify refunds
+ * can be arbitrary amounts against arbitrary lines, and inventing an
+ * allocation would produce precise-looking per-product profit that is not
+ * true. Documented in docs/SHOPIFY_PRODUCTION.md §"Refunds".
+ */
+export async function recordOrderRefund(input: {
+  orderId: string;
+  refundAmountCents: number;
+}): Promise<{ order: OrderRow; fullyRefunded: boolean } | null> {
+  const db = await getDb();
+  return db.transaction(async (tx) => {
+    const [locked] = await tx.select().from(orders).where(eq(orders.id, input.orderId)).for("update").limit(1);
+    if (!locked) return null;
+
+    const refunded = Math.max(0, locked.refundedTotalCents + Math.max(0, input.refundAmountCents));
+    const fullyRefunded = refunded >= locked.totalCents && locked.totalCents > 0;
+    const [updated] = await tx
+      .update(orders)
+      .set({
+        refundedTotalCents: refunded,
+        ...(fullyRefunded ? { status: "refunded" } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(orders.id, input.orderId))
+      .returning();
+    return { order: updated, fullyRefunded };
+  });
+}
+
+/** Record the provider's pre-payment checkout handle (Shopify draft order GID). */
+export async function setOrderCheckoutRef(input: { orderId: string; checkoutRef: string }): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(orders)
+    .set({ providerCheckoutRef: input.checkoutRef, updatedAt: new Date() })
+    .where(eq(orders.id, input.orderId));
 }

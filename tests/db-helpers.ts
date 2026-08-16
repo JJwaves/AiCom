@@ -15,7 +15,7 @@ export async function resetDb(): Promise<void> {
       "agent_action_events", "guardrail_evaluations", "agent_actions",
       "agent_configs", "approvals", "agent_decisions", "ai_usage",
       "customer_need_profiles", "messages", "conversations",
-      "events", "artworks", "quotes", "order_lines", "orders",
+      "events", "artworks", "quotes", "provider_webhook_events", "order_lines", "orders",
       "product_configurations", "sessions", "customers", "businesses"
     CASCADE
   `);

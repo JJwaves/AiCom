@@ -94,22 +94,66 @@ take real traffic until they pass.
 - [ ] Expect profit to appear only for orders placed AFTER the configuration exists. Earlier orders report HISTORICAL_COST_UNAVAILABLE — today's costs are deliberately never applied backwards
 - [ ] Know what is NOT modelled: refunds, discounts (structurally absent), overhead/salaries/rent/tax, freight rate shopping, currency conversion, negotiated quote economics
 
-## Commerce
-- [ ] ⛔ Shopify production credentials in env (`NEXT_PUBLIC_SHOPIFY_*`)
-- [ ] ⛔ Variant mapping complete in `lib/commerce/shopify.ts` (no `REPLACE_ME` ids)
-- [ ] ⛔ Mock-catalog read fallback removed from `lib/commerce/catalog.ts` once the Shopify mapping is verified (it exists so an early env switch can't empty the storefront; launch must serve the real catalog only)
-- [ ] Cost model filled in `config/costs.ts` (no `null` inputs) so margins compute and price guardrails can verify — see the "Unit economics" section above and BUSINESS_CONFIG_TODO "Cost model"
-- [ ] ⛔ Real product prices loaded; `pricingStatus: "LIVE"`; `NEXT_PUBLIC_DEMO_PRICING=false`
+## Commerce — Shopify production (Session 02)
+
+Architecture: `docs/SHOPIFY_PRODUCTION.md`. **Engineering is complete; every
+item below is owner data or an operational step.** Nothing here is ticked by
+code.
+
+**Shopify configuration**
+- [ ] ⛔ `SHOPIFY_STORE_DOMAIN` set (`your-store.myshopify.com`, server-only)
+- [ ] ⛔ `SHOPIFY_ADMIN_API_TOKEN` set — custom app, scope `write_draft_orders` (server-only, never `NEXT_PUBLIC_*`)
+- [ ] Verify the production guard: with these UNSET and `NODE_ENV=production`, `/api/checkout` must answer **503** and the log must say "COMMERCE IS NOT CONFIGURED". It must NEVER return a `MOCK-*` order.
+
+**Merchandise mapping**
+- [ ] ⛔ Shopify products created (one per BagDirect product)
+- [ ] ⛔ Shopify variants created for every purchasable product · size · material · color
+- [ ] ⛔ `config/shopify.ts → SHOPIFY_MERCHANDISE_MAP` filled — run `validateMerchandiseMap()` until it reports `complete: true` with zero `error` issues (`requiredMerchandiseKeys()` prints the exact list). Ships EMPTY.
+- [ ] Preflight each mapped variant id resolves in the Shopify admin (a typo'd-but-valid GID sells the wrong bag)
+
+**Pricing**
+- [ ] ⛔ Real product prices loaded; `pricingStatus: "LIVE"`; `NEXT_PUBLIC_DEMO_PRICING=false` — **only after real prices are entered**, never before
 - [ ] ⛔ Real MOQ confirmed (`MOQ_CONFIRMED: true`)
-- [ ] ⛔ Real shipping costs (rate source configured or Shopify shipping profiles)
-- [ ] ⛔ Taxes configured in Shopify (US states + CA)
+- [ ] Cost model filled in `config/costs.ts` (no `null` inputs) — see "Unit economics" above. NOT a checkout blocker: missing costs never block a sale.
+- [ ] Verify the Shopify checkout total equals the BagDirect total exactly (a mismatch aborts checkout by design — if it fires, the mapping or the store currency is wrong)
+
+**Webhooks**
+- [ ] ⛔ `SHOPIFY_WEBHOOK_SECRET` set (Settings → Notifications → Webhooks; shown once)
+- [ ] ⛔ Webhooks registered → `POST https://<domain>/api/webhooks/shopify`, JSON, API version matching `SHOPIFY_API_VERSION`:
+      `orders/create` · `orders/paid` · `orders/cancelled` · `refunds/create`
+- [ ] Verify a forged/unsigned webhook is rejected **401** and writes nothing
+- [ ] Verify the endpoint is reachable from the public internet (not behind admin auth — `proxy.ts` guards `/admin` and `/api/admin` only)
+
+**Store configuration (Shopify's responsibility — verify, don't assume)**
+- [ ] ⛔ US shipping profile configured; rates appear at the draft-order invoice checkout after entering an address
+- [ ] ⛔ Taxes configured in Shopify for the US states you have nexus in
 - [ ] ⛔ Payment gateway enabled and in live mode
-- [ ] Mobile checkout tested end-to-end
-- [ ] US test order placed and refunded
-- [ ] Canada test order placed and refunded
-- [ ] Confirmation emails tested
-- [ ] Artwork upload tested (each format: PNG, JPG, PDF, SVG, AI, EPS)
-- [ ] Artwork storage wired (files persist and attach to orders)
+- [ ] Confirmation emails reviewed (Shopify sends them; BagDirect does not)
+- [ ] **US-only soft launch** — Canada shipping/tax/customs is NOT configured or tested (Session 02 §39)
+
+**End-to-end test order (real store, TEST payment — see docs/SHOPIFY_PRODUCTION.md §14)**
+- [ ] Test order placed and PAID; BagDirect order flips `pending_payment` → `paid`
+- [ ] Exactly ONE `purchase_completed` event exists for it
+- [ ] Re-send the webhook from the Shopify admin → nothing changes (idempotency)
+- [ ] Partial refund → `refunded_total_cents` updates, status stays `paid`
+- [ ] Full refund → status becomes `refunded`, order leaves revenue
+- [ ] Cancel a test order → status becomes `cancelled`, order leaves revenue
+- [ ] Mobile checkout tested end-to-end (375px)
+
+## Artwork storage (Session 02)
+
+Architecture: `docs/ARTWORK_STORAGE.md`.
+
+- [ ] ⛔ S3-compatible bucket created and **PRIVATE** (no public read, no listing)
+- [ ] ⛔ `ARTWORK_S3_ENDPOINT` / `_REGION` / `_BUCKET` / `_ACCESS_KEY_ID` / `_SECRET_ACCESS_KEY` set (server-only)
+- [ ] ⛔ CORS on the bucket allows `PUT` from your production origin with the `Content-Type` header (the browser uploads directly)
+- [ ] Upload smoke test: each accepted format (PNG, JPG, PDF, AI, EPS) uploads, verifies and attaches to a cart line
+- [ ] Verify **SVG is refused** with the actionable message (policy decision — Session 02 §25)
+- [ ] Verify a file renamed to `.png` but containing something else is refused and the object deleted
+- [ ] Verify that with storage UNSET, the uploader says so and never pretends to succeed
+- [ ] Verify the artwork reaches the ORDER LINE: `artworks.order_line_id` is set on a paid multi-line order
+- [ ] Decide retention for abandoned uploads (`listAbandonedArtwork()` identifies them; automated cleanup is DEFERRED)
+- [ ] Note: **quote artwork is still metadata-only** — the quote form does not use durable storage yet (Session 02 §30)
 
 ## Content
 - [ ] ⛔ Policies reviewed by owner + legal (`reviewed` flag set on each PolicyPage)

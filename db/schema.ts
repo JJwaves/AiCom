@@ -154,13 +154,32 @@ export const orders = pgTable(
      * this order actually cost. Never recomputed from current config.
      */
     costSnapshotJson: jsonb("cost_snapshot_json").$type<OrderCostSnapshot>(),
+    /**
+     * Cumulative amount refunded by the PROVIDER (Production Launch Session
+     * 02 §45). Shopify is the refund authority; BagDirect only records what
+     * it is told. A partial refund leaves `status` at "paid" and records the
+     * amount here; a refund reaching `totalCents` moves status to
+     * "refunded". Per-line refund allocation is deliberately NOT modelled —
+     * see docs/SHOPIFY_PRODUCTION.md §"Refunds" for the deferred accounting.
+     */
+    refundedTotalCents: integer("refunded_total_cents").notNull().default(0),
+    /** When the provider confirmed payment. NULL until an authoritative paid event arrives. */
+    paidAt: ts("paid_at"),
+    /** When the provider cancelled the order. */
+    cancelledAt: ts("cancelled_at"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (t) => [
     index("orders_session_idx").on(t.sessionId),
     index("orders_customer_idx").on(t.customerId),
-    index("orders_provider_order_idx").on(t.provider, t.providerOrderId),
+    /**
+     * UNIQUE, not merely indexed (Session 02 §15). Shopify retries webhooks
+     * and can deliver orders/create and orders/paid concurrently; this makes
+     * "two rows for one provider order" — double revenue — impossible at the
+     * storage layer rather than only in application logic.
+     */
+    uniqueIndex("orders_provider_order_idx").on(t.provider, t.providerOrderId),
   ],
 );
 
@@ -231,18 +250,89 @@ export const artworks = pgTable(
     customerId: text("customer_id").references(() => customers.id, { onDelete: "set null" }),
     orderId: text("order_id").references(() => orders.id, { onDelete: "set null" }),
     quoteId: text("quote_id").references(() => quotes.id, { onDelete: "set null" }),
+    /**
+     * The order LINE this artwork is printed on (Production Launch Session
+     * 02 §28). `orderId` alone cannot answer "which artwork belongs to this
+     * line?" for a multi-line order — this can, deterministically, without
+     * inferring from filename, email or session.
+     */
+    orderLineId: text("order_line_id").references(() => orderLines.id, { onDelete: "set null" }),
+    /** Customer-supplied name, sanitized. Redacted on customer deletion (S03.5). */
     fileName: text("file_name").notNull(),
     fileType: text("file_type").notNull(),
     sizeBytes: integer("size_bytes").notNull(),
-    /** Object-storage location once binary storage exists (launch task) — metadata only today. */
+    /**
+     * Object-storage KEY (not a URL, not a signed link). Server-derived and
+     * never client-supplied. Objects are private; readable only through a
+     * short-lived signed URL minted server-side. Redacted on customer
+     * deletion because the key embeds the original filename.
+     */
+    storageKey: text("storage_key"),
+    /** Which storage backend holds it, e.g. "s3". NULL for metadata-only legacy rows. */
+    storageProvider: text("storage_provider"),
+    /** Legacy column kept for pre-Session-02 rows. Never written any more. */
     storageUrl: text("storage_url"),
+    /** SHA-256 of the stored bytes, when the backend reports a verifiable digest. */
+    checksum: text("checksum"),
     notes: text("notes"),
-    /** uploaded | review_required | proof_created | proof_sent | approved | revision_requested | production_ready */
+    /**
+     * pending_upload — a signed upload was issued, bytes not confirmed yet
+     * uploaded — bytes verified in object storage; usable by commerce
+     * then: review_required | proof_created | proof_sent | approved
+     *       | revision_requested | production_ready
+     * abandoned — issued but never completed (identifiable for cleanup, §29)
+     */
     status: text("status").notNull().default("uploaded"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [index("artworks_quote_idx").on(t.quoteId), index("artworks_order_idx").on(t.orderId)],
+  (t) => [
+    index("artworks_quote_idx").on(t.quoteId),
+    index("artworks_order_idx").on(t.orderId),
+    index("artworks_order_line_idx").on(t.orderLineId),
+    index("artworks_session_status_idx").on(t.sessionId, t.status),
+  ],
+);
+
+/* ------------------------------------------------------------------ */
+/* Provider webhook ledger (Production Launch Session 02)              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Exactly-once processing for provider webhooks.
+ *
+ * Shopify retries deliveries, and the same business fact can arrive more
+ * than once (a retry after a timeout, a manual re-send from the admin, an
+ * orders/create racing an orders/paid). Idempotency here is keyed on the
+ * PROVIDER'S OWN STABLE IDENTIFIER for the event's subject — the order id
+ * for order topics, the refund id for refund topics — NOT on the delivery
+ * id, which changes when a merchant re-sends the same event by hand.
+ *
+ * The unique constraint is the mechanism: processing claims its row first,
+ * and a conflict means "already handled, acknowledge and do nothing".
+ */
+export const providerWebhookEvents = pgTable(
+  "provider_webhook_events",
+  {
+    id: text("id").primaryKey(),
+    /** shopify */
+    provider: text("provider").notNull(),
+    /** Provider topic, e.g. "orders/paid". */
+    topic: text("topic").notNull(),
+    /** The provider's stable id for what the event is ABOUT (order id, refund id). */
+    providerEventId: text("provider_event_id").notNull(),
+    /** Delivery id (X-Shopify-Webhook-Id) — diagnostics only, never the idempotency key. */
+    deliveryId: text("delivery_id"),
+    orderId: text("order_id").references(() => orders.id, { onDelete: "set null" }),
+    /** processed | ignored | failed */
+    outcome: text("outcome").notNull().default("processed"),
+    detail: text("detail"),
+    receivedAt: ts("received_at").notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("provider_webhook_events_identity_idx").on(t.provider, t.topic, t.providerEventId),
+    index("provider_webhook_events_order_idx").on(t.orderId),
+  ],
 );
 
 /* ------------------------------------------------------------------ */

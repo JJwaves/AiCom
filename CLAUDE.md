@@ -53,6 +53,145 @@ limits, refund authorization, agent autonomy, approvals.
 
 ## Current project stage
 
+**PRODUCTION LAUNCH SESSION 02 "Real Commerce Termination" COMPLETE
+(2026-08-16) — a real customer can now configure a real product, get the
+engine's price, upload artwork that survives the browser, pay on Shopify, and
+have an authoritative BagDirect order created from the payment. The four
+launch blockers are closed; what remains is owner data, not engineering.**
+
+**1. PRODUCTION CANNOT USE MOCK COMMERCE.** `resolveCommerceConfiguration()`
+(`lib/commerce/config.ts`) THROWS rather than degrading, mirroring
+`db/client.ts`: production with missing OR partial Shopify configuration
+produces a loud actionable error naming the variables (never their values),
+and `/api/checkout` answers 503. **Partial configuration fails in EVERY
+environment** — half-set credentials always mean Shopify was intended. The
+mock provider itself refuses to run with `NODE_ENV=production` even if
+imported directly, and `MOCK-` ids are minted in exactly ONE file (asserted).
+What this prevents is specific: mock checkout would have written Order rows,
+fired the authoritative `purchase_completed` and marked sessions converted
+while charging nobody — fake revenue that BI, profitability, POAS and ad
+attribution would all have reported as real. **Browser-verified against a real
+production build: 503 + "COMMERCE IS NOT CONFIGURED", no MOCK order.**
+
+**2. SHOPIFY IS REAL — AND IT IS A DRAFT ORDER, NOT A STOREFRONT CART.**
+`gid://shopify/ProductVariant/REPLACE_ME` is gone. Shopify's Storefront cart
+API **cannot express a custom line price**, and a BagDirect price is
+`tier(qty) + material delta + print delta` — inexpressible as one variant
+price without ~1,700 variants encoding arithmetic this codebase already owns.
+So checkout calls `draftOrderCreate` with an explicit `priceOverride` per line
+(Admin GraphQL `2026-07`, centralized in `config/shopify.ts`; an unsupported
+env pin throws), then **READS THE DRAFT ORDER BACK AND VERIFIES IT** — unit
+price, line total, quantity, currency and subtotal — and any divergence
+DELETES the draft and fails visibly. The customer never reaches a Shopify
+checkout showing a price BagDirect did not compute. Money crosses as integer
+cents ↔ 2-decimal string; an unparseable amount is a verification failure,
+never a rounded guess. Mutations are NEVER retried (a retried
+`draftOrderCreate` = two invoices for one cart); the Admin token is attached
+in exactly ONE file.
+
+**3. CATALOG AUTHORITY IS BAGDIRECT'S, AND THAT IS WHAT DELETED THE DANGEROUS
+FALLBACK.** `config/products.ts` defines what exists, which options are legal
+and which tiers apply; Shopify is merchandise + checkout + payment and has no
+representation for any of it. Both providers serve the same catalog, so
+`lib/commerce/catalog.ts` no longer hops through a provider AT ALL — there is
+no remote catalog read to fail, so there is nothing to fall back from, and
+"Shopify is down" can never become "show the customer demo products" (§8).
+Consequences, all deliberate: the storefront renders without Shopify, a
+catalog read needs no credential, and `next build` prerenders product pages
+with commerce unconfigured. `listProducts()` returning `[]` is gone.
+
+**4. MERCHANDISE MAPPING IS DETERMINISTIC AND EMPTY.**
+`product · size · material · color` → a Shopify variant GID, via a strict
+exact-match table in `config/shopify.ts`. Print option and quantity change the
+PRICE, not the item, so they travel as line attributes. **No fuzzy matching,
+no AI matching, no default variant, no nearest match** — an unmapped
+configuration fails BEFORE Shopify is called and returns a 409 routing to the
+custom-quote flow, because shipping the wrong physical bag is worse than
+failing a checkout. `validateMerchandiseMap()` errors on unknown keys,
+duplicate variants and malformed GIDs; `requiredMerchandiseKeys()` prints
+exactly what the owner must fill (custom colors excluded — quote-only).
+**The table ships EMPTY: the mechanism is implementation, the ids are owner
+data.**
+
+**5. PAYMENT TRUTH IS SHOPIFY'S, DELIVERED BY WEBHOOK.** `/api/webhooks/shopify`
+handles `orders/create` · `orders/paid` · `orders/cancelled` · `refunds/create`.
+**Order of operations IS the security model**: read the RAW body (never
+`req.json()` first — parse-then-stringify changes the bytes Shopify signed),
+verify the HMAC (`timingSafeEqual`, logs nothing, fails CLOSED with no
+secret), and only THEN parse and touch the database — asserted structurally,
+because anyone who could forge this endpoint could mint revenue.
+**Idempotency keys on the SUBJECT (order id / refund id), NOT the delivery
+id** — a merchant re-sending from the admin gets a new delivery id for the
+same business fact, which would process that payment twice; the claim is a
+UNIQUE insert so concurrent deliveries cannot both see "not processed yet",
+and a failed claim is RELEASED so the retry is real work.
+
+**6. THE ORDER ROW IS CREATED BEFORE PAYMENT, AS `pending_payment`.** It is the
+only place the exact server-priced lines, the immutable configuration
+snapshots, the artwork links, the attribution and the cost snapshot exist
+together; its id travels to Shopify as `_bd_order_id` and returns on the paid
+order, so **reconciliation is a LOOKUP, not a reconstruction** from display
+attributes. `pending_payment` joined `EXCLUDED_ORDER_STATUSES`, so an
+abandoned checkout is honest abandoned-checkout data and never revenue. This
+is the ONE place "persistence is additive to commerce" does not apply.
+**`purchase_completed` fires from ONE flag** — the `transitioned` boolean
+`markOrderPaid` flips inside a row-locked transaction — so a replay, an
+`orders/paid` after an already-paid `orders/create`, or two concurrent
+deliveries all do nothing. It never fires because a checkout URL was created,
+a browser redirected, a customer returned, or the AI asked. Shopify's grand
+total (shipping + tax) is deliberately NOT copied over `orders.totalCents`,
+which stays the BagDirect subtotal every margin divides by.
+
+**7. ARTWORK IS DURABLE, SERVER-VERIFIED, AND LINKED TO AN ORDER LINE.**
+`URL.createObjectURL` is gone (asserted repo-wide). The server mints the
+artwork id and therefore the object KEY (`artwork/{id}/{safeName}` — the
+browser cannot name, guess or traverse to another object; the request schema
+is `.strict()`), SIGNS the content type, and **refuses to trust the upload
+until it independently HEADs the object and reads its magic bytes** — an SVG
+renamed `.png` does not survive, and a failed file is deleted and marked
+`rejected`. Bytes go browser → S3-compatible storage directly (25 MB through a
+serverless route handler is not viable); zero new dependencies — SigV4 is ~80
+lines of `node:crypto`. **`artworks.order_line_id` is explicit**, because
+`order_id` alone cannot answer "which artwork belongs to this line?" on a
+multi-line order, and inference from filename/email/session is not
+determinism. Checkout additionally verifies the artwork belongs to THIS
+session. Missing storage never pretends to succeed (503, "choose No logo") —
+**browser-verified**. Session 03.5 privacy semantics preserved and extended to
+`storage_key`.
+
+**8. SVG IS REJECTED — a decision, not an oversight.** An SVG is an executable
+document; once artwork is durably stored and served back to staff, a stored
+SVG is stored XSS. Sanitisation is an ongoing commitment with a live bypass
+literature; rejection costs one "export as PDF" click and PDF/AI/EPS all carry
+vector artwork.
+
+**9. PRICING AUTHORITY IS UNCHANGED.** `Client config → server validation →
+deterministic engine → authoritative cart line` holds byte-for-byte; `409
+REPRICED` semantics are untouched; storefront tier prices are asserted
+identical; the Shopify provider never imports `modules/pricing` and never
+computes a price — it restates one and verifies it came back. Cost
+configuration still never blocks a sale.
+
+Migration `0009_production_commerce.sql` (additive): `orders` +
+`refunded_total_cents` / `paid_at` / `cancelled_at` and a **UNIQUE**
+`(provider, provider_order_id)` index; `artworks` + `order_line_id` /
+`storage_key` / `storage_provider` / `checksum`; new
+`provider_webhook_events`. **NO AI change** — no agent, no tool, no autonomy,
+no executor, `GUARDRAIL_POLICY_VERSION` unchanged, executor registry still
+EMPTY, every guardrail limit still null, Google Ads still read-only.
+**1262 tests (1072 → 1262: 190 new).** Docs: new `docs/SHOPIFY_PRODUCTION.md`
++ `docs/ARTWORK_STORAGE.md`.
+
+**REMAINING LAUNCH BLOCKERS ARE ALL OWNER DATA:** Shopify store domain + Admin
+API token + webhook secret + webhook registration; the merchandise map
+(`config/shopify.ts`, empty); artwork storage credentials + a private bucket
+with CORS; real prices (demo notices stay until `NEXT_PUBLIC_DEMO_PRICING=false`);
+MOQ confirmation; US shipping profile and tax configuration in Shopify; and a
+real test order proving shipping/tax/payment actually work — **none of which
+this session could invent, and none of which it did.** Next: Production Launch
+Session 03 — Tracking, Monitoring, Abuse Protection + Operational Hardening
+(do not start automatically).
+
 **Session 13.5 "Business Cost Model + Margin Policy" COMPLETE (2026-08-16) —
 the platform now has a complete, deterministic, configurable unit-economics
 model, and STILL knows none of the numbers. `modules/pricing` is the one cost
@@ -2365,17 +2504,54 @@ the browser with every cost `null`).
   is on another page is visible in chat ("✓ Configurator updated" chip)
   and on next configurator mount (restore), with no page-level toast
   elsewhere (deliberate, avoids cross-page notification noise).
-- Shopify variant mapping is `TODO(shopify)` pending a real store;
-  `createCheckout` still ships a `REPLACE_ME` variant id. The catalog-read
-  mock fallback in `lib/commerce/catalog.ts` must be REMOVED once the
-  mapping is complete (tracked in LAUNCH_CHECKLIST).
-- Shopify order/customer rows are NOT persisted yet — order webhooks are a
-  future session; today only mock orders write DB records (by design).
+- ~~Shopify variant mapping is `TODO(shopify)`; `createCheckout` ships a
+  `REPLACE_ME` variant id; the catalog-read mock fallback must be removed~~ —
+  **RESOLVED in Production Launch Session 02**: real draft-order checkout,
+  deterministic mapping in `config/shopify.ts` (shipped EMPTY — owner data),
+  and the catalog fallback DELETED along with the provider hop that needed it.
+- ~~Shopify order rows are NOT persisted — order webhooks are a future
+  session~~ — **RESOLVED in Production Launch Session 02**: `/api/webhooks/shopify`
+  reconciles `orders/create`/`paid`/`cancelled` and `refunds/create` into
+  authoritative Order rows. **Shopify CUSTOMER rows are still not created** —
+  Shopify collects the email at checkout and BagDirect does not pull it back,
+  so a Shopify order links to a session, not to a `customers` row (unless a
+  quote created one earlier).
+- (Launch S02) **No scheduled reconciliation sweep.** If a webhook is
+  permanently lost (endpoint down past Shopify's retry window) the order stays
+  `pending_payment` and must be reconciled by hand. A periodic "orders since X"
+  sweep is the obvious next hardening step.
+- (Launch S02) **Fulfilment sync is not implemented.** Tracking numbers and
+  shipping status stay in Shopify; BagDirect order status advances to `paid`
+  and stops. The pipeline states exist in the schema but nothing drives them.
+- (Launch S02) **Partial refunds are one cumulative amount**, not per line.
+  Shopify refunds can be arbitrary amounts against arbitrary lines; inventing
+  an allocation would produce precise-looking per-product profit that is false.
+- (Launch S02) **Shipping and tax are Shopify's and are NOT verified.** The
+  draft order sets no `shippingLine` and no tax fields, so Shopify's shipping
+  profiles and tax configuration apply — but that requires a real store and is
+  a launch-checklist test, not a claim. **US-only soft launch**; Canada is
+  unconfigured and untested.
+- (Launch S02) **Quote artwork is still metadata-only** — `/api/quote` records
+  filename/type/size and does NOT use durable storage. The infrastructure is
+  ready (same upload routes, `artworks.quote_id` exists); converting the
+  multipart quote form was deliberately out of scope, since quotes are the
+  secondary conversion path.
+- (Launch S02) **Artwork size is enforced AFTER upload, not during.** The
+  signed PUT does not sign `Content-Length`, so a client could upload more than
+  it declared; the completion check catches it, deletes the object and rejects
+  the artwork. A bucket lifecycle rule or a signed content-length is the
+  tightening step. No virus scanning, no DPI/dimension check, no preview
+  thumbnail (the object URL that used to provide one is gone).
+- (Launch S02) The `orders_provider_order_idx` UNIQUE migration will FAIL on a
+  database that already holds duplicate `(provider, provider_order_id)` pairs.
+  Fresh installs and the dev database are unaffected.
 - Quantity changes on the cart page re-price client-side for instant
   feedback (optimistic); the server re-quote at checkout remains the
   authority, so drift is always caught before an order exists.
-- Artwork binaries are not persisted (metadata rows only — storage is a
-  launch task).
+- ~~Artwork binaries are not persisted (metadata rows only)~~ — **RESOLVED in
+  Production Launch Session 02** for the PURCHASE path (durable S3-compatible
+  storage, server-verified, linked to an order line). Still metadata-only for
+  the QUOTE path (above).
 - Dev-mode React StrictMode double-fires some dataLayer events (view_item,
   page_view) — visible as duplicate first-party rows in the DEV database
   only (distinct clientEventIds, so dedup correctly doesn't collapse
@@ -2700,8 +2876,43 @@ the 03.5 hardening pass (small blast radius, none block Session 04):
 
 ## Recommended next session
 
-**Session 14 — Google Ads Recommendation Agent + Guarded Action Preparation.**
-Do not start it automatically.
+**Production Launch Session 03 — Tracking, Monitoring, Abuse Protection +
+Operational Hardening.** Do not start it automatically.
+
+Launch Session 02 closed the four commerce blockers. What it deliberately did
+NOT do, and what Session 03 exists for:
+
+1. **Conversion tracking for advertising.** An authoritative first-party
+   `purchase_completed` now exists for real Shopify orders (§48) — Session 03
+   connects it downstream to GA4, Google Ads and Meta. Until then, ad platforms
+   cannot see real purchases.
+2. **Monitoring, health checks and alerting.** Session 02 logs production
+   commerce failures clearly and safely but builds no Sentry, no health
+   endpoint, no alert. A webhook endpoint that goes down silently loses paid
+   orders — that is the highest-value thing to monitor.
+3. **General API rate limiting.** Only the new upload endpoint got abuse
+   controls (§50). `/api/events`, `/api/configuration` and `/api/cart/line`
+   still rely on bounded payloads and platform-edge limiting.
+4. **Escalation delivery.** Human handoffs are still recorded and not routed
+   anywhere (owner config).
+5. **A reconciliation sweep** for permanently-lost webhooks (see Known issues).
+
+**Before any of it, and worth more: the owner's data.** The engineering for a
+real sale is done; a real sale still needs a Shopify store, the merchandise
+map, artwork storage credentials, real prices and a verified test order. That
+is a business-input task, not a coding session — LAUNCH_CHECKLIST.md
+"Commerce — Shopify production" is the exact list.
+
+Also still outstanding from before this session, unchanged in priority:
+**filling `config/costs.ts`**, which unblocks gross profit, contribution
+profit, the minimum safe price and POAS across S09, S12 and S13 at once.
+
+---
+
+## Deferred: Session 14 — Google Ads Recommendation Agent + Guarded Action Preparation
+
+Not the recommended next step any more — launch operations come first. Kept
+here because its analysis is still accurate.
 
 **Before it, and worth more: fill `config/costs.ts`.** Session 13.5 built the
 complete unit-economics model and deliberately supplied none of its numbers.

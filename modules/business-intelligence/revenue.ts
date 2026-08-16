@@ -19,8 +19,19 @@ import { available, unavailable, type Metric } from "./availability";
  *    AVAILABLE only while the period's orders share one currency.
  */
 
-/** Order statuses excluded from revenue (terminal reversals). */
-export const EXCLUDED_ORDER_STATUSES = ["cancelled", "refunded"] as const;
+/**
+ * Order statuses excluded from revenue.
+ *
+ * Two distinct reasons, both meaning "this is not money we earned":
+ *  - `pending_payment` — NOT YET REAL. Production Launch Session 02 creates
+ *    an order row when a Shopify checkout is created, BEFORE the customer
+ *    pays, so the configuration and artwork snapshots exist to reconcile the
+ *    paid order against. Counting one as revenue would report every abandoned
+ *    checkout as a sale.
+ *  - `cancelled` / `refunded` — TERMINAL REVERSALS, reconciled from Shopify
+ *    webhooks (Session 02 §45, §46).
+ */
+export const EXCLUDED_ORDER_STATUSES = ["pending_payment", "cancelled", "refunded"] as const;
 
 export function isCountedOrder(order: OrderRow): boolean {
   return !(EXCLUDED_ORDER_STATUSES as readonly string[]).includes(order.status);

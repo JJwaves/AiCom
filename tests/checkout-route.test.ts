@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { POST } from "@/app/api/checkout/route";
 import { PRODUCTS } from "@/config/products";
+import { createPendingArtwork, markArtworkUploaded } from "@/lib/data/artwork-service";
+import { SESSION_COOKIE } from "@/lib/data/session-service";
+import { makeSession } from "./db-helpers";
 
 /**
  * Server-side checkout re-quote. The mock provider is active (no Shopify
@@ -10,12 +13,34 @@ import { PRODUCTS } from "@/config/products";
 
 const product = PRODUCTS[0]; // tiers: 5000 → 42¢; one-color +5¢
 
-function makeRequest(body: unknown): Request {
+function makeRequest(body: unknown, cookie?: string): Request {
   return new Request("http://localhost/api/checkout", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(cookie ? { cookie } : {}) },
     body: typeof body === "string" ? body : JSON.stringify(body),
   });
+}
+
+/**
+ * A durable, server-verified artwork owned by a real session — what the
+ * upload flow produces. Since Session 02 a printed line needs one: a cart
+ * carrying only a dead `blob:` URL is refused.
+ */
+async function uploadedArtwork(): Promise<{ cookie: string; artwork: { artworkId: string; fileName: string; fileType: string; fileSizeBytes: number } }> {
+  const session = await makeSession();
+  const row = await createPendingArtwork({
+    sessionId: session.id,
+    fileName: "logo.png",
+    fileType: "image/png",
+    sizeBytes: 2048,
+    storageKey: "artwork/test/logo.png",
+    storageProvider: "fake",
+  });
+  await markArtworkUploaded({ id: row.id, sizeBytes: 2048, fileType: "image/png" });
+  return {
+    cookie: `${SESSION_COOKIE}=${session.id}`,
+    artwork: { artworkId: row.id, fileName: "logo.png", fileType: "image/png", fileSizeBytes: 2048 },
+  };
 }
 
 function validLine(overrides: Record<string, unknown> = {}, configOverrides: Record<string, unknown> = {}) {
@@ -68,6 +93,27 @@ describe("POST /api/checkout", () => {
   });
 
   it("prices option deltas server-side (one-color print with artwork)", async () => {
+    const { cookie, artwork } = await uploadedArtwork();
+    const res = await POST(
+      makeRequest(
+        {
+          lines: [
+            validLine(
+              { proposedUnitPriceCents: 47, proposedTotalCents: 47 * 5000 },
+              { printOptionId: "one-color", artwork },
+            ),
+          ],
+          attribution: {},
+        },
+        cookie,
+      ),
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.order.cart.lines[0].unitPriceCents).toBe(47);
+  });
+
+  it("refuses a printed line whose artwork is only a legacy browser object URL", async () => {
     const res = await POST(
       makeRequest({
         lines: [
@@ -75,16 +121,45 @@ describe("POST /api/checkout", () => {
             { proposedUnitPriceCents: 47, proposedTotalCents: 47 * 5000 },
             {
               printOptionId: "one-color",
-              artwork: { fileName: "logo.png", fileType: "image/png", fileSizeBytes: 2048 },
+              // A cart saved before durable storage: no artworkId, just a
+              // blob: URL that died with the tab.
+              artwork: {
+                fileName: "logo.png",
+                fileType: "image/png",
+                fileSizeBytes: 2048,
+                url: "blob:http://localhost/9f2c",
+              },
             },
           ),
         ],
         attribution: {},
       }),
     );
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(422);
     const data = await res.json();
-    expect(data.order.cart.lines[0].unitPriceCents).toBe(47);
+    expect(data.errors[0].reason).toMatch(/re-upload/i);
+  });
+
+  it("refuses an artwork id belonging to a different session", async () => {
+    const { artwork } = await uploadedArtwork();
+    const other = await makeSession();
+    const res = await POST(
+      makeRequest(
+        {
+          lines: [
+            validLine(
+              { proposedUnitPriceCents: 47, proposedTotalCents: 47 * 5000 },
+              { printOptionId: "one-color", artwork },
+            ),
+          ],
+          attribution: {},
+        },
+        `${SESSION_COOKIE}=${other.id}`,
+      ),
+    );
+    expect(res.status).toBe(422);
+    const data = await res.json();
+    expect(data.errors[0].reason).toMatch(/upload it again/i);
   });
 
   it("rejects printed lines without artwork", async () => {

@@ -384,3 +384,127 @@ evaluations reference it so past verdicts stay explainable.
 Magnitude-based risk escalation ("a >X% budget increase is CRITICAL") is
 deliberately NOT implemented, because implementing it would mean inventing
 X. It becomes possible once these values exist.
+
+
+---
+
+## Production Launch Session 02 — commerce and artwork inputs (2026-08-16)
+
+**Every item here is data only you can supply. The engineering is complete and
+tested; nothing below is waiting on code.** Architecture:
+`docs/SHOPIFY_PRODUCTION.md`, `docs/ARTWORK_STORAGE.md`. Operational order:
+`LAUNCH_CHECKLIST.md` → "Commerce — Shopify production".
+
+### Shopify store
+
+| what | where | notes |
+|---|---|---|
+| Store domain | `SHOPIFY_STORE_DOMAIN` | `your-store.myshopify.com` — no `https://`, no path. Server-only. |
+| Admin API access token | `SHOPIFY_ADMIN_API_TOKEN` | Custom app → Admin API, scope **`write_draft_orders`**. Server-only, never `NEXT_PUBLIC_*`. |
+| Webhook signing secret | `SHOPIFY_WEBHOOK_SECRET` | Shown once when you create the first webhook. Without it, paid orders are NOT reconciled (the endpoint fails closed). |
+
+**Until both of the first two exist, production checkout answers 503 by
+design.** That is the guard working, not a bug.
+
+**No Storefront token is needed.** Shopify's Storefront cart cannot express a
+custom line price, so the architecture does not use it. The
+`NEXT_PUBLIC_SHOPIFY_*` variables from earlier sessions are **gone**.
+
+### Shopify products and variants — the big one
+
+You must create, in Shopify, one product per BagDirect product and one variant
+per purchasable **size × material × color** combination, then paste each
+variant's GID into `config/shopify.ts → SHOPIFY_MERCHANDISE_MAP`:
+
+```ts
+export const SHOPIFY_MERCHANDISE_MAP: Record<MerchandiseKey, string> = {
+  "p-custom-takeout|m|standard|white": "gid://shopify/ProductVariant/44123456789012",
+  // …one line per required key
+};
+```
+
+`requiredMerchandiseKeys()` prints the exact list. `validateMerchandiseMap()`
+tells you what is missing, mistyped or duplicated — it must report
+`complete: true` with zero errors before launch.
+
+Notes that will save you time:
+- **Custom colors are excluded** — they route to custom quotes and can never
+  be checked out, so they need no variant.
+- Each product's own sizes and materials apply (e.g. `p-heavy-duty` has no
+  Small and only the heavy material).
+- **The Shopify variant PRICE does not matter.** BagDirect sends its own price
+  as a `priceOverride` on every line, and verifies it came back unchanged. Set
+  the variant prices to anything sane; they are never charged.
+- What DOES matter on the variant: its **shipping profile**, its **tax
+  settings** and whether it **requires shipping** — Shopify uses those.
+- A duplicate mapping (two configurations → one variant) is an ERROR, because
+  one of them would sell the wrong bag.
+
+### Shopify store configuration (Shopify's job, your verification)
+
+- [ ] US shipping profile with real rates — the draft-order invoice checkout
+      rates the order from the customer's address. **BagDirect does not
+      calculate shipping and does not claim to.**
+- [ ] Tax configuration for the states you have nexus in. **There is no custom
+      tax engine.**
+- [ ] Payment gateway live
+- [ ] Confirmation email template reviewed (Shopify sends it, not BagDirect)
+- [ ] **US-only for now.** Canada shipping/tax/customs is unconfigured and
+      untested — do not enable CA until it is.
+
+### Webhook registration
+
+Settings → Notifications → Webhooks (or the Admin API). All four, JSON, API
+version matching `SHOPIFY_API_VERSION` (currently `2026-07`):
+
+| topic | URL |
+|---|---|
+| `orders/create` | `https://<your-domain>/api/webhooks/shopify` |
+| `orders/paid` | same |
+| `orders/cancelled` | same |
+| `refunds/create` | same |
+
+### Artwork object storage
+
+An S3-compatible bucket — Cloudflare R2, AWS S3, Backblaze B2, DO Spaces or
+MinIO all work.
+
+| variable | notes |
+|---|---|
+| `ARTWORK_S3_ENDPOINT` | e.g. `https://<account>.r2.cloudflarestorage.com` |
+| `ARTWORK_S3_REGION` | `auto` for R2, the real region for S3 |
+| `ARTWORK_S3_BUCKET` | |
+| `ARTWORK_S3_ACCESS_KEY_ID` | |
+| `ARTWORK_S3_SECRET_ACCESS_KEY` | |
+
+Two configuration requirements that are easy to miss:
+
+1. **The bucket must be PRIVATE.** No public read, no listing. Artwork is
+   served only through short-lived server-signed URLs.
+2. **CORS must allow `PUT` from your production origin, with the
+   `Content-Type` header.** The browser uploads directly to the bucket; without
+   this, every upload fails.
+
+**Until this is configured, artwork upload is unavailable and says so** — and
+printed products therefore cannot be ordered. That is correct: a paid order
+whose logo went nowhere is worse than a refused one. Plain (no-logo) bags sell
+fine without it.
+
+### Decisions already made for you (change only deliberately)
+
+- **SVG is rejected.** It is an executable document and a stored-XSS risk once
+  artwork is durably stored and opened by staff. PDF/AI/EPS carry vector
+  artwork, so nothing a printer needs is lost.
+- **25 MB limit** — unchanged from before.
+- **Abandoned-upload cleanup is manual.** `listAbandonedArtwork()` identifies
+  uploads with no order and no quote; automated deletion is deferred.
+
+### Still true, still blocking, from earlier sessions
+
+- **Real prices.** Demo pricing notices stay visible until real prices are
+  loaded AND `NEXT_PUBLIC_DEMO_PRICING=false`. Do not flip the flag first.
+- **MOQ confirmation.**
+- **`config/costs.ts`** — every value still `null`. Missing costs never block a
+  sale; they block profit analytics and future price actions.
+- **Production `DATABASE_URL`** + `npm run db:migrate` (migration `0009` is new
+  this session).

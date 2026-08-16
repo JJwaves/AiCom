@@ -231,3 +231,58 @@ order confirmation (server-priced); tampered cart price → visible
 mobile flow without overlap; provider-down single-sentence fallback with
 manual commerce untouched; flags-off manual two-line order (AI line
 preserved next to manual line, $7,400).
+
+---
+
+## Production Launch Session 02 — what changed beneath the AI commerce path
+
+The Session 07 architecture is **unchanged**. The AI still proposes; the
+server still disposes; `/api/checkout` is still the only order authority; the
+cart is still client-side; `409 REPRICED` still requires explicit customer
+confirmation and is never auto-accepted. No sales tool was added, removed or
+re-permissioned, and `createSalesToolRegistry()` still exposes the same 15
+tools.
+
+What changed is what happens *after* `/api/checkout` decides:
+
+**1. Checkout may now be a real Shopify redirect.** With Shopify configured,
+`startCheckout`'s customer-tapped "Continue to checkout" action leads to a
+Shopify-generated invoice URL instead of a mock order id. The AI still cannot
+produce, influence or accept a checkout URL — it comes from the provider,
+through `/api/checkout`, and `lib/cart/checkout-client.ts` accepts a
+destination from nowhere else.
+
+**2. A Shopify checkout does NOT create a purchase.** The order row is written
+as `pending_payment`, no `purchase_completed` event fires, and the session is
+not marked converted. The conversation outcome stamps `checkout_started`. The
+`purchased` outcome and the purchase event now arrive from the **paid-order
+webhook** (`docs/SHOPIFY_PRODUCTION.md` §8), exactly once.
+
+This means an AI-assisted conversation that reaches checkout is credited with
+`checkout_started` immediately and `purchased` only when money actually
+arrives — which is more honest than the mock path, where checkout *was* the
+purchase.
+
+**3. `aiAssisted` is captured at checkout time**, not at payment time, and is
+carried on the pending order row into the paid one. The S07 definition is
+unchanged (a sales conversation AND ≥1 material `ai_*` commerce event).
+
+**4. Artwork is now a durable server-verified reference.** A printed line
+requires `artwork.artworkId`; a legacy `blob:`-only ref is refused with
+"please re-upload your logo". The artwork id is additionally checked to belong
+to **this session** before checkout proceeds. The AI still cannot upload
+artwork, still cannot supply an artwork field in any tool input (the
+configuration patch schema structurally excludes it since S06), and now also
+cannot reference someone else's upload.
+
+**5. Failure copy is unchanged in spirit.** An unmapped Shopify configuration
+surfaces as a customer-safe 409 routing to the custom-quote flow; commerce
+misconfiguration and provider failures surface as "Checkout is temporarily
+unavailable. Nothing was charged." Raw Shopify errors never cross the
+boundary, and never enter a prompt.
+
+**Structurally asserted (tests/production-commerce-separation.test.ts):** no
+`lib/ai` file imports the Shopify provider, the transport, the reconciliation
+layer or `lib/storage`; no sales tool can pay, refund, mark an order paid,
+create a checkout or upload artwork; and `purchase_completed` fires only from
+authoritative order truth.
