@@ -566,3 +566,36 @@ Zero credentials, zero network, zero real model calls — `FakeAiProvider` only.
 The structural tests are the ones that matter most: they make "the pricing agent
 cannot price anything" a property of the repository rather than a claim in a
 document.
+
+## 24. Session 13.5 — the cost model behind PricingReadiness
+
+`assessCostReadiness` in this module still names every unfilled config path,
+but the **completeness verdict is no longer re-derived here**:
+`modules/pricing → isCostModelConfigured()` is the one definition of "are
+costs configured?", because two definitions would eventually disagree. The
+input list grew to cover the Session 13.5 dimensions:
+
+- `orderCosts.packagingCentsPerOrder` (gross margin — it is COGS)
+- `orderCosts.handlingCentsPerOrder` (contribution margin)
+- `marginPolicy.targetGrossMarginBps` (review signal, **never a floor**)
+
+`grossMarginAvailable` now additionally requires per-order packaging.
+
+**Minimum vs target.** `evaluateMarginAgainstPolicy` (in `modules/pricing`)
+returns `BELOW_MINIMUM` / `BELOW_TARGET` / `AT_OR_ABOVE_TARGET` / `NO_TARGET` /
+`UNAVAILABLE`. Below target is a REVIEW signal; only below minimum blocks. The
+price floor consults floors only.
+
+`PricingReadiness` is unchanged in shape and in verdict:
+`SPECIFIC_PRICE_CHANGE` stays BLOCKED while costs and price-movement limits
+are unset, `AUTOMATED_PRICE_CHANGE` stays NOT_SUPPORTED, and the **Pricing
+Agent remains RECOMMEND with an output schema that cannot express a price**.
+Once costs are configured, the dashboard can display gross margin,
+contribution margin before paid media and the minimum safe price — the agent's
+authority does not change at all.
+
+`/admin/pricing-intelligence` renders the shared read-only Cost and margin
+readiness panel (`components/admin/cost-readiness.tsx`), identical to the one
+on `/admin/business-intelligence`.
+
+Full specification: `docs/UNIT_ECONOMICS.md`.

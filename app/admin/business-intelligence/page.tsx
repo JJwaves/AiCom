@@ -16,6 +16,10 @@ import {
   type Ratio,
 } from "@/modules/business-intelligence";
 import type { Trend } from "@/modules/business-intelligence/trend";
+import { COST_MODEL } from "@/config/costs";
+import { listCatalogProducts } from "@/lib/commerce/catalog";
+import { assessCostReadiness } from "@/modules/pricing";
+import { CostReadinessPanel } from "@/components/admin/cost-readiness";
 import { GenerateReviewButton } from "./generate-review-button";
 
 /**
@@ -141,6 +145,7 @@ export default async function BusinessIntelligencePage({
   const params = await searchParams;
   const period = parsePeriod(params);
   const report: BusinessIntelligenceReport = await buildBusinessIntelligenceReport(period);
+  const costReadiness = assessCostReadiness(COST_MODEL, await listCatalogProducts());
   const s = report.snapshot;
   const revenue = s.commerce.revenue;
   const funnel = s.commerce.funnel;
@@ -326,6 +331,20 @@ export default async function BusinessIntelligencePage({
         {s.profitability.notes.map((n) => (
           <li key={n}>{n}</li>
         ))}
+        {s.profitability.ordersWithoutCostSnapshot > 0 ? (
+          <li>
+            {s.profitability.ordersWithoutCostSnapshot} of {s.profitability.ordersTotal} orders carry no cost snapshot,
+            so their profit is unavailable. Today&rsquo;s costs are deliberately not applied to past orders — that
+            would report a number that was never true.
+          </li>
+        ) : null}
+        {s.profitability.ordersWithoutContribution > 0 ? (
+          <li>
+            {s.profitability.ordersWithoutContribution} costed{" "}
+            {s.profitability.ordersWithoutContribution === 1 ? "order has" : "orders have"} gross profit but no
+            contribution profit: the variable selling costs were not known when they were placed.
+          </li>
+        ) : null}
         {s.profitability.missingCostInputs.length > 0 ? (
           <li>
             Missing cost inputs ({s.profitability.missingCostInputs.length}):{" "}
@@ -335,6 +354,8 @@ export default async function BusinessIntelligencePage({
           </li>
         ) : null}
       </ul>
+
+      <CostReadinessPanel readiness={costReadiness} />
 
       {/* Customer signals */}
       <SectionTitle>Customer signals</SectionTitle>
@@ -530,6 +551,31 @@ export default async function BusinessIntelligencePage({
             </p>
           ) : null}
         </div>
+      </div>
+
+      {/* Advertising spend (Session 13) */}
+      <SectionTitle>Advertising spend</SectionTitle>
+      <div className="surface p-4">
+        <p className="text-sm text-ink-2">{s.adSpend.statement}</p>
+        {s.adSpend.spendCents.status !== "UNAVAILABLE" ? (
+          <p className="mt-2 font-mono text-2xl text-ink">
+            {(s.adSpend.spendCents.value / 100).toFixed(2)} {s.adSpend.currencyCode}
+          </p>
+        ) : (
+          <p className="mt-2 font-mono text-2xl text-ink">Unavailable</p>
+        )}
+        <p className="mt-2 text-xs text-ink-3">
+          The attribution breakdown above is first-party only and still computes no CAC or ROAS — those live, with
+          their denominators and their attribution coverage, on the{" "}
+          {isFlagEnabled("GOOGLE_ADS_INTELLIGENCE") ? (
+            <Link className="underline" href="/admin/google-ads-intelligence">
+              Google Ads Intelligence
+            </Link>
+          ) : (
+            "Google Ads Intelligence"
+          )}{" "}
+          page. Profit on ad spend remains unavailable while manufacturing costs are unconfigured.
+        </p>
       </div>
 
       {/* CEO review */}

@@ -144,9 +144,10 @@ Human Approval (/admin/ai-actions)  |  Guarded auto-execution (later)
 | `modules/business-intelligence` + `lib/ai/agents/ceo` + `lib/data/{business-intelligence,ceo-report}-service` | DONE (Session 09) | Deterministic business-metrics authority (metric availability AVAILABLE/PARTIAL/UNAVAILABLE, revenue/funnel/AI-cost/profitability/segments/attribution/trends, BusinessHealthSnapshot — NO lib/ai import) + recommendation-only CEO agent (REASONING structured output, NO tools, server-validated metric/evidence refs, AgentDecision + ceo_reports persistence). See BUSINESS_INTELLIGENCE.md. |
 | `modules/experiments` + `lib/experiments` + `lib/ai/agents/cro` + `app/admin/experiments` | DONE (Session 11) | Deterministic experiment authority (closed target registry, closed typed variant schemas, pure hash assignment, eligibility, allocation caps, two-proportion z-test, result states — NO lib/ai and NO db import) + server-side resolution/exposure + recommendation-only CRO agent (REASONING structured output, NO tools, registry- and reference-validated proposals) + the human launch/stop admin surface. No executor: launching is an explicit human action. See EXPERIMENTATION.md + CRO_AGENT.md. |
 | `modules/pricing-intelligence` + `lib/ai/agents/pricing` + `lib/data/{pricing-intelligence,pricing-report}-service` + `app/admin/pricing-intelligence` | DONE (Session 12) | Deterministic pricing-analytics authority (pricing funnel with co-occurrence + real ordering, three quantity lanes, catalog-derived tier bands, MOQ intelligence, price-realization check, evidence-graded signals, cost/margin readiness, PricingReadiness, the elasticity refusal, PricingIntelligenceSnapshot — NO lib/ai import, NO price mutation path) + recommendation-only Pricing Agent (REASONING structured output, NO tools, an output schema with NO price field at all, server-validated refs and product/tier scope, server-recomputed prerequisites) + `pricing_reports` persistence. `modules/pricing` remains the sole pricing authority; no PRICE_CHANGE executor exists. See PRICING_INTELLIGENCE.md. |
-| `modules/ads/google`, `modules/ads/meta` | DEFER | Read-only first, much later. |
+| `lib/google-ads` + `modules/google-ads-intelligence` + `lib/ai/agents/google-ads` + `lib/data/{google-ads,google-ads-report}-service` + `app/admin/google-ads-intelligence` | DONE (Session 13) | READ-ONLY Google Ads adapter (GoogleAdsService `:search` with GAQL SELECTs only — no mutating URL is constructible, no generic `request()` exists, the provider interface has three read methods) + deterministic advertising-analytics authority (connection/freshness states, Google-native metrics, the first-party lens, EXACT/MAPPED/UNMATCHED campaign attribution, CAC/ROAS with named denominators, the Google-vs-first-party discrepancy view, data-quality signals, GoogleAdsIntelligenceSnapshot — NO `lib/ai` import, NO `lib/google-ads` import, no `fetch`) + recommendation-only Google Ads Agent (REASONING structured output, NO tools, NO Google access, an output schema with no budget/status/bid field at all) + idempotent explicit sync. POAS stays UNAVAILABLE; no ad executor exists. See GOOGLE_ADS_INTELLIGENCE.md. |
+| `modules/ads/meta` | DEFER | Meta Ads is Stage I; same read-only-first progression. |
 | `config/flags.ts` | DONE (Session 04) | Feature flags (`AI_RUNTIME`, `AI_SALES`, …); all default OFF, env-enabled (`*_ENABLED=true`). |
-| `app/admin/*` | STARTED (Session 08) | `customer-intelligence` (S08), `business-intelligence` (S09), `ai-actions` (S10, the first admin MUTATION routes — POST + same-origin + JSON content type + strict schema), `experiments` (S11) and `pricing-intelligence` (S12) live behind HTTP Basic (`proxy.ts` + per-route checks, fail-closed 404) + their feature flags; ai-usage remains a future session. |
+| `app/admin/*` | STARTED (Session 08) | `customer-intelligence` (S08), `business-intelligence` (S09), `ai-actions` (S10, the first admin MUTATION routes — POST + same-origin + JSON content type + strict schema), `experiments` (S11), `pricing-intelligence` (S12) and `google-ads-intelligence` (S13) live behind HTTP Basic (`proxy.ts` + per-route checks, fail-closed 404) + their feature flags; ai-usage remains a future session. |
 
 ## Invariants (enforced across all future sessions)
 
@@ -565,3 +566,118 @@ Human Approval (/admin/ai-actions)  |  Guarded auto-execution (later)
   fabricated evidence. State transitions are `stateVersion`-checked under a
   row lock, so a double-click or a stale second reviewer gets a conflict
   rather than a rewritten history. Chosen over in-place payload edits.
+
+- **2026-08-15 (S13) · Google Ads mutation is structurally absent, not
+  merely unused.** `lib/google-ads/client.ts` has ONE URL builder and it
+  appends the literal `/googleAds:search`; the method is not a parameter, so
+  no `:mutate` endpoint can be CONSTRUCTED anywhere in the repository. There
+  is no exported `request(method, path, body)`, GAQL (the only query language
+  reachable) has no mutation verb, and `GoogleAdsReportingProvider` exposes
+  exactly `status` / `getAccountInfo` / `getCampaignDailyMetrics`. Chosen over
+  adopting a Google Ads client library, whose surface would include every
+  mutate service and leave "we simply do not call them" as the only guard.
+- **2026-08-15 (S13) · Google's numbers and ours are separate types, not
+  separate labels.** `GoogleNativeTotals` has no `orders` or `revenueCents`
+  field; `GoogleAdsFunnel` has no `googleConversions` or
+  `googleConversionValueCents` field; `AdEfficiency` has no field named
+  merely `cac` or `roas`. A Google "conversion" is whatever that account's
+  conversion actions count, so the two can never be confused by a careless
+  destructure. Where they disagree, both are displayed with the standing
+  reasons — nothing merges, averages, or "corrects" either side. Chosen over
+  one blended attribution model, which would have made a guess look like a
+  measurement.
+- **2026-08-15 (S13) · Campaign attribution has three honest tiers and no
+  fuzzy one.** EXACT (`utm_campaign` = campaign id), MAPPED (normalized name
+  match), UNMATCHED — and unmatched revenue still counts in the account-level
+  totals while appearing under no campaign. `gclid` is used ONLY as a boolean
+  "this was a paid click"; resolving it to a campaign needs Google's
+  `click_view`, which is deliberately not ingested. Two campaigns normalizing
+  to the same name make BOTH unmatchable by name rather than a coin flip.
+  Chosen over approximate string matching, which would turn revenue
+  attribution into a guess wearing a number.
+- **2026-08-15 (S13) · Reporting days stay on the ACCOUNT's calendar.**
+  Google reports a day in the account's time zone; every intelligence layer
+  since S08 defines periods in UTC. Daily totals cannot be re-cut into UTC
+  without hourly data this integration deliberately does not fetch, so a UTC
+  period maps to the account-calendar days it OVERLAPS, inclusively, and the
+  snapshot and admin page state the zone, the exact day range used, and that
+  boundary days may include hours outside the UTC window. Chosen over
+  silently assuming UTC, which shifts spend onto the wrong day at both ends
+  of every window.
+- **2026-08-15 (S13) · Not connected, sync failed and stale are three states,
+  and none of them is zero.** Freshness advances only on a COMPLETE sync; a
+  failed sync leaves previously synced rows and their timestamp untouched; a
+  truncated sync is PARTIAL and keeps its data without claiming freshness.
+  When credentials are removed while synced data remains, the figures are
+  still shown — they are real measurements that stopped updating — and the
+  page says exactly that instead of blanking cards beside a populated
+  campaign table. Chosen over `?? 0`, which would let a missing integration
+  read as free advertising.
+- **2026-08-15 (S13) · Session 09's metrics were extended, not rewritten.**
+  `attribution.adSpendIntegrated` stays `false` because that breakdown still
+  contains no ad spend and still computes no CAC or ROAS; S13 adds a separate
+  `adSpend` section to `BusinessHealthSnapshot` with its own availability
+  state. Metric availability stays explicit and no historical semantic
+  changed silently.
+
+### Session 13.5 — Business cost model + margin policy
+
+**Decision 55. The cost model separates PER-UNIT, PER-LINE and PER-ORDER
+scopes, and order-level costs are applied exactly once.** Manufacturing,
+printing ink and per-unit packaging scale with quantity; printing setup is one
+screen per line; order packaging, fulfilment handling, the payment processor's
+FIXED fee and the shipping subsidy are per-ORDER facts. Collapsing these into
+one "cost" silently multiplies real money across a multi-line order — the
+single most expensive arithmetic mistake available in this model, and the one
+`modules/pricing/unit-economics.ts` exists to prevent. `per_order` freight is
+additionally deduplicated per product, because two lines of the same product
+are one shipment.
+
+**Decision 56. Shipping SUBSIDY, not shipping cost.** What freight costs and
+what the customer pays for it are two separate business facts;
+`subsidy = max(actual − charged, 0)` is what BagDirect actually bears. The
+subsidy never goes negative — profiting on shipping is preserved separately in
+`shippingMarginCents` rather than smuggled in as a negative cost, and it is
+deliberately NOT added to contribution profit because the charge is not inside
+recorded order revenue. Today `customerCharge` is `not_collected`, which is a
+STRUCTURAL fact (`orders` has no shipping column;
+`totalCents = subtotalCents`), not an assumption.
+
+**Decision 57. Availability is per profit level, not per model.** Gross profit
+can be AVAILABLE while contribution profit is UNAVAILABLE: knowing what a bag
+costs to make does not tell you what the processor charged. `UnitEconomics`
+carries `grossStatus` and `contributionStatus` separately, with their own
+missing inputs. Chosen over one status field, which would have forced a choice
+between hiding known gross profit and implying unknown contribution.
+
+**Decision 58. Historical profit comes from a SNAPSHOT taken at order time,
+never from today's costs applied backwards.** `orders.cost_snapshot_json` +
+`cost_model_version` + `order_lines.cost_snapshot_json` (migration 0008) freeze
+what an order actually cost under the model in force then. Snapshots are
+FORWARD ONLY; an order without one reports `HISTORICAL_COST_UNAVAILABLE`, not
+zero profit. A clearly-labelled `CURRENT_CONFIG_SCENARIO` basis exists for
+"what would these look like at today's costs?" and is never the default.
+Capture is best-effort and swallows failures: a customer who paid must get an
+order (Decision 8's posture, extended).
+
+**Decision 59. MINIMUM and TARGET margins are different concepts and never
+collapse.** A minimum is a hard boundary that blocks a future price action; a
+target is a business objective whose shortfall is a review signal, not a
+violation. `minimumAllowedPriceCents` consults floors only. Both live in
+`config/costs.ts → marginPolicy` — `config/guardrails.ts` still does not
+duplicate them.
+
+**Decision 60. POAS is computed where profit exists, and ROAS is never
+renamed into it.** `ROAS = revenue / spend`; `POAS = contribution profit
+before paid media / spend`. They are separate fields with separate formulas,
+because a campaign can post ROAS 5.0 and POAS 0.6. POAS requires contribution
+profit, real spend, compatible currency AND adequate attribution coverage —
+any gap makes it UNAVAILABLE or PARTIAL rather than approximate.
+
+**Decision 61. Cost configuration never blocks a sale.** Missing costs mean
+profit analytics are unavailable; they do not mean a customer cannot buy. No
+commerce file imports `assessCostReadiness`, `isCostModelConfigured` or
+`evaluatePriceFloor`, and the checkout route is asserted never to reference
+the price floor. Only future price/action safety fails closed.
+
+Full specification: `docs/UNIT_ECONOMICS.md`.

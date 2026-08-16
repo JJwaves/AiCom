@@ -21,3 +21,11 @@ delete process.env.GOOGLE_GENERATIVE_AI_API_KEY;
 // until a test sets both credentials explicitly.
 delete process.env.ADMIN_USER;
 delete process.env.ADMIN_PASSWORD;
+
+// Google Ads (S13): tests must NEVER see a real credential and must never be
+// able to reach Google. Deleting these guarantees `resolveCredentials()`
+// returns null in the test process, so the live provider cannot be
+// constructed even by accident — every test uses FakeGoogleAdsReportingProvider.
+for (const key of Object.keys(process.env)) {
+  if (key.startsWith("GOOGLE_ADS_")) delete process.env[key];
+}

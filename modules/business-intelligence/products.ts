@@ -1,9 +1,10 @@
 import { volumeGroupFor } from "@/config/customer-intelligence";
 import { COST_MODEL } from "@/config/costs";
 import type { OrderLineRow, OrderRow } from "@/lib/data/order-service";
-import { computeCosts, productCostCents, type CostModelConfig } from "@/modules/pricing";
+import { computeLineCosts, type CostModelConfig } from "@/modules/pricing";
 import type { Product } from "@/types/commerce";
 import { available, partial, unavailable, type Metric } from "./availability";
+import type { ProfitabilityOptions } from "./profitability";
 import { isCountedOrder } from "./revenue";
 
 /**
@@ -44,7 +45,9 @@ export function computeProductPerformance(
   lines: OrderLineRow[],
   products: Product[],
   model: CostModelConfig = COST_MODEL,
+  options: ProfitabilityOptions = {},
 ): ProductPerformance[] {
+  const costBasis = options.historicalCostBasis ?? "SNAPSHOT_ONLY";
   const countedOrderIds = new Set(orders.filter(isCountedOrder).map((o) => o.id));
   const productById = new Map(products.map((p) => [p.id, p]));
 
@@ -100,18 +103,32 @@ export function computeProductPerformance(
       bump(acc.printing, conf.printOptionId);
     }
 
+    /* Cost basis, in order of truthfulness:
+     *  1. the line's OWN cost snapshot — what it actually cost that day;
+     *  2. nothing. A line without a snapshot is uncosted, because
+     *     re-costing it at today's prices would report a number that was
+     *     never true (13.5 §28). The CURRENT_CONFIG_SCENARIO basis is
+     *     available at order level only, where it is labelled. */
+    const snapshot = costBasis === "SNAPSHOT_ONLY" ? line.costSnapshotJson : null;
     const product = productById.get(line.productId);
-    if (!product) {
+    if (snapshot) {
+      acc.costedLines += 1;
+      acc.grossCents += line.totalCents - snapshot.cogs.totalCents;
+    } else if (!product) {
       acc.uncostedLines += 1;
       acc.missing.add(`catalog product "${line.productId}"`);
     } else {
-      const computed = computeCosts(product, line.configJson, line.totalCents, model);
-      if (computed.status === "unconfigured") {
-        acc.uncostedLines += 1;
-        for (const m of computed.missingInputs.slice(0, 10)) acc.missing.add(m);
-      } else {
+      const computed = computeLineCosts(product, line.configJson, model);
+      if (costBasis === "CURRENT_CONFIG_SCENARIO" && computed.status === "configured") {
         acc.costedLines += 1;
-        acc.grossCents += line.totalCents - productCostCents(computed.costs);
+        acc.grossCents += line.totalCents - computed.cogs.totalCents;
+      } else {
+        acc.uncostedLines += 1;
+        if (computed.status === "unconfigured") {
+          for (const m of computed.missingInputs.slice(0, 10)) acc.missing.add(m);
+        } else {
+          acc.missing.add("orders: no cost snapshot recorded for this line (HISTORICAL_COST_UNAVAILABLE)");
+        }
       }
     }
     byProduct.set(line.productId, acc);
@@ -122,13 +139,13 @@ export function computeProductPerformance(
       let grossProfitCents: Metric<number>;
       if (acc.costedLines === 0) {
         grossProfitCents = unavailable(
-          "Unavailable — configure manufacturing costs for this product (config/costs.ts).",
+          "Unavailable — no line in this period carries a cost snapshot. Either manufacturing costs are not configured (config/costs.ts) or these orders predate cost snapshots; today's costs are not applied backwards.",
           [...acc.missing],
         );
       } else if (acc.uncostedLines > 0) {
         grossProfitCents = partial(
           acc.grossCents,
-          `Covers ${acc.costedLines} of ${acc.lines} lines — the rest have unconfigured cost inputs.`,
+          `Covers ${acc.costedLines} of ${acc.lines} lines — the rest have no recorded cost snapshot.`,
           [...acc.missing],
         );
       } else {

@@ -1,37 +1,69 @@
 import { COST_MODEL } from "@/config/costs";
 import type { OrderLineRow, OrderRow } from "@/lib/data/order-service";
-import { computeCosts, productCostCents, type CostModelConfig } from "@/modules/pricing";
+import {
+  computeOrderUnitEconomics,
+  economicsFromSnapshot,
+  HISTORICAL_COST_UNAVAILABLE,
+  HISTORICAL_COST_UNAVAILABLE_REASON,
+  isCostModelConfigured,
+  type CostModelConfig,
+  type UnitEconomics,
+} from "@/modules/pricing";
 import type { Product } from "@/types/commerce";
 import { available, partial, unavailable, type Metric } from "./availability";
 import { isCountedOrder } from "./revenue";
 
 /**
- * DETERMINISTIC profitability (Session 09 spec §2, §9–§10).
+ * DETERMINISTIC profitability (Session 09 spec §2, §9–§10; rebuilt on the
+ * Session 13.5 unit-economics model).
  *
- * Every number reconstructs per-order costs from the SAME cost model the
- * pricing module uses (config/costs.ts → modules/pricing/cost-model.ts).
+ * Every number comes from `modules/pricing` — the single cost authority.
  * The hard rule holds structurally: any missing cost input makes the
  * affected orders un-costable and the metric PARTIAL/UNAVAILABLE with the
  * missing inputs listed — null is never zero, and nothing here estimates
  * a cost.
  *
- * Metric semantics (named precisely, spec §10):
- *  - GROSS PROFIT = revenue − product/factory COGS
- *    (manufacturing + printing + setup + packaging).
- *  - CONTRIBUTION PROFIT BEFORE PAID MEDIA = revenue − ALL variable costs
- *    (product COGS + shipping + payment fees + other variable). Payment
- *    fees are computed per ORDER (percent of order total + one fixed fee
- *    per transaction — never one fixed fee per line).
- *  - Paid-media (ad) spend is NOT ingested yet (spec §40) — the name says
- *    so explicitly; this is never presented as "net profit".
- *  - Discounts are structurally zero today: the engine is the only price
- *    authority and no discount mechanism exists.
+ * METRIC SEMANTICS (named precisely):
+ *  - GROSS PROFIT = revenue − product COGS (manufacturing + printing +
+ *    setup + packaging, including order-scope packaging).
+ *  - CONTRIBUTION PROFIT BEFORE PAID MEDIA = gross profit − variable
+ *    selling/fulfilment costs (payment processing + shipping subsidy +
+ *    handling + other variable). Payment fees are computed per ORDER:
+ *    percent of the order total plus ONE fixed fee per transaction, never
+ *    one fixed fee per line.
+ *  - PAID MEDIA is NOT subtracted here. The name says so; this is never
+ *    presented as "net profit". Contribution AFTER paid media lives in
+ *    modules/google-ads-intelligence, where attributable spend exists.
+ *
+ * TWO LEVELS, TWO AVAILABILITIES (13.5 §22). Gross profit may be
+ * AVAILABLE while contribution is UNAVAILABLE — knowing what a bag costs
+ * to make does not tell you what the processor charged.
+ *
+ * HISTORICAL COST BASIS (13.5 §28, §48). By default only orders carrying a
+ * COST SNAPSHOT are costed: an order placed before the cost model existed
+ * reports HISTORICAL_COST_UNAVAILABLE, because applying today's costs
+ * backwards would report a number that was never true. A clearly labelled
+ * CURRENT_CONFIG_SCENARIO basis exists for "what would these orders look
+ * like under today's costs?" — it is opt-in and never the dashboard default.
  */
+
+export type HistoricalCostBasis = "SNAPSHOT_ONLY" | "CURRENT_CONFIG_SCENARIO";
+
+export type ProfitabilityOptions = {
+  /** Default SNAPSHOT_ONLY — accounting truth. See the module note. */
+  historicalCostBasis?: HistoricalCostBasis;
+};
 
 export type ProfitabilityMetrics = {
   ordersTotal: number;
-  /** Orders whose every line could be costed under the current config. */
+  /** Orders whose gross profit could be established. */
   ordersCosted: number;
+  /** Orders with no cost snapshot (SNAPSHOT_ONLY basis only). */
+  ordersWithoutCostSnapshot: number;
+  /** Orders costed but whose contribution level was unavailable. */
+  ordersWithoutContribution: number;
+  /** Which cost basis produced these numbers. Rendered wherever they appear. */
+  costBasis: HistoricalCostBasis;
   grossProfitCents: Metric<number>;
   /** Fraction 0–1 (repo convention, cf. calculatePrice.grossMarginPct). */
   grossMarginPct: Metric<number>;
@@ -45,83 +77,61 @@ export type ProfitabilityMetrics = {
 
 export const PROFITABILITY_NOTES = [
   "Gross profit = revenue − product COGS (manufacturing + printing + setup + packaging).",
-  "Contribution profit (before paid media) = revenue − all variable costs (product COGS + shipping + payment fees + other variable).",
-  "Ad spend is not integrated — contribution explicitly excludes paid media and is never presented as net profit.",
-  "Discounts are structurally zero: the deterministic pricing engine is the only price authority.",
+  "Contribution profit (before paid media) = gross profit − variable selling costs (payment processing + shipping subsidy + fulfilment handling + other variable).",
+  "Shipping subsidy = max(actual shipping cost − shipping charged to the customer, 0). Checkout collects no separate shipping charge today, so the subsidy is the full freight cost.",
+  "Ad spend is not subtracted here — contribution explicitly excludes paid media and is never presented as net profit. POAS lives in Google Ads Intelligence.",
+  "Discounts are structurally zero: the deterministic pricing engine is the only price authority and no discount mechanism exists.",
+  "Only orders carrying a cost snapshot are costed. Orders placed before their costs were known report their profit as unavailable rather than being re-costed at today's prices.",
 ];
 
 const MAX_MISSING_INPUTS = 25;
 
 type OrderCosting =
-  | { status: "costed"; grossProfitCents: number; contributionCents: number; revenueCents: number }
-  | { status: "unconfigured"; missingInputs: string[] };
+  | { status: "costed"; economics: UnitEconomics }
+  | { status: "uncosted"; missingInputs: string[]; code?: typeof HISTORICAL_COST_UNAVAILABLE };
 
+/** Resolve one order's economics under the selected historical cost basis. */
 function costOrder(
   order: OrderRow,
   lines: OrderLineRow[],
   productById: Map<string, Product>,
   model: CostModelConfig,
+  basis: HistoricalCostBasis,
 ): OrderCosting {
-  const missing: string[] = [];
-  let productCogs = 0;
-  let nonFeeVariable = 0;
-
-  if (lines.length === 0) return { status: "unconfigured", missingInputs: [`orders.${order.id}: no line rows`] };
-
-  for (const line of lines) {
-    const product = productById.get(line.productId);
-    if (!product) {
-      missing.push(`catalog product "${line.productId}" (order line no longer in catalog)`);
-      continue;
+  if (basis === "SNAPSHOT_ONLY") {
+    const snapshot = order.costSnapshotJson;
+    if (!snapshot) {
+      return { status: "uncosted", missingInputs: [], code: HISTORICAL_COST_UNAVAILABLE };
     }
-    const computed = computeCosts(product, line.configJson, line.totalCents, model);
-    if (computed.status === "unconfigured") {
-      missing.push(...computed.missingInputs);
-      continue;
-    }
-    productCogs += productCostCents(computed.costs);
-    // Per-line variable costs EXCLUDING the payment fee — the processor
-    // charges per transaction, so the fee is recomputed at order level.
-    nonFeeVariable += computed.costs.totalCostCents - computed.costs.paymentFeeCents;
+    return { status: "costed", economics: economicsFromSnapshot(snapshot) };
   }
-  if (missing.length > 0) return { status: "unconfigured", missingInputs: missing };
 
-  const feeBps = model.paymentFee.percentBps;
-  const feeFixed = model.paymentFee.fixedCents;
-  if (feeBps === null || feeFixed === null) {
-    return { status: "unconfigured", missingInputs: ["paymentFee.percentBps", "paymentFee.fixedCents"] };
+  if (lines.length === 0) {
+    return { status: "uncosted", missingInputs: [`orders.${order.id}: no line rows`] };
   }
-  const orderFee = Math.round((order.totalCents * feeBps) / 10_000) + feeFixed;
-
-  return {
-    status: "costed",
+  const economics = computeOrderUnitEconomics({
     revenueCents: order.totalCents,
-    grossProfitCents: order.totalCents - productCogs,
-    contributionCents: order.totalCents - nonFeeVariable - orderFee,
-  };
+    currency: order.currency,
+    model,
+    lines: lines.map((line) => ({
+      productId: line.productId,
+      product: productById.get(line.productId) ?? null,
+      config: line.configJson,
+      revenueCents: line.totalCents,
+    })),
+  });
+  return economics.grossStatus === "AVAILABLE"
+    ? { status: "costed", economics }
+    : { status: "uncosted", missingInputs: economics.missingInputs };
 }
 
 /**
  * Static config completeness check — true only when EVERY cost input is
- * provided for every product plus the payment fee. Drives the dashboard's
- * data-quality warning even in periods with zero orders.
+ * provided. Delegates to `modules/pricing` so there is exactly one
+ * definition of "are costs configured?" in the repository.
  */
 export function isCostModelFullyConfigured(model: CostModelConfig = COST_MODEL): boolean {
-  if (model.paymentFee.percentBps === null || model.paymentFee.fixedCents === null) return false;
-  for (const pc of Object.values(model.products)) {
-    if (
-      pc.baseManufacturingCentsPerUnit === null ||
-      pc.sizeAdjustmentCentsPerUnit === null ||
-      pc.materialAdjustmentCentsPerUnit === null ||
-      pc.printing === null ||
-      pc.packagingCentsPerUnit === null ||
-      pc.shipping === null ||
-      pc.otherVariableCentsPerUnit === null
-    ) {
-      return false;
-    }
-  }
-  return true;
+  return isCostModelConfigured(model);
 }
 
 export function computeProfitability(
@@ -129,7 +139,9 @@ export function computeProfitability(
   lines: OrderLineRow[],
   products: Product[],
   model: CostModelConfig = COST_MODEL,
+  options: ProfitabilityOptions = {},
 ): ProfitabilityMetrics {
+  const costBasis = options.historicalCostBasis ?? "SNAPSHOT_ONLY";
   const counted = orders.filter(isCountedOrder);
   const productById = new Map(products.map((p) => [p.id, p]));
   const linesByOrder = new Map<string, OrderLineRow[]>();
@@ -139,16 +151,22 @@ export function computeProfitability(
     linesByOrder.set(line.orderId, list);
   }
 
-  const base = {
-    ordersTotal: counted.length,
-    notes: PROFITABILITY_NOTES,
-  };
+  const notes =
+    costBasis === "CURRENT_CONFIG_SCENARIO"
+      ? [
+          ...PROFITABILITY_NOTES.slice(0, -1),
+          "SCENARIO: these figures apply TODAY'S cost configuration to past orders. They are an illustration, not accounting truth.",
+        ]
+      : PROFITABILITY_NOTES;
+
+  const base = { ordersTotal: counted.length, costBasis, notes };
+  const emptyCounts = { ordersCosted: 0, ordersWithoutCostSnapshot: 0, ordersWithoutContribution: 0 };
 
   if (counted.length === 0) {
     const none = unavailable<number>("No completed orders in this period.");
     return {
       ...base,
-      ordersCosted: 0,
+      ...emptyCounts,
       grossProfitCents: none,
       grossMarginPct: none,
       contributionProfitBeforePaidMediaCents: none,
@@ -164,7 +182,7 @@ export function computeProfitability(
     );
     return {
       ...base,
-      ordersCosted: 0,
+      ...emptyCounts,
       grossProfitCents: mixed,
       grossMarginPct: mixed,
       contributionProfitBeforePaidMediaCents: mixed,
@@ -175,31 +193,50 @@ export function computeProfitability(
 
   const missingSet = new Set<string>();
   let costed = 0;
-  let revenue = 0;
+  let withoutSnapshot = 0;
+  let grossRevenue = 0;
   let gross = 0;
+  /* Contribution has its own coverage: an order may have gross without it. */
+  let contributionOrders = 0;
+  let contributionRevenue = 0;
   let contribution = 0;
+
   for (const order of counted) {
-    const result = costOrder(order, linesByOrder.get(order.id) ?? [], productById, model);
-    if (result.status === "unconfigured") {
+    const result = costOrder(order, linesByOrder.get(order.id) ?? [], productById, model, costBasis);
+    if (result.status === "uncosted") {
+      if (result.code === HISTORICAL_COST_UNAVAILABLE) withoutSnapshot += 1;
       for (const m of result.missingInputs) {
         if (missingSet.size < MAX_MISSING_INPUTS) missingSet.add(m);
       }
       continue;
     }
     costed += 1;
-    revenue += result.revenueCents;
-    gross += result.grossProfitCents;
-    contribution += result.contributionCents;
+    grossRevenue += result.economics.revenueCents;
+    gross += result.economics.grossProfitCents ?? 0;
+    if (result.economics.contributionBeforePaidMediaCents !== null) {
+      contributionOrders += 1;
+      contributionRevenue += result.economics.revenueCents;
+      contribution += result.economics.contributionBeforePaidMediaCents;
+    } else {
+      for (const m of result.economics.missingInputs) {
+        if (missingSet.size < MAX_MISSING_INPUTS) missingSet.add(m);
+      }
+    }
   }
   const missingCostInputs = [...missingSet];
 
+  const snapshotReason = `${HISTORICAL_COST_UNAVAILABLE}: ${HISTORICAL_COST_UNAVAILABLE_REASON}`;
+  const configReason =
+    "Unavailable — configure manufacturing costs. The factory cost model (config/costs.ts) has unfilled inputs, so profit cannot be computed. Missing inputs are listed; they are never assumed to be zero.";
+
   if (costed === 0) {
-    const reason =
-      "Unavailable — configure manufacturing costs. The factory cost model (config/costs.ts) has unfilled inputs, so profit cannot be computed. Missing inputs are listed; they are never assumed to be zero.";
+    const reason = withoutSnapshot > 0 && missingCostInputs.length === 0 ? snapshotReason : configReason;
     const none = unavailable<number>(reason, missingCostInputs);
     return {
       ...base,
       ordersCosted: 0,
+      ordersWithoutCostSnapshot: withoutSnapshot,
+      ordersWithoutContribution: 0,
       grossProfitCents: none,
       grossMarginPct: none,
       contributionProfitBeforePaidMediaCents: none,
@@ -208,24 +245,41 @@ export function computeProfitability(
     };
   }
 
-  const wrap = (value: number): Metric<number> =>
-    costed === counted.length
+  /** Wrap a level's value with the coverage its own denominator earned. */
+  const wrap = (value: number, covered: number, what: string): Metric<number> =>
+    covered === counted.length
       ? available(value)
       : partial(
           value,
-          `Covers ${costed} of ${counted.length} orders — the rest have unconfigured cost inputs (never assumed zero).`,
+          `Covers ${covered} of ${counted.length} orders — the rest have no ${what} (never assumed zero).`,
           missingCostInputs,
         );
-  const marginOf = (profit: number): Metric<number> =>
-    revenue > 0 ? wrap(profit / revenue) : unavailable("Costed orders have zero revenue — margin undefined.");
+  const marginOf = (profit: number, revenue: number, covered: number, what: string): Metric<number> =>
+    revenue > 0
+      ? wrap(profit / revenue, covered, what)
+      : unavailable("Costed orders have zero revenue — margin undefined.");
+
+  const grossWhat = costBasis === "SNAPSHOT_ONLY" ? "recorded cost snapshot" : "configured cost inputs";
+  const contributionMetric: Metric<number> =
+    contributionOrders === 0
+      ? unavailable(
+          "Gross profit is available, but contribution profit before paid media is not: the variable selling costs it subtracts (payment processing, shipping subsidy, fulfilment handling) were not known for any order in this period.",
+          missingCostInputs,
+        )
+      : wrap(contribution, contributionOrders, "recorded variable selling costs");
 
   return {
     ...base,
     ordersCosted: costed,
-    grossProfitCents: wrap(gross),
-    grossMarginPct: marginOf(gross),
-    contributionProfitBeforePaidMediaCents: wrap(contribution),
-    contributionMarginBeforePaidMediaPct: marginOf(contribution),
+    ordersWithoutCostSnapshot: withoutSnapshot,
+    ordersWithoutContribution: costed - contributionOrders,
+    grossProfitCents: wrap(gross, costed, grossWhat),
+    grossMarginPct: marginOf(gross, grossRevenue, costed, grossWhat),
+    contributionProfitBeforePaidMediaCents: contributionMetric,
+    contributionMarginBeforePaidMediaPct:
+      contributionOrders === 0
+        ? (contributionMetric as Metric<number>)
+        : marginOf(contribution, contributionRevenue, contributionOrders, "recorded variable selling costs"),
     missingCostInputs,
   };
 }

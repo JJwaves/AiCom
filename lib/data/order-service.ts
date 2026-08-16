@@ -1,7 +1,10 @@
 import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
+import { COST_MODEL } from "@/config/costs";
 import { getDb } from "@/db/client";
 import { orderLines, orders } from "@/db/schema";
+import { listCatalogProducts } from "@/lib/commerce/catalog";
+import { captureOrderCostSnapshot, type CapturedOrderCosts } from "@/modules/pricing";
 import { configurationSchema } from "@/lib/validation/checkout";
 import { newId } from "./id";
 
@@ -56,11 +59,52 @@ export const orderCreateSchema = z.object({
 export type OrderRow = typeof orders.$inferSelect;
 export type OrderLineRow = typeof orderLines.$inferSelect;
 
+/**
+ * Freeze the order's economics under the CURRENT cost model (Session 13.5
+ * §28). Best-effort by design:
+ *
+ *  - With `config/costs.ts` unconfigured — its shipped state — this returns
+ *    null, the order stores no snapshot, and its profit is reported as
+ *    HISTORICAL_COST_UNAVAILABLE rather than back-filled later from costs
+ *    that were not in force.
+ *  - Any failure is swallowed. A cost snapshot is INTERNAL ANALYTICS; a
+ *    customer who paid must get an order (§47). The catch is the same
+ *    "persistence is additive to commerce" posture as the rest of S03.
+ */
+async function captureCosts(
+  parsed: z.output<typeof orderCreateSchema>,
+  revenueCents: number,
+  now: Date,
+): Promise<CapturedOrderCosts | null> {
+  try {
+    const products = await listCatalogProducts();
+    const byId = new Map(products.map((p) => [p.id, p]));
+    return captureOrderCostSnapshot(
+      {
+        revenueCents,
+        currency: parsed.currency,
+        model: COST_MODEL,
+        lines: parsed.lines.map((l) => ({
+          productId: l.productId,
+          product: byId.get(l.productId) ?? null,
+          config: l.config,
+          revenueCents: l.totalCents,
+        })),
+      },
+      now,
+    );
+  } catch (error) {
+    console.error("[order-service] cost snapshot capture failed (order unaffected)", error);
+    return null;
+  }
+}
+
 export async function createOrder(
   input: z.input<typeof orderCreateSchema>,
 ): Promise<{ order: OrderRow; lines: OrderLineRow[] }> {
   const parsed = orderCreateSchema.parse(input);
   const subtotalCents = parsed.lines.reduce((s, l) => s + l.totalCents, 0);
+  const captured = await captureCosts(parsed, subtotalCents, new Date());
   const db = await getDb();
 
   return db.transaction(async (tx) => {
@@ -81,13 +125,15 @@ export async function createOrder(
         status: parsed.status,
         aiAssisted: parsed.aiAssisted,
         attributionJson: parsed.attribution ?? null,
+        costModelVersion: captured?.snapshot.costModelVersion ?? null,
+        costSnapshotJson: captured?.snapshot ?? null,
       })
       .returning();
 
     const lines = await tx
       .insert(orderLines)
       .values(
-        parsed.lines.map((l) => ({
+        parsed.lines.map((l, i) => ({
           id: newId("oln"),
           orderId: order.id,
           productId: l.productId,
@@ -98,6 +144,7 @@ export async function createOrder(
           optionSummary: l.optionSummary ?? null,
           configJson: l.config,
           artworkJson: l.artwork ?? null,
+          costSnapshotJson: captured?.lineSnapshots[i] ?? null,
         })),
       )
       .returning();

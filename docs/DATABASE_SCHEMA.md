@@ -43,6 +43,8 @@ Conventions (all enforced in code):
 | --- | --- |
 | `session-service` + `request-session` | cookie identity (`bd_sid`/`bd_aid`), server-side attribution merge, conversion stamp |
 | `event-service` | platform event taxonomy, validated batch + server event writes |
+| `google-ads-service` (S13) | `ad_accounts`, `ad_campaign_daily_metrics` (idempotent upsert on the natural key), `google_ads_sync_runs`; never calls Google |
+| `google-ads-report-service` (S13) | append-only `google_ads_reports` agent review documents |
 | `customer-service` | Customer/Business upserts + linking |
 | `customer-need-service` | CustomerNeedProfile progressive updates + provenance precedence |
 | `configuration-service` | one live configuration per session×product, versioned |
@@ -447,6 +449,76 @@ Session 12 reads existing tables only: `events`, `orders`, `order_lines`,
 events, priced order lines); everything else reuses the Session 08 bounded
 reads in `intelligence-service.ts`.
 
+## Google Ads (Session 13 — migration 0007)
+
+```
+ad_accounts                id · platform ("google_ads") · externalAccountId
+                           (customer id, digits) · descriptiveName? ·
+                           currencyCode · timeZone (IANA) · isManager ·
+                           isTestAccount · loginCustomerId? · apiVersion? ·
+                           lastSuccessfulSyncAt? · createdAt · updatedAt
+                           UNIQUE (platform, externalAccountId)
+
+ad_campaign_daily_metrics  id · adAccountId → ad_accounts (CASCADE) ·
+                           campaignId · campaignName · campaignStatus ·
+                           advertisingChannelType? · date (TEXT YYYY-MM-DD,
+                           the ACCOUNT's calendar day) · impressions ·
+                           clicks · costCents · currencyCode ·
+                           googleConversions (double) ·
+                           googleConversionValueCents · lastSyncRunId? ·
+                           createdAt · updatedAt
+                           UNIQUE (adAccountId, campaignId, date)
+                           index (adAccountId, date)
+
+google_ads_sync_runs       id · adAccountId? · externalAccountId? ·
+                           apiVersion? · requestedStartDate ·
+                           requestedEndDate · startedAt · completedAt? ·
+                           status (running|success|partial|failed) ·
+                           rowsFetched · rowsInserted · rowsUpdated ·
+                           truncated · errorCode? (normalized) ·
+                           errorMessage? (REDACTED) · providerRequestId? ·
+                           triggeredBy ("admin:<user>") · createdAt
+
+google_ads_reports         id · periodStart · periodEnd · periodDays ·
+                           promptId? · promptVersion? · model? · provider? ·
+                           snapshotJson (the PII-free
+                           GoogleAdsIntelligenceSnapshot the model saw) ·
+                           reviewJson (server-validated agent output) ·
+                           decisionIdsJson · generatedAt · createdAt
+                           index (periodDays, generatedAt)
+```
+
+**`UNIQUE(adAccountId, campaignId, date)` is the whole design.** A sync
+UPSERTS on that key, so running the same range twice cannot double spend,
+and Google's RESTATEMENT of a recent day (delayed conversions arriving)
+UPDATES that day in place rather than appending a second version that would
+inflate the period total. Every metric is REPLACED on conflict, never
+accumulated: Google's row for a day is the whole truth for that day.
+
+`date` is TEXT, not a timestamp, on purpose — it is a calendar day in the
+**account's** time zone, and storing it as an instant would force a timezone
+choice and silently shift every day boundary. See
+docs/GOOGLE_ADS_INTELLIGENCE.md §11.
+
+**No table stores a credential.** OAuth tokens, the client secret and the
+developer token live only in server environment variables; `ad_accounts`
+holds identity, currency and time zone, and `google_ads_sync_runs.errorMessage`
+is redacted before it is written.
+
+**Column naming carries the semantic boundary.** The conversion columns are
+prefixed `google_` because they are GOOGLE's attribution — there is
+deliberately no `orders` and no `revenue_cents` column on
+`ad_campaign_daily_metrics`, so a Google conversion can never become a
+BagDirect order by a careless select.
+
+**Search-term and keyword tables do not exist** (deferred — see
+GOOGLE_ADS_INTELLIGENCE.md §5). A test asserts their absence, so an empty
+table can never imply "nobody searched".
+
+Session 13 otherwise reads existing tables only (`sessions`, `events`,
+`orders`, `conversations`, `conversation_classifications`) through the
+Session 08/09 bounded reads.
+
 ## Experiments (Session 03 schema · Session 11 runtime — migration 0005)
 
 ```
@@ -495,6 +567,42 @@ row-locked `stateVersion` transitions, idempotent launch/stop) and
 counted only at/after a session's exposure, once per session). Deterministic
 logic lives in `modules/experiments` (no `db/`, no `lib/ai`) — see
 docs/EXPERIMENTATION.md.
+
+## Order cost snapshots (Session 13.5 — migration 0008)
+
+Historical order economics must not depend on today's cost configuration, so
+an order's costs are frozen when it is placed.
+
+### `orders` (additive columns)
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `cost_model_version` | text, nullable | Which `config/costs.ts` version was in force. NULL = no snapshot was taken. |
+| `cost_snapshot_json` | jsonb, nullable | `OrderCostSnapshot`: COGS breakdown, gross profit + margin bps, variable costs, shipping (actual / charged / subsidy / margin), contribution before paid media + margin bps, contribution availability, and the caveats recorded at capture time. |
+
+### `order_lines` (additive column)
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `cost_snapshot_json` | jsonb, nullable | `OrderLineCostSnapshot`: this line's product COGS and line variable costs. |
+
+Semantics:
+
+- **Forward only.** Old rows are never back-filled with fabricated historical
+  costs. NULL means `HISTORICAL_COST_UNAVAILABLE` — not zero profit.
+- **Order-level costs are NOT allocated to lines.** The payment fixed fee,
+  order packaging, handling and the shipping subsidy live once on the order,
+  because no deterministic per-line allocation rule exists.
+- **Capture never blocks a sale.** With `config/costs.ts` unconfigured — its
+  shipped state — capture returns null and the order is written without a
+  snapshot. Any capture failure is swallowed and logged loudly.
+- **Immutable.** A later cost change does not alter a stored snapshot; that is
+  the point of `cost_model_version`.
+
+No cost snapshot is ever sent to the browser, into a prompt, or into an
+analytics event — cost/margin data stays server-side (unchanged since S02).
+
+See `docs/UNIT_ECONOMICS.md` §14.
 
 ## Privacy & deletion (prepared; hardened S03.5 — tests/privacy.test.ts)
 

@@ -12,6 +12,7 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import type { Touch } from "@/lib/attribution/attribution";
+import type { OrderCostSnapshot, OrderLineCostSnapshot } from "@/modules/pricing/snapshot";
 import type { ArtworkRef, ProductConfiguration } from "@/types/commerce";
 
 /**
@@ -140,6 +141,19 @@ export const orders = pgTable(
     status: text("status").notNull().default("created"),
     aiAssisted: boolean("ai_assisted").notNull().default(false),
     attributionJson: jsonb("attribution_json").$type<Record<string, string>>(),
+    /**
+     * Cost-model version in force when the order was placed (Session 13.5
+     * §29). NULL means no cost snapshot was taken — either the order
+     * predates snapshots, or the cost model was unconfigured at the time.
+     * Historical profit is then HISTORICAL_COST_UNAVAILABLE; today's costs
+     * are never applied backwards as if they were the costs that applied.
+     */
+    costModelVersion: text("cost_model_version"),
+    /**
+     * Derived order economics AT ORDER TIME — the immutable record of what
+     * this order actually cost. Never recomputed from current config.
+     */
+    costSnapshotJson: jsonb("cost_snapshot_json").$type<OrderCostSnapshot>(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -166,6 +180,13 @@ export const orderLines = pgTable(
     /** Immutable ProductConfiguration snapshot — reproducible even if config files change later. */
     configJson: jsonb("config_json").$type<ProductConfiguration>().notNull(),
     artworkJson: jsonb("artwork_json").$type<ArtworkRef>(),
+    /**
+     * Per-line product COGS at order time (Session 13.5 §28, §30). Order-
+     * level costs (payment fixed fee, order packaging, handling, shipping
+     * subsidy) are deliberately NOT allocated here — they live once on the
+     * order, because no deterministic per-line allocation rule exists (§31).
+     */
+    costSnapshotJson: jsonb("cost_snapshot_json").$type<OrderLineCostSnapshot>(),
     createdAt: createdAt(),
   },
   (t) => [index("order_lines_order_idx").on(t.orderId)],
@@ -898,4 +919,180 @@ export const experimentEvents = pgTable(
     createdAt: createdAt(),
   },
   (t) => [index("experiment_events_experiment_idx").on(t.experimentId, t.createdAt)],
+);
+
+/* ------------------------------------------------------------------ */
+/* Google Ads read-only intelligence (Session 13)                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The connected advertising account (Session 13 spec §9, §29–§30).
+ *
+ * One row per (platform, external account id). It exists to persist the two
+ * facts every downstream number depends on and that must NEVER be assumed:
+ * the account's CURRENCY and its reporting TIME ZONE. Both are recorded
+ * exactly as the platform reports them.
+ *
+ * It holds NO credentials. OAuth tokens live only in server environment
+ * variables and are never written to this database (spec §5, §12).
+ */
+export const adAccounts = pgTable(
+  "ad_accounts",
+  {
+    id: text("id").primaryKey(),
+    /** google_ads (meta_ads is a later session). */
+    platform: text("platform").notNull(),
+    /** The platform's own account id — Google Ads customer id, digits only. */
+    externalAccountId: text("external_account_id").notNull(),
+    descriptiveName: text("descriptive_name"),
+    /** ISO-4217, from the platform. Never defaulted to USD. */
+    currencyCode: text("currency_code").notNull(),
+    /** IANA time zone the platform reports its calendar days in. */
+    timeZone: text("time_zone").notNull(),
+    isManager: boolean("is_manager").notNull().default(false),
+    /** Test accounts serve no real traffic — flagged so no one reads $0 as truth. */
+    isTestAccount: boolean("is_test_account").notNull().default(false),
+    /** Manager id used as login-customer-id, when the account sits under one. */
+    loginCustomerId: text("login_customer_id"),
+    /** API version the last successful read used. */
+    apiVersion: text("api_version"),
+    lastSuccessfulSyncAt: ts("last_successful_sync_at"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("ad_accounts_platform_external_uq").on(t.platform, t.externalAccountId)],
+);
+
+/**
+ * Campaign × reporting-day metrics (Session 13 spec §13, §44–§45).
+ *
+ * IDEMPOTENCY is the whole design. `(ad_account_id, campaign_id, date)` is
+ * UNIQUE, and a sync UPSERTS: running the same range twice cannot double
+ * spend, and Google's RESTATEMENT of a recent day (delayed conversions)
+ * UPDATES that day's row rather than appending a second version.
+ *
+ * `date` is a TEXT `YYYY-MM-DD` on purpose: it is a calendar day in the
+ * ACCOUNT's time zone, not an instant. Storing it as a timestamp would force
+ * a timezone choice and silently shift every day boundary.
+ *
+ * Column naming carries the semantic boundary (spec §14, §34): the
+ * conversion columns are prefixed `google_` because they are GOOGLE's
+ * attribution, not BagDirect orders or BagDirect revenue. There is
+ * deliberately no `orders` or `revenue_cents` column on this table.
+ */
+export const adCampaignDailyMetrics = pgTable(
+  "ad_campaign_daily_metrics",
+  {
+    id: text("id").primaryKey(),
+    adAccountId: text("ad_account_id")
+      .notNull()
+      .references(() => adAccounts.id, { onDelete: "cascade" }),
+    campaignId: text("campaign_id").notNull(),
+    campaignName: text("campaign_name").notNull(),
+    /** The platform's own status string, passed through verbatim. */
+    campaignStatus: text("campaign_status").notNull(),
+    advertisingChannelType: text("advertising_channel_type"),
+    /** Account-timezone calendar day, `YYYY-MM-DD`. */
+    date: text("date").notNull(),
+    impressions: integer("impressions").notNull().default(0),
+    clicks: integer("clicks").notNull().default(0),
+    /** Integer cents in the ACCOUNT currency, converted from cost_micros. */
+    costCents: integer("cost_cents").notNull().default(0),
+    currencyCode: text("currency_code").notNull(),
+    /** GOOGLE-reported conversions. Fractional under data-driven attribution. */
+    googleConversions: doublePrecision("google_conversions").notNull().default(0),
+    /** GOOGLE-reported conversion value, integer cents. NOT BagDirect revenue. */
+    googleConversionValueCents: integer("google_conversion_value_cents").notNull().default(0),
+    /** The sync run that last wrote this row — restatement provenance. */
+    lastSyncRunId: text("last_sync_run_id"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("ad_campaign_daily_uq").on(t.adAccountId, t.campaignId, t.date),
+    index("ad_campaign_daily_date_idx").on(t.adAccountId, t.date),
+  ],
+);
+
+/**
+ * Sync audit trail (Session 13 spec §12, §46).
+ *
+ * Append-only. One row per explicit admin sync: what was requested, what
+ * came back, and whether it fully succeeded. `status` distinguishes
+ * SUCCESS / PARTIAL / FAILED so a half-failed sync can never present itself
+ * as fully fresh, and freshness is computed from the last SUCCESS only.
+ *
+ * `errorCode` is a normalized code and `errorMessage` is redacted before it
+ * is written — no OAuth token, developer token or client secret can reach
+ * this table (spec §12, §42).
+ */
+export const googleAdsSyncRuns = pgTable(
+  "google_ads_sync_runs",
+  {
+    id: text("id").primaryKey(),
+    adAccountId: text("ad_account_id").references(() => adAccounts.id, { onDelete: "set null" }),
+    /** Customer id as configured — recorded even when the account row failed. */
+    externalAccountId: text("external_account_id"),
+    apiVersion: text("api_version"),
+    /** Requested reporting range, account-timezone calendar days. */
+    requestedStartDate: text("requested_start_date").notNull(),
+    requestedEndDate: text("requested_end_date").notNull(),
+    startedAt: ts("started_at").notNull().defaultNow(),
+    completedAt: ts("completed_at"),
+    /** running | success | partial | failed */
+    status: text("status").notNull().default("running"),
+    rowsFetched: integer("rows_fetched").notNull().default(0),
+    rowsInserted: integer("rows_inserted").notNull().default(0),
+    rowsUpdated: integer("rows_updated").notNull().default(0),
+    /** True when a row/page cap stopped the fetch — the range is incomplete. */
+    truncated: boolean("truncated").notNull().default(false),
+    /** Normalized GoogleAdsError code. Never a raw provider payload. */
+    errorCode: text("error_code"),
+    /** Redacted, display-safe message. Never contains credentials. */
+    errorMessage: text("error_message"),
+    /** Google's request id, when one was returned. Useful for support. */
+    providerRequestId: text("provider_request_id"),
+    /** "admin:<username>" — server-derived, never client-supplied. */
+    triggeredBy: text("triggered_by").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("google_ads_sync_runs_account_idx").on(t.adAccountId, t.startedAt),
+    index("google_ads_sync_runs_status_idx").on(t.status, t.startedAt),
+  ],
+);
+
+/**
+ * Google Ads review documents (Session 13 spec §37).
+ *
+ * One append-only row per explicit generation run: the server-validated
+ * agent output plus the EXACT deterministic snapshot the model saw, with
+ * prompt/model versioning. Same shape and doctrine as `ceo_reports` and
+ * `pricing_reports`: append-only, no scheduled generation, no update or
+ * delete path.
+ *
+ * The snapshot stored here is PII-free and credential-free by construction —
+ * it is the same structure the admin page renders.
+ */
+export const googleAdsReports = pgTable(
+  "google_ads_reports",
+  {
+    id: text("id").primaryKey(),
+    periodStart: ts("period_start").notNull(),
+    periodEnd: ts("period_end").notNull(),
+    periodDays: integer("period_days").notNull(),
+    promptId: text("prompt_id"),
+    promptVersion: text("prompt_version"),
+    model: text("model"),
+    provider: text("provider"),
+    /** The GoogleAdsIntelligenceSnapshot the model received. */
+    snapshotJson: jsonb("snapshot_json").$type<Record<string, unknown>>().notNull(),
+    /** Server-validated agent output (refs already filtered). */
+    reviewJson: jsonb("review_json").$type<Record<string, unknown>>().notNull(),
+    /** AgentDecision ids persisted from this review's recommendations. */
+    decisionIdsJson: jsonb("decision_ids_json").$type<string[]>().notNull(),
+    generatedAt: ts("generated_at").notNull().defaultNow(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("google_ads_reports_period_idx").on(t.periodDays, t.generatedAt)],
 );

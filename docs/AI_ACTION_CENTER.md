@@ -278,6 +278,36 @@ missing configuration naming `config/costs.ts → marginPolicy.*` plus
 `config/guardrails.ts → GUARDRAIL_LIMITS.maximumPrice{Decrease,Increase}Pct`.
 Approving it records the owner's decision and changes no price.
 
+## Session 13 — Google Ads decisions enter here too
+
+`agent_decisions` rows with `agentType = "google_ads"` are materialized by
+the same deterministic `syncDecisionsToActions()`, through
+`mapGoogleAdsDecisionToAction` (`modules/guardrails/decision-mapping.ts`).
+
+| Google Ads recommendation type | Action type |
+| --- | --- |
+| `CAMPAIGN_REVIEW` · `BUDGET_REVIEW` · `SEARCH_TERM_REVIEW` · `KEYWORD_REVIEW` · `LANDING_PAGE_REVIEW` · `ATTRIBUTION_REVIEW` | `MARKETING_REVIEW` |
+| `DATA_QUALITY_REVIEW` | `DATA_QUALITY_REVIEW` |
+
+Every entry is `REVIEW_ONLY`: approving one records "yes, go and look at
+this in Google Ads" and changes nothing. **`AD_BUDGET_CHANGE`, `AD_PAUSE`,
+`AD_RESUME` and `AD_CREATIVE_TEST` are absent from the table**, so a Google
+Ads recommendation cannot become an executable advertising action by any
+mapping — and the agent's output schema has no budget, status or bid field
+to carry one anyway (docs/GOOGLE_ADS_INTELLIGENCE.md §14).
+
+`BUDGET_REVIEW` deserves its own note: it means *"review whether this
+campaign's budget is right"*. It sets nothing, and a number appearing in the
+narrative is non-authoritative — nothing maps prose into an action.
+
+A human admin may still propose `AD_BUDGET_CHANGE` directly. It is
+evaluated, and today it always lands as PENDING_APPROVAL with
+`executionEligible: false`, `executionStatus: NOT_SUPPORTED`, and missing
+configuration naming `config/guardrails.ts → GUARDRAIL_LIMITS.
+maximumDailyAdSpendCents` and `maximumCampaignBudgetChangePct`. Approving it
+records the owner's decision and changes no campaign — there is no executor,
+and no code path in this repository can reach a Google Ads mutation endpoint.
+
 ## Known limitations
 
 - Single shared admin identity (Basic auth); no per-user RBAC or per-person

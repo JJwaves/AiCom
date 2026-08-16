@@ -1,6 +1,6 @@
 import { COST_MODEL } from "@/config/costs";
 import { GUARDRAIL_LIMITS } from "@/config/guardrails";
-import type { CostModelConfig } from "@/modules/pricing";
+import { isCostModelConfigured, type CostModelConfig } from "@/modules/pricing";
 import type { ElasticityAssessment, PricingReadiness, ReadinessEntry } from "./types";
 
 /**
@@ -102,6 +102,18 @@ export function assessCostReadiness(model: CostModelConfig = COST_MODEL): CostRe
   }
 
   const feeInputs: [string, unknown, string, string][] = [
+    [
+      "Packaging cost per order",
+      model.orderCosts.packagingCentsPerOrder,
+      "config/costs.ts → orderCosts.packagingCentsPerOrder",
+      "gross margin",
+    ],
+    [
+      "Fulfilment handling per order",
+      model.orderCosts.handlingCentsPerOrder,
+      "config/costs.ts → orderCosts.handlingCentsPerOrder",
+      "contribution margin",
+    ],
     ["Payment processing %", model.paymentFee.percentBps, "config/costs.ts → paymentFee.percentBps", "contribution margin"],
     ["Payment processing fixed fee", model.paymentFee.fixedCents, "config/costs.ts → paymentFee.fixedCents", "contribution margin"],
     [
@@ -117,10 +129,16 @@ export function assessCostReadiness(model: CostModelConfig = COST_MODEL): CostRe
       "minimum safe price (price floor)",
     ],
     [
+      "Target gross margin",
+      model.marginPolicy.targetGrossMarginBps,
+      "config/costs.ts → marginPolicy.targetGrossMarginBps",
+      "review signal — never a floor",
+    ],
+    [
       "Target contribution margin",
       model.marginPolicy.targetContributionMarginBps,
       "config/costs.ts → marginPolicy.targetContributionMarginBps",
-      "evaluating a proposed price against a goal",
+      "review signal — never a floor",
     ],
   ];
   for (const [label, value, configPath, neededFor] of feeInputs) {
@@ -129,16 +147,16 @@ export function assessCostReadiness(model: CostModelConfig = COST_MODEL): CostRe
     if (!configured) missing.push(configPath);
   }
 
-  const productsComplete = Object.values(model.products).every((pc) =>
-    PRODUCT_INPUTS.every((spec) => spec.read(pc) !== null && spec.read(pc) !== undefined),
-  );
-  const feeComplete = model.paymentFee.percentBps !== null && model.paymentFee.fixedCents !== null;
-  const costModelConfigured = productsComplete && feeComplete && Object.keys(model.products).length > 0;
+  /* THE completeness verdict is NOT re-derived here — modules/pricing owns
+   * it (Session 13.5), and two definitions of "are costs configured?" would
+   * eventually disagree. This function only names the gaps. */
+  const costModelConfigured = isCostModelConfigured(model);
 
   const marginPolicyConfigured =
     model.marginPolicy.minimumGrossMarginBps !== null || model.marginPolicy.minimumContributionMarginBps !== null;
 
-  /* Gross margin needs product costs only; contribution needs freight + fees too. */
+  /* Gross margin needs product COGS only (including order-scope packaging);
+   * contribution additionally needs freight, the payment fee and handling. */
   const grossInputsSet = Object.values(model.products).every(
     (pc) =>
       pc.baseManufacturingCentsPerUnit !== null &&
@@ -147,7 +165,8 @@ export function assessCostReadiness(model: CostModelConfig = COST_MODEL): CostRe
       pc.printing !== null &&
       pc.packagingCentsPerUnit !== null,
   );
-  const grossMarginAvailable = grossInputsSet && Object.keys(model.products).length > 0;
+  const grossMarginAvailable =
+    grossInputsSet && model.orderCosts.packagingCentsPerOrder !== null && Object.keys(model.products).length > 0;
   const contributionMarginAvailable = costModelConfigured;
 
   const summary = costModelConfigured

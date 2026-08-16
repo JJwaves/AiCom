@@ -113,7 +113,15 @@ docs/CRO_AGENT.md), and the Session 12 pricing review
 deterministic PricingIntelligenceSnapshot; the prompt states the
 never-an-optimal-price, never-an-elasticity and revenue-is-not-profit rules,
 and the output schema has NO price field at all, so a specific price is
-unrepresentable rather than filtered — docs/PRICING_INTELLIGENCE.md).
+unrepresentable rather than filtered — docs/PRICING_INTELLIGENCE.md), and
+the Session 13 Google Ads review (`ai_google_ads_review` — REASONING
+interpretation of the deterministic GoogleAdsIntelligenceSnapshot; the
+prompt states the Google-conversions-are-not-our-orders,
+revenue-is-not-profit and missing-data-is-not-zero rules, the agent has NO
+tools and NO Google Ads access of any kind, and the output schema has no
+budget, campaign-status, bid, keyword or ad field at all, so a campaign
+mutation is unwritable rather than filtered —
+docs/GOOGLE_ADS_INTELLIGENCE.md).
 Every runtime call made with a registry prompt stamps
 `prompt_id` + `prompt_version` onto its AiUsage row, so any output can be
 traced to the exact prompt+model that produced it.

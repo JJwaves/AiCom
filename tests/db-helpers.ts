@@ -7,6 +7,8 @@ export async function resetDb(): Promise<void> {
   const db = await getDb();
   await db.execute(sql`
     TRUNCATE TABLE
+      "google_ads_sync_runs", "ad_campaign_daily_metrics", "ad_accounts",
+      "google_ads_reports",
       "experiment_assignments", "experiments",
       "product_opportunities", "customer_insights",
       "conversation_classifications", "ceo_reports", "pricing_reports",

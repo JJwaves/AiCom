@@ -65,9 +65,17 @@ const configuredProduct: ProductCostConfig = {
 };
 
 const TEST_MODEL: CostModelConfig = {
+  version: "test-fixture-bi",
   products: { "p-custom-takeout": configuredProduct },
+  orderCosts: { packagingCentsPerOrder: 0, handlingCentsPerOrder: 0 },
   paymentFee: { percentBps: 290, fixedCents: 30 },
-  marginPolicy: { minimumGrossMarginBps: null, minimumContributionMarginBps: null, targetContributionMarginBps: null },
+  shippingPolicy: { customerCharge: { kind: "not_collected" } },
+  marginPolicy: {
+    minimumGrossMarginBps: null,
+    minimumContributionMarginBps: null,
+    targetGrossMarginBps: null,
+    targetContributionMarginBps: null,
+  },
 };
 
 describe("current production state — all cost placeholders null (§46)", () => {
@@ -92,10 +100,24 @@ describe("current production state — all cost placeholders null (§46)", () =>
       // No null→zero conversion: an unavailable metric has NO value at all.
       expect("value" in metric).toBe(false);
     }
-    // The reason explains the missing configuration in owner language…
-    expect(p.grossProfitCents.status === "UNAVAILABLE" && p.grossProfitCents.reason).toContain("configure manufacturing costs");
-    // …and the missing inputs name real config keys.
-    expect(p.missingCostInputs.some((m) => m.includes("baseManufacturingCentsPerUnit"))).toBe(true);
+    // Costs were unknown when the order was placed, so no snapshot exists:
+    // the default basis says exactly that instead of re-costing it today.
+    expect(p.costBasis).toBe("SNAPSHOT_ONLY");
+    expect(p.ordersWithoutCostSnapshot).toBe(1);
+    expect(p.grossProfitCents.status === "UNAVAILABLE" && p.grossProfitCents.reason).toContain(
+      "HISTORICAL_COST_UNAVAILABLE",
+    );
+
+    // The clearly-labelled current-cost scenario explains the missing
+    // configuration in owner language and names real config keys.
+    const scenario = computeProfitability(orders, lines, products, COST_MODEL, {
+      historicalCostBasis: "CURRENT_CONFIG_SCENARIO",
+    });
+    expect(scenario.grossProfitCents.status === "UNAVAILABLE" && scenario.grossProfitCents.reason).toContain(
+      "configure manufacturing costs",
+    );
+    expect(scenario.missingCostInputs.some((m) => m.includes("baseManufacturingCentsPerUnit"))).toBe(true);
+    expect(scenario.notes.some((n) => n.startsWith("SCENARIO:"))).toBe(true);
     expect(isCostModelFullyConfigured(COST_MODEL)).toBe(false);
   });
 
@@ -107,13 +129,21 @@ describe("current production state — all cost placeholders null (§46)", () =>
   });
 });
 
+/**
+ * These orders are created while the PRODUCTION cost model is all-null, so
+ * they carry no cost snapshot. The math below is therefore exercised through
+ * the explicitly-labelled current-cost SCENARIO basis — the same posture the
+ * dashboard takes: snapshot-only by default, scenario only when asked for.
+ */
+const SCENARIO = { historicalCostBasis: "CURRENT_CONFIG_SCENARIO" } as const;
+
 describe("test-configured cost model — profit math (§9–§10)", () => {
   it("computes gross and contribution (before paid media) per the documented formulas", async () => {
     await createOrder({ sessionId: (await makeSession()).id, provider: "mock", currency: "USD", lines: [line(1000, 54_000)] });
 
     const { orders, lines } = await loadPeriodOrders(period30());
     const products = await listCatalogProducts();
-    const p = computeProfitability(orders, lines, products, TEST_MODEL);
+    const p = computeProfitability(orders, lines, products, TEST_MODEL, SCENARIO);
 
     // COGS = (10+2+0)×1000 mfg + 2×1000 print + 2000 setup + 1×1000 pkg = 17,000
     expect(p.grossProfitCents).toEqual({ status: "AVAILABLE", value: 54_000 - 17_000 });
@@ -124,7 +154,7 @@ describe("test-configured cost model — profit math (§9–§10)", () => {
     expect(isCostModelFullyConfigured(TEST_MODEL)).toBe(true);
   });
 
-  it("charges the fixed payment fee once per ORDER, not once per line", async () => {
+  it("charges per-ORDER costs once per order, not once per line", async () => {
     await createOrder({
       sessionId: (await makeSession()).id,
       provider: "mock",
@@ -134,12 +164,18 @@ describe("test-configured cost model — profit math (§9–§10)", () => {
 
     const { orders, lines } = await loadPeriodOrders(period30());
     const products = await listCatalogProducts();
-    const p = computeProfitability(orders, lines, products, TEST_MODEL);
+    const p = computeProfitability(orders, lines, products, TEST_MODEL, SCENARIO);
 
     // Line COGS: 17,000 (as above) + [(10+2)×500 + 2×500 + 2,000 + 500] = 9,500 → gross = 84,000 − 26,500
     expect(p.grossProfitCents).toEqual({ status: "AVAILABLE", value: 84_000 - 26_500 });
-    // Non-fee variable = (17,000+5,000) + (9,500+5,000) = 36,500; ONE order fee = round(84,000×2.9%)+30 = 2,466
-    expect(p.contributionProfitBeforePaidMediaCents).toEqual({ status: "AVAILABLE", value: 84_000 - 36_500 - 2_466 });
+    // Variable costs, each applied ONCE for the order:
+    //   freight  — the fixture quotes it `per_order` (5,000), and both lines are the
+    //              SAME product, so it is ONE shipment: 5,000, not 2 × 5,000.
+    //   fee      — round(84,000 × 2.9%) + ONE fixed 30 = 2,466, not two fixed fees.
+    expect(p.contributionProfitBeforePaidMediaCents).toEqual({
+      status: "AVAILABLE",
+      value: 84_000 - 26_500 - 5_000 - 2_466,
+    });
   });
 
   it("goes PARTIAL when only some orders are costable, listing what is missing", async () => {
@@ -153,7 +189,7 @@ describe("test-configured cost model — profit math (§9–§10)", () => {
 
     const { orders, lines } = await loadPeriodOrders(period30());
     const products = await listCatalogProducts();
-    const p = computeProfitability(orders, lines, products, TEST_MODEL);
+    const p = computeProfitability(orders, lines, products, TEST_MODEL, SCENARIO);
 
     expect(p.ordersCosted).toBe(1);
     expect(p.ordersTotal).toBe(2);
@@ -166,12 +202,12 @@ describe("test-configured cost model — profit math (§9–§10)", () => {
     await createOrder({ sessionId: (await makeSession()).id, provider: "mock", currency: "USD", lines: [line(1000, 54_000)] });
     const { orders, lines } = await loadPeriodOrders(period30());
     const products = await listCatalogProducts();
-    const perf = computeProductPerformance(orders, lines, products, TEST_MODEL);
+    const perf = computeProductPerformance(orders, lines, products, TEST_MODEL, SCENARIO);
     expect(perf).toHaveLength(1);
     expect(perf[0].grossProfitCents).toEqual({ status: "AVAILABLE", value: 54_000 - 17_000 });
     expect(perf[0].units).toBe(1000);
     // With the production null model the same line is honestly unavailable.
-    const nullPerf = computeProductPerformance(orders, lines, products, COST_MODEL);
+    const nullPerf = computeProductPerformance(orders, lines, products, COST_MODEL, SCENARIO);
     expect(nullPerf[0].grossProfitCents.status).toBe("UNAVAILABLE");
   });
 });

@@ -11,6 +11,7 @@ import {
   productGaps,
 } from "@/modules/customer-intelligence/aggregate";
 import { previousPeriod, type Period } from "@/modules/customer-intelligence/period";
+import { loadAdSpendSummary, type AdSpendSummary } from "@/modules/google-ads-intelligence/spend";
 import { CLASSIFIER_VERSION } from "@/modules/customer-intelligence/taxonomy";
 import { loadAiSalesMetrics, type AiCostMetrics, type AiSalesMetrics } from "./ai-metrics";
 import { computeAttributionBreakdowns, type AttributionBreakdowns } from "./attribution";
@@ -70,6 +71,17 @@ export type BusinessHealthSnapshot = {
   products: ProductPerformance[];
   segments: SegmentMetrics[];
   attribution: AttributionBreakdowns;
+  /**
+   * Google Ads spend (Session 13).
+   *
+   * A SEPARATE section, deliberately: Session 09's revenue, funnel,
+   * profitability and attribution semantics are unchanged by S13, and
+   * `attribution.adSpendIntegrated` stays `false` because that breakdown
+   * still contains no ad spend and still computes no CAC or ROAS. Spend
+   * carries its own availability state, so a missing integration reads as
+   * UNAVAILABLE and never as zero.
+   */
+  adSpend: AdSpendSummary;
   profitability: ProfitabilityMetrics;
   trends: TrendLine[];
   dataQuality: DataQualityWarning[];
@@ -98,9 +110,10 @@ export async function buildBusinessHealthSnapshot(period: Period): Promise<Busin
   const prevRevenue = computeRevenueMetrics(previousOrders.orders, previousOrders.lines);
   const profitability = computeProfitability(current.orders, current.lines, products);
   const productPerformance = computeProductPerformance(current.orders, current.lines, products);
-  const [segments, attribution, ai] = await Promise.all([
+  const [segments, attribution, adSpend, ai] = await Promise.all([
     computeSegmentMetrics(corpus, current.orders),
     computeAttributionBreakdowns(period, current.orders),
+    loadAdSpendSummary(period),
     loadAiSalesMetrics(
       period,
       corpus,
@@ -244,6 +257,7 @@ export async function buildBusinessHealthSnapshot(period: Period): Promise<Busin
     products: top(productPerformance),
     segments: top(segments),
     attribution,
+    adSpend,
     profitability,
     trends,
     dataQuality,

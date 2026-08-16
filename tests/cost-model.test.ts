@@ -28,6 +28,7 @@ const config: ProductConfiguration = {
  * business data. Chosen for easy hand-verification.
  */
 const FIXTURE: CostModelConfig = {
+  version: "test-fixture-1",
   products: {
     [product.id]: {
       baseManufacturingCentsPerUnit: 10,
@@ -43,10 +44,13 @@ const FIXTURE: CostModelConfig = {
       otherVariableCentsPerUnit: 0,
     },
   },
+  orderCosts: { packagingCentsPerOrder: 0, handlingCentsPerOrder: 0 }, // fixture: no order-scope costs
   paymentFee: { percentBps: 290, fixedCents: 30 }, // 2.9% + $0.30 (fixture)
+  shippingPolicy: { customerCharge: { kind: "not_collected" } },
   marginPolicy: {
     minimumGrossMarginBps: 3000, // 30% (fixture)
     minimumContributionMarginBps: 1500, // 15% (fixture)
+    targetGrossMarginBps: 4000,
     targetContributionMarginBps: 2500,
   },
 };
@@ -159,6 +163,7 @@ describe("cost model — configured fixture math", () => {
       marginPolicy: {
         minimumGrossMarginBps: null,
         minimumContributionMarginBps: null,
+        targetGrossMarginBps: null,
         targetContributionMarginBps: null,
       },
     };

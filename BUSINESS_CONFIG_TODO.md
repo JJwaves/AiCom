@@ -79,51 +79,142 @@ render visibly until replaced.
 | Meta Pixel ID / CAPI token / dataset | `.env` (token is server-only) |
 | Merchant Center feed decision (which SKUs are feed-eligible) | see README → "Google Merchant Center" |
 
-## Cost model (required for margins, contribution profit & price guardrails)
+## Cost model (Session 13.5 — required for profit intelligence & price guardrails)
 
-The structure now exists in `config/costs.ts` (Session 02) with every value
-an explicit `null` placeholder. Margin math reports "unavailable" and every
-price guardrail fails closed until ALL of these are provided. Do NOT let
-anyone invent them. Units: integer cents; rates in basis points (290 = 2.9%).
+The full architecture is `docs/UNIT_ECONOMICS.md`. The structure lives in
+`config/costs.ts` with every value an explicit `null` `[TO BE PROVIDED]`.
+Margin math reports "unavailable" and every price guardrail fails closed
+until these are provided. **Do NOT let anyone invent them** — not from
+industry averages, not from an AI estimate, not from a competitor's prices.
+A missing cost reports "unavailable"; a guessed cost reports a number that
+looks true.
 
-**Session 09 makes the gap visible daily:** `/admin/business-intelligence`
-shows gross profit, contribution profit (before paid media), and both
-margins as **"Unavailable — configure manufacturing costs"** — listing the
-exact missing inputs — until every row below is filled. Nothing substitutes
-zero, nothing estimates. Classification:
+Units: **integer cents**; rates in **integer basis points** (290 = 2.90%).
+Any change here **must bump `COST_MODEL_VERSION`** — every stored order cost
+snapshot references it so past figures stay explainable.
 
-- **REQUIRED FOR CURRENT SALES** — nothing here. The storefront prices,
-  carts and checks out correctly today; the cost model is invisible to
-  customers. (Real *sell* prices are a separate item — see "Price per
-  configuration" and `NEXT_PUBLIC_DEMO_PRICING`.)
-- **REQUIRED FOR PROFIT INTELLIGENCE** (dashboards are blind without them):
-  every per-product manufacturing / size / material / printing / packaging /
-  shipping / other-variable input, plus the payment fee. Until these exist,
-  `/admin/business-intelligence` and `/admin/pricing-intelligence` both
-  report margin and profit impact as **unavailable** — never zero, never
-  estimated — and revenue is explicitly not used as a proxy for profit.
-- **REQUIRED BEFORE PRICE ACTIONS** (Session 12): everything above **plus**
-  the margin policy floors below **plus**
-  `config/guardrails.ts → maximumPriceDecreasePct / maximumPriceIncreasePct`.
-  Until all of them exist, `/admin/pricing-intelligence` reports
-  `SPECIFIC_PRICE_CHANGE: BLOCKED` and the Pricing Agent can only ever raise
-  a *review* — it has no way to propose a number, and the deterministic price
-  floor refuses to verify one.
-- Not needed yet (later sessions): advertising cost feeds (Google/Meta) —
-  the dashboard already labels contribution "before paid media" and never
-  fabricates CAC/ROAS.
+**Where you will see the gap:** `/admin/business-intelligence` and
+`/admin/pricing-intelligence` both show a "Cost and margin readiness" panel
+listing every row below as Configured / Missing / Invalid, and what each gap
+blocks. `/admin/google-ads-intelligence` shows POAS as unavailable with the
+same list.
 
-| Item | Where |
-| --- | --- |
-| Base manufacturing cost per bag | `config/costs.ts` → `products.<id>.baseManufacturingCentsPerUnit` |
-| Per-size manufacturing deltas | `config/costs.ts` → `products.<id>.sizeAdjustmentCentsPerUnit` (every offered size id) |
-| Per-material cost deltas (GSM/weight) | `config/costs.ts` → `products.<id>.materialAdjustmentCentsPerUnit` |
-| Printing cost per unit (1c/2c) + setup fees | `config/costs.ts` → `products.<id>.printing.<printOptionId>` |
-| Packaging cost per unit | `config/costs.ts` → `products.<id>.packagingCentsPerUnit` |
-| Shipping cost basis (per unit / per order / per carton) | `config/costs.ts` → `products.<id>.shipping` |
-| Other variable cost (0 is a valid confirmed value) | `config/costs.ts` → `products.<id>.otherVariableCentsPerUnit` |
-| Payment processing fee (% + fixed) | `config/costs.ts` → `paymentFee` |
-| Minimum gross / contribution margin + target margin | `config/costs.ts` → `marginPolicy` |
+### Classification
+
+- **REQUIRED FOR CURRENT SALES — nothing here.** The storefront prices, carts
+  and checks out correctly today; the cost model is invisible to customers and
+  **missing costs never block a sale**. (Real *sell* prices are a separate
+  item — see "Price per configuration" and `NEXT_PUBLIC_DEMO_PRICING`.)
+- **REQUIRED FOR PROFIT INTELLIGENCE** — manufacturing / size / material /
+  printing + setup / packaging (per unit and per order) unlock **gross profit
+  and gross margin**. Adding shipping basis, the payment fee and fulfilment
+  handling unlocks **contribution profit before paid media**. Until then both
+  are reported unavailable — never zero, never estimated — and revenue is
+  never used as a proxy for profit.
+- **REQUIRED FOR POAS** — everything above, plus real Google Ads spend in a
+  compatible currency and adequate attribution coverage (see "Google Ads
+  integration"). Revenue ROAS is NOT profitability.
+- **REQUIRED BEFORE PRICE ACTIONS** — everything above **plus** the margin
+  FLOORS below **plus** `config/guardrails.ts → maximumPriceDecreasePct /
+  maximumPriceIncreasePct`. Until all exist, `/admin/pricing-intelligence`
+  reports `SPECIFIC_PRICE_CHANGE: BLOCKED` and the deterministic price floor
+  refuses to verify any price.
+- **REQUIRED BEFORE GUARDED ADS AUTOMATION** — see "Guardrail limits" below;
+  none of it is unlocked by costs alone.
+
+### What each value means
+
+| Item | Where | Scope |
+| --- | --- | --- |
+| Base manufacturing cost per bag | `config/costs.ts` → `products.<id>.baseManufacturingCentsPerUnit` | per unit |
+| Factory quantity breaks (OPTIONAL) | `config/costs.ts` → `products.<id>.manufacturingTiers` — omit the key entirely if the factory quotes one price at every volume. If present it is authoritative and a quantity below the first tier stays uncostable. **Not assumed to match the sell-price tiers.** | per unit |
+| Per-size manufacturing deltas | `config/costs.ts` → `products.<id>.sizeAdjustmentCentsPerUnit` (every offered size id) | per unit |
+| Per-material cost deltas (GSM/weight) | `config/costs.ts` → `products.<id>.materialAdjustmentCentsPerUnit` | per unit |
+| Printing cost per unit | `config/costs.ts` → `products.<id>.printing.<printOptionId>.centsPerUnit` | per unit |
+| Printing setup / plate / screen fee | `config/costs.ts` → `products.<id>.printing.<printOptionId>.setupFeeCents` | **per line** (one artwork = one setup) |
+| Packaging cost per bag | `config/costs.ts` → `products.<id>.packagingCentsPerUnit` | per unit |
+| Packaging cost per order (master carton / pallet) | `config/costs.ts` → `orderCosts.packagingCentsPerOrder` — counted as COGS | **per order** |
+| Fulfilment handling per order (pick / pack) | `config/costs.ts` → `orderCosts.handlingCentsPerOrder` — a variable selling cost, not COGS | **per order** |
+| Shipping cost basis (what freight actually costs you) | `config/costs.ts` → `products.<id>.shipping` — `per_unit`, `per_order` or `per_carton` | varies |
+| Customer shipping charge (what you collect) | `config/costs.ts` → `shippingPolicy.customerCharge` — currently `not_collected`, which is a fact about checkout, not a guess. Change it only together with an order-model change that records a real shipping charge | per order |
+| Other variable cost per unit (0 is a valid confirmed answer) | `config/costs.ts` → `products.<id>.otherVariableCentsPerUnit` | per unit |
+| Payment processing % + fixed fee | `config/costs.ts` → `paymentFee.percentBps` / `paymentFee.fixedCents` — the fixed fee is charged **once per transaction** | per order |
+| Minimum gross margin (**hard floor**) | `config/costs.ts` → `marginPolicy.minimumGrossMarginBps` |  |
+| Minimum contribution margin (**hard floor**) | `config/costs.ts` → `marginPolicy.minimumContributionMarginBps` |  |
+| Target gross margin (objective, **never a floor**) | `config/costs.ts` → `marginPolicy.targetGrossMarginBps` |  |
+| Target contribution margin (objective, **never a floor**) | `config/costs.ts` → `marginPolicy.targetContributionMarginBps` |  |
+
+**Minimum vs target.** A MINIMUM is a hard safety boundary: below it, a future
+automated or approved price action is blocked. A TARGET is a business
+objective: below it generates a review, not a violation. They are different
+numbers with different consequences — please supply both, and do not set a
+target below its own minimum (validation rejects that).
+
+### Owner input template — fill this in, one copy per product
+
+Take this to your factory, freight forwarder and payment processor. Leave a
+blank blank: an unanswered line is more useful than a guessed one.
+
+```text
+Product: ______________________________   (id in config/products.ts: __________)
+
+MANUFACTURING (base size, base material)
+  Base cost:                    _____ cents/unit
+
+  Volume breaks? (only if the factory really quotes them)
+    1,000 units:                _____ cents/unit
+    5,000 units:                _____ cents/unit
+   10,000 units:                _____ cents/unit
+   (below the smallest break we will report "unavailable" — we will not guess)
+
+SIZE ADJUSTMENTS (cents/unit vs the base size — 0 is a valid answer)
+  Small:  _____    Medium: _____    Large: _____    XL: _____
+
+MATERIAL ADJUSTMENTS (cents/unit vs the base material)
+  Standard: _____        Heavy duty: _____
+
+PRINTING
+  No logo:        _____ cents/unit   setup _____ cents
+  1-colour print: _____ cents/unit   setup _____ cents
+  2-colour print: _____ cents/unit   setup _____ cents
+
+PACKAGING
+  Per bag:                      _____ cents/unit
+  Per order (carton/pallet):    _____ cents/order
+
+FULFILMENT
+  Handling per order:           _____ cents/order
+
+FREIGHT (what it COSTS you — pick one basis)
+  [ ] per unit:                 _____ cents/unit
+  [ ] per order:                _____ cents/order
+  [ ] per carton:               _____ cents/carton, _____ units/carton
+
+OTHER VARIABLE COST
+  Per unit (0 if none):         _____ cents/unit
+```
+
+Once, for the whole business:
+
+```text
+PAYMENT PROCESSOR
+  Percentage:                   _____ bps      (2.9%  = 290)
+  Fixed fee per transaction:    _____ cents    ($0.30 = 30)
+
+SHIPPING CHARGED TO THE CUSTOMER
+  [ ] We do not charge shipping separately        (today's state)
+  [ ] Flat: _____ cents/order
+  [ ] We don't know yet
+  Rule / notes: _______________________________________________
+
+MARGIN POLICY
+  Minimum gross margin (hard floor):        _____ %
+  Minimum contribution margin (hard floor): _____ %
+  Target gross margin (objective):          _____ %
+  Target contribution margin (objective):   _____ %
+```
+
+Convert percentages to basis points when entering them (30% = 3000).
 
 ## Database & first-party data (Session 03)
 
@@ -204,6 +295,51 @@ elasticity from observational data (there is no controlled price variation to
 estimate it from), and change a price by itself (no executor exists and none
 may be registered until the full contract in docs/AI_ACTION_CENTER.md is
 satisfied).
+
+## Google Ads integration (Session 13)
+
+Split deliberately into what is needed to CONNECT, what is needed for the
+data to be USEFUL, and what stays unavailable regardless.
+
+### Required to connect (server-only env — see `.env.example`)
+
+- [ ] `GOOGLE_ADS_DEVELOPER_TOKEN` — from the Google Ads API Center. A
+      test-mode token cannot read a production account.
+- [ ] `GOOGLE_ADS_CLIENT_ID` + `GOOGLE_ADS_CLIENT_SECRET` — a Google Cloud
+      OAuth 2.0 client.
+- [ ] `GOOGLE_ADS_REFRESH_TOKEN` — issued for a Google account with **read**
+      access to the Ads account (scope `.../auth/adwords`). This integration
+      can only read, so a read-only account is sufficient and is what you
+      should use.
+- [ ] `GOOGLE_ADS_CUSTOMER_ID` — the account being reported on.
+- [ ] `GOOGLE_ADS_LOGIN_CUSTOMER_ID` — **only** if that account sits under a
+      manager (MCC): the MANAGER's id.
+
+**Do not invent these.** While they are unset the dashboard reads
+NOT_CONNECTED, which is never interpreted as $0 spend, and nothing else in
+the platform is affected.
+
+### Required for the spend intelligence to mean anything
+
+- [ ] A **production** Google Ads account with real serving history. A
+      Google Ads *test* account returns no real data, and the dashboard
+      flags it explicitly so no decision is made from structural numbers.
+- [ ] Campaigns actually running, with tracking templates that carry the
+      campaign into the landing URL. Without `{campaignid}` (⇒ EXACT match)
+      or a `utm_campaign` matching the campaign name (⇒ MAPPED), real visits
+      are UNMATCHED: account-level figures stay correct, but per-campaign
+      first-party revenue is understated, and the coverage section says by
+      how much.
+
+### Still unavailable regardless of the above
+
+- **Profit on ad spend (POAS).** Requires the cost model in
+  `config/costs.ts`. Until it is filled, revenue ROAS is shown and is
+  explicitly NOT called profitability — a campaign with ROAS 4 can still
+  lose money on every order.
+- **Any automated advertising action.** Budget changes, pausing and
+  resuming need the ad-spend limits below, a separate mutation provider,
+  and the full executor contract. Session 13 ships none of them.
 
 ## Guardrail limits (Session 10 — `config/guardrails.ts`)
 

@@ -157,7 +157,7 @@ export function buildCeoContext(snapshot: BusinessHealthSnapshot): CeoContext {
   }
 
   lines.push("");
-  lines.push("== ATTRIBUTION (first-party; NO ad-spend data — CAC/ROAS do not exist) ==");
+  lines.push("== ATTRIBUTION (first-party session/order breakdown; this section carries NO ad spend) ==");
   for (const row of s.attribution.firstTouchSourceMedium) {
     ref(
       `attribution.firstTouch.${row.key}`,
@@ -165,6 +165,33 @@ export function buildCeoContext(snapshot: BusinessHealthSnapshot): CeoContext {
       `${row.sessions} sessions, ${row.orders} orders, ${usd(row.revenueCents)} revenue (AVAILABLE)`,
     );
   }
+
+  /* Session 13: ad spend arrives as its own section with its own
+   * availability state. UNAVAILABLE means we cannot see advertising — it
+   * NEVER means advertising is free, and the CEO agent is told so in the
+   * line it can cite. */
+  lines.push("");
+  lines.push("== ADVERTISING SPEND (Google Ads, Session 13) ==");
+  ref(
+    "adSpend.googleAds",
+    "Google Ads spend",
+    s.adSpend.spendCents.status === "UNAVAILABLE"
+      ? `UNAVAILABLE — ${s.adSpend.spendCents.reason}`
+      : `${(s.adSpend.spendCents.value / 100).toFixed(2)} ${s.adSpend.currencyCode ?? ""} (AVAILABLE)`,
+  );
+  ref(
+    "adSpend.googleConversions",
+    "Google-REPORTED conversions (NOT BagDirect orders)",
+    s.adSpend.googleConversions.status === "UNAVAILABLE"
+      ? "UNAVAILABLE"
+      : `${s.adSpend.googleConversions.value} (AVAILABLE)`,
+  );
+  lines.push(`  ${s.adSpend.statement}`);
+  lines.push(
+    "  You may recommend REVIEWING advertising (MARKETING_REVIEW). You cannot change a budget, pause a campaign, or " +
+      "instruct anyone to; and profit on ad spend does not exist while manufacturing costs are unconfigured, so never " +
+      "call advertising profitable.",
+  );
 
   lines.push("");
   lines.push("== CUSTOMER SIGNALS (Session 08 customer intelligence) ==");

@@ -69,6 +69,7 @@ const DECISION_AGENT_TO_SOURCE: Record<string, ActionSource> = {
   ceo: "CEO_AGENT",
   cro: "CRO_AGENT",
   pricing: "PRICING_AGENT",
+  google_ads: "GOOGLE_ADS_AGENT",
 };
 
 /**
@@ -624,7 +625,7 @@ export async function syncDecisionsToActions(actor = "system:decision_sync"): Pr
     .from(agentDecisions)
     .where(
       and(
-        inArray(agentDecisions.agentType, ["ceo", "cro", "pricing"]),
+        inArray(agentDecisions.agentType, ["ceo", "cro", "pricing", "google_ads"]),
         eq(agentDecisions.approvalStatus, "pending"),
       ),
     )

@@ -50,6 +50,20 @@
       "when": 1786824115390,
       "tag": "0006_pricing_intelligence",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1786841020021,
+      "tag": "0007_google_ads_intelligence",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1786905858590,
+      "tag": "0008_order_cost_snapshots",
+      "breakpoints": true
     }
   ]
 }

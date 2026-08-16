@@ -173,9 +173,27 @@ landing page, plus last-touch source/medium — sessions, orders, revenue,
 and orders÷sessions conversion per key. Sessions are keyed by their own
 touch; orders are keyed by their linked session's touch (sessions may
 predate the period; sessionless orders count under "(no session)").
-Click ids (gclid & co) are never surfaced. **No ad spend exists, so no
-CAC/ROAS — `adSpendIntegrated: false` renders as a standing data-quality
-note.**
+Click ids (gclid & co) are never surfaced. **This breakdown carries no ad
+spend and computes no CAC or ROAS — `adSpendIntegrated: false` renders as a
+standing note. Session 13 did NOT change that**: advertising economics live
+on `/admin/google-ads-intelligence`, with their own denominators and their
+own attribution coverage.
+
+### Ad spend (Session 13 addition)
+
+`BusinessHealthSnapshot.adSpend` is a SEPARATE section
+(`modules/google-ads-intelligence/spend.ts`) carrying total Google Ads spend,
+clicks and Google-reported conversions for the period, each with its own
+availability state. **UNAVAILABLE means we cannot see advertising — never
+that it was free.** Its `statement` is a single owner-language sentence the
+CEO context prints verbatim, and it repeats the boundary: Google-reported
+conversions are Google's attribution, not BagDirect orders. Cost per order,
+ROAS, attribution coverage and the Google-vs-first-party discrepancy are on
+the Google Ads page (docs/GOOGLE_ADS_INTELLIGENCE.md); profit on ad spend
+stays unavailable while `config/costs.ts` is unconfigured.
+
+No Session 09 metric changed meaning, and no historical semantic changed
+silently — metric availability stays explicit.
 
 ## BusinessHealthSnapshot (snapshot.ts)
 
@@ -327,3 +345,50 @@ The CEO agent is unchanged. Persisted pricing signals and `pricing_reports`
 rows are structured and referenceable, so a future CEO review can consume
 them; Session 12 does NOT trigger a CEO report and does not modify the CEO
 context.
+
+## Session 13.5 — profitability rebuilt on the real cost model
+
+`modules/business-intelligence/profitability.ts` now consumes
+`modules/pricing/unit-economics.ts` rather than reconstructing cost math. The
+Session 09 availability semantics are UNCHANGED (`Metric<T>`,
+AVAILABLE/PARTIAL/UNAVAILABLE, unavailable carries a reason and never a
+value); what changed is where the numbers come from and how honest they are
+about history.
+
+**Formulas** (see `docs/UNIT_ECONOMICS.md` for the full derivation):
+
+```
+Gross Profit = revenue − product COGS
+               (manufacturing + printing + setup + per-unit packaging
+                + per-ORDER packaging)
+
+Contribution Profit Before Paid Media
+             = Gross Profit
+             − payment processing (percent of ORDER total + ONE fixed fee)
+             − shipping subsidy  (= max(actual freight − customer charge, 0))
+             − fulfilment handling (per ORDER)
+             − other variable
+```
+
+**Two levels, two availabilities.** `grossProfitCents` can be AVAILABLE while
+`contributionProfitBeforePaidMediaCents` is UNAVAILABLE — a missing payment
+fee does not make the factory cost unknown. New fields report the coverage:
+`ordersCosted`, `ordersWithoutCostSnapshot`, `ordersWithoutContribution`,
+`costBasis`.
+
+**Historical cost basis.** `computeProfitability` defaults to
+`SNAPSHOT_ONLY`: only orders carrying a cost snapshot are costed, and the rest
+report `HISTORICAL_COST_UNAVAILABLE`. Today's costs are never applied
+backwards. `CURRENT_CONFIG_SCENARIO` is available, clearly labelled in the
+returned notes, and is NOT what the dashboard uses.
+`computeProductPerformance` follows the same rule at line level (per-product
+profit stays GROSS only — order-level costs are never allocated).
+
+**Admin.** `/admin/business-intelligence` gained the shared, read-only
+**Cost and margin readiness** panel: every cost/margin input as Configured /
+Partly configured / Missing / Invalid, plus what each gap blocks (gross profit,
+contribution profit, POAS, price action safety). There is no cost editor —
+`config/costs.ts` remains the single authority.
+
+With the shipped all-null configuration: revenue, orders and AOV stay
+AVAILABLE; every profit metric is UNAVAILABLE with its reason. Never zero.

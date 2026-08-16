@@ -92,7 +92,17 @@ describe("no execution capability was introduced (spec §22–§24, §36–§37)
       /issueRefund|createRefund|refundOrder\s*\(/,
       /capturePayment|markOrderPaid|applyDiscount/,
       /updateCampaignBudget|createCampaign|pauseCampaign/,
-      /googleads|google-ads-api|facebook-nodejs/i,
+      /**
+       * No ADS API CLIENT may be reachable from the guardrail/action layer.
+       *
+       * Session 13 narrowed this from a bare /googleads/i: the mapping table
+       * `mapGoogleAdsDecisionToAction` legitimately names the Google Ads
+       * AGENT (a review-only decision source), while the thing that must stay
+       * unreachable is the Google Ads CLIENT. The pattern now names the client
+       * SDKs, the API host, and this repo's own adapter — which is strictly
+       * stronger than what it replaced.
+       */
+      /google-ads-api|facebook-nodejs|googleads\.googleapis|@\/lib\/google-ads/i,
       /updateProduct\s*\(|writeCatalog|setPrice\s*\(/,
       /createCheckout\s*\(/,
     ];

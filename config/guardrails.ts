@@ -20,7 +20,7 @@
  */
 
 /** Bump on every policy/limit/taxonomy change. Recorded on every evaluation. */
-export const GUARDRAIL_POLICY_VERSION = "2026-08-15.s12.1";
+export const GUARDRAIL_POLICY_VERSION = "2026-08-15.s13.1";
 
 /**
  * Hard business limits — all [TO BE PROVIDED] (BUSINESS_CONFIG_TODO.md →
@@ -88,7 +88,16 @@ export const AGENT_AUTONOMY_POLICY = {
    * agent runs at all. It can propose; it can never launch or execute.
    */
   CRO_AGENT: { defaultMode: "RECOMMEND", maxMode: "RECOMMEND" },
-  GOOGLE_ADS_AGENT: { defaultMode: "OBSERVE", maxMode: "RECOMMEND" },
+  /**
+   * Session 13: the Google Ads Intelligence Agent is implemented and
+   * DESIGNED to recommend, so its default rises to RECOMMEND — the same
+   * treatment the CEO agent got in S09, the CRO agent in S11 and the Pricing
+   * agent in S12. The CEILING IS UNCHANGED at RECOMMEND, the guarded-auto
+   * allow-list is still empty, `AI_GOOGLE_ADS_AGENT` still gates whether the
+   * agent runs at all, and its output schema cannot express a budget, a
+   * pause or a bid. It can raise a review; it can never touch a campaign.
+   */
+  GOOGLE_ADS_AGENT: { defaultMode: "RECOMMEND", maxMode: "RECOMMEND" },
   META_ADS_AGENT: { defaultMode: "OBSERVE", maxMode: "RECOMMEND" },
   /** A human proposing through the admin surface — still guardrail-checked. */
   HUMAN_ADMIN: { defaultMode: "RECOMMEND", maxMode: "RECOMMEND" },

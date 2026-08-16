@@ -36,6 +36,16 @@ export const FEATURE_FLAGS = [
   "PRICING_INTELLIGENCE",
   "AI_PRICING_AGENT",
   "AI_CRO_AGENT",
+  /**
+   * Google Ads Intelligence admin surface (Session 13). Same split as
+   * PRICING_INTELLIGENCE vs AI_PRICING_AGENT: this flag gates the
+   * deterministic /admin/google-ads-intelligence dashboard, the connection
+   * test and the sync route (all 404 while off); AI_GOOGLE_ADS_AGENT
+   * additionally gates whether the model may be called. Every number on the
+   * dashboard is computed without AI. With this flag OFF, no Google Ads API
+   * call is ever made and no ad data is read.
+   */
+  "GOOGLE_ADS_INTELLIGENCE",
   "AI_GOOGLE_ADS_AGENT",
   "AI_META_ADS_AGENT",
   /** Guarded auto-execution tiers — far-future, require operating history. */

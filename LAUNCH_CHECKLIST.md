@@ -69,11 +69,36 @@ take real traffic until they pass.
 - [ ] Verify /admin/pricing-intelligence answers 404 with the flag off, and that the review route is rejected cross-origin (403) and for non-JSON content types (415) on the production build
 - [ ] Only if enabling `AI_PRICING_AGENT`: the agent needs the AI runtime + provider key + budget caps (see the AI section). Every number on the dashboard is computed without it, and a provider outage leaves the last review visible
 
+## Google Ads intelligence (Session 13 — only if enabling GOOGLE_ADS_INTELLIGENCE)
+- [ ] Same admin auth prerequisites as above (shared surface — no separate credentials); HTTPS is mandatory (the sync, connection-test and review routes are admin MUTATION routes)
+- [ ] ⛔ Set the five required `GOOGLE_ADS_*` server variables (see `.env.example` + BUSINESS_CONFIG_TODO). Use a Google account with READ access only — this integration cannot write, so nothing more is needed
+- [ ] ⛔ Never put a Google Ads credential in a `NEXT_PUBLIC_*` variable, and never commit one. They are read server-side only, are redacted out of every persisted error, and appear in no prompt, log line, database column or browser response
+- [ ] Press "Test connection" first and confirm the returned CURRENCY and TIME ZONE match the account you expect — every downstream figure depends on both, and neither is ever assumed
+- [ ] Confirm the account is NOT a Google Ads test account (the page flags it). Test accounts serve no real ads, so their figures are structural
+- [ ] Know that sync is MANUAL: there is no scheduler, so "weekly reporting" means pressing "Sync Google Ads" weekly. Freshness advances only on a COMPLETE sync, and a failed sync leaves the previous data visible with its own timestamp rather than showing zeros
+- [ ] Understand what the dashboard can and cannot tell you TODAY: Google's conversions are NOT your orders and Google's conversion value is NOT your revenue — both lenses are shown side by side and neither corrects the other. **POAS requires the cost model** (`config/costs.ts`) AND orders carrying a cost snapshot AND a matching currency AND adequate attribution coverage; until all four hold it reads UNAVAILABLE or PARTIAL, and revenue ROAS is never profitability
+- [ ] Before drawing per-campaign conclusions, check the attribution coverage section. Below 50% matched, first-party CAC and ROAS report PARTIAL — fix tracking templates before blaming a campaign
+- [ ] If the ad account currency differs from your order currency, CAC and ROAS report UNAVAILABLE rather than wrong. There is no exchange-rate model and none will be invented
+- [ ] Verify /admin/google-ads-intelligence answers 404 with the flag off, and that all three routes are rejected cross-origin (403) and for non-JSON content types (415) on the production build
+- [ ] Only if enabling `AI_GOOGLE_ADS_AGENT`: the agent needs the AI runtime + provider key + budget caps (see the AI section). Every number on the dashboard is computed without it; syncing never spends AI tokens; a provider outage leaves the last review visible
+- [ ] Confirm nothing in this platform can change your Google Ads account: there is no executor, no mutation provider, and the ad-spend limits in `config/guardrails.ts` are still `null` (which BLOCKS, and never means "no limit")
+
+## Unit economics (Session 13.5 — `config/costs.ts`)
+- [ ] Understand the split: **missing costs never block a sale.** Customers can price, cart and check out with every value null. What is blocked is profit analytics, POAS and any future price action
+- [ ] Collect the real numbers using the fill-in template in BUSINESS_CONFIG_TODO → "Cost model". Nothing may be an industry average, a competitor's price, or an AI estimate — a guessed cost reports a number that looks true
+- [ ] Enter them as integer cents / basis points and **bump `COST_MODEL_VERSION`**; every stored order cost snapshot references it
+- [ ] Supply BOTH minimum (hard floor) and target (objective) margins for gross and contribution. They are different numbers with different consequences; a target below its own minimum is rejected by validation
+- [ ] Confirm the customer shipping charge basis. `not_collected` is today's structural fact (checkout collects no shipping); changing it to a flat charge makes shipping economics PARTIAL until orders record a real shipping charge
+- [ ] Run `npm test` after editing — invalid configuration (negative costs, a fee ≥ 100%, an unreachable margin, unordered tiers, a missing size/print option) fails loudly rather than being normalised
+- [ ] Check "Cost and margin readiness" on /admin/business-intelligence: every row Configured, every capability Ready
+- [ ] Expect profit to appear only for orders placed AFTER the configuration exists. Earlier orders report HISTORICAL_COST_UNAVAILABLE — today's costs are deliberately never applied backwards
+- [ ] Know what is NOT modelled: refunds, discounts (structurally absent), overhead/salaries/rent/tax, freight rate shopping, currency conversion, negotiated quote economics
+
 ## Commerce
 - [ ] ⛔ Shopify production credentials in env (`NEXT_PUBLIC_SHOPIFY_*`)
 - [ ] ⛔ Variant mapping complete in `lib/commerce/shopify.ts` (no `REPLACE_ME` ids)
 - [ ] ⛔ Mock-catalog read fallback removed from `lib/commerce/catalog.ts` once the Shopify mapping is verified (it exists so an early env switch can't empty the storefront; launch must serve the real catalog only)
-- [ ] Cost model filled in `config/costs.ts` (no `null` inputs) so margins compute and price guardrails can verify — see BUSINESS_CONFIG_TODO "Cost model"
+- [ ] Cost model filled in `config/costs.ts` (no `null` inputs) so margins compute and price guardrails can verify — see the "Unit economics" section above and BUSINESS_CONFIG_TODO "Cost model"
 - [ ] ⛔ Real product prices loaded; `pricingStatus: "LIVE"`; `NEXT_PUBLIC_DEMO_PRICING=false`
 - [ ] ⛔ Real MOQ confirmed (`MOQ_CONFIRMED: true`)
 - [ ] ⛔ Real shipping costs (rate source configured or Shopify shipping profiles)

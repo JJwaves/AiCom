@@ -54,7 +54,9 @@ export {
   mapAgentDecisionToAction,
   mapCroDecisionToAction,
   mapDecisionToAction,
+  mapGoogleAdsDecisionToAction,
   mapPricingDecisionToAction,
+  GOOGLE_ADS_RECOMMENDATION_TO_ACTION_TYPE,
   type MappableDecision,
   type MappedAction,
 } from "./decision-mapping";

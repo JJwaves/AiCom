@@ -537,6 +537,7 @@ describe("cost and margin availability", () => {
 
   it("reports a configured cost model when one is supplied (test-only fixture)", () => {
     const costs = assessCostReadiness({
+      version: "test-fixture-pi",
       products: {
         "p-test": {
           baseManufacturingCentsPerUnit: 20,
@@ -548,8 +549,15 @@ describe("cost and margin availability", () => {
           otherVariableCentsPerUnit: 0,
         },
       },
+      orderCosts: { packagingCentsPerOrder: 0, handlingCentsPerOrder: 0 },
       paymentFee: { percentBps: 290, fixedCents: 30 },
-      marginPolicy: { minimumGrossMarginBps: 3000, minimumContributionMarginBps: 1500, targetContributionMarginBps: 2500 },
+      shippingPolicy: { customerCharge: { kind: "not_collected" } },
+      marginPolicy: {
+        minimumGrossMarginBps: 3000,
+        minimumContributionMarginBps: 1500,
+        targetGrossMarginBps: 4000,
+        targetContributionMarginBps: 2500,
+      },
     });
     expect(costs.costModelConfigured).toBe(true);
     expect(costs.marginPolicyConfigured).toBe(true);

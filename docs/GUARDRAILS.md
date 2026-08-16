@@ -258,6 +258,34 @@ be modelled as proposed actions. Its rules remain:
   and `maximumMoqChangePct` are all still `null`. Session 12 reports each as
   MISSING CONFIGURATION by exact config path — never as "no limit".
 
+## Session 13 additions (Google Ads read-only intelligence)
+
+- `GUARDRAIL_POLICY_VERSION` → `2026-08-15.s13.1`.
+- `GOOGLE_ADS_AGENT` default autonomy OBSERVE → **RECOMMEND** (the agent is
+  implemented and designed to recommend). **The CEILING is unchanged at
+  RECOMMEND**, `GUARDED_AUTO_ALLOWED_ACTION_TYPES` is still empty, and
+  `AI_GOOGLE_ADS_AGENT` still gates whether the agent runs at all.
+- ONE permission added: `GOOGLE_ADS_AGENT` may now propose
+  `DATA_QUALITY_REVIEW` (review-only). Justification: an advertising question
+  the platform CANNOT answer ("Google Ads has never synced", "spend and
+  revenue are in different currencies") must route honestly instead of being
+  forced into a `MARKETING_REVIEW` that would misrepresent a configuration
+  gap as a campaign problem.
+- `mapGoogleAdsDecisionToAction` + `GOOGLE_ADS_RECOMMENDATION_TO_ACTION_TYPE`;
+  `syncDecisionsToActions` now covers ceo / cro / pricing / google_ads.
+- **`AD_BUDGET_CHANGE`, `AD_PAUSE`, `AD_RESUME` and `AD_CREATIVE_TEST` are
+  ABSENT from the Session 13 mapping table.** They remain registered in the
+  taxonomy for a later guarded session, and remain `NOT_IMPLEMENTED`,
+  executor-less, and blocked by the still-`null`
+  `maximumDailyAdSpendCents` / `maximumCampaignBudgetChangePct` /
+  `maximumNewCampaignTestBudgetCents` — including for a HUMAN_ADMIN proposal,
+  which lands PENDING_APPROVAL with `executionEligible: false` and the
+  missing configuration named.
+- The Google Ads agent's output schema has no budget, campaign-status, bid,
+  keyword or ad field, so an executable ad action is unrepresentable at the
+  model boundary as well as unmapped at the action boundary.
+- **`modules/guardrails/executors.ts` is still EMPTY.**
+
 ## Policy versioning
 
 Every evaluation stores `GUARDRAIL_POLICY_VERSION` plus the limits snapshot
@@ -279,7 +307,8 @@ contract.
 ```
 AI_RUNTIME · AI_SALES · AI_CUSTOMER_INTELLIGENCE · AI_BUSINESS_INTELLIGENCE
 AI_ACTION_CENTER · PRICING_INTELLIGENCE · AI_PRICING_AGENT · AI_CRO_AGENT
-AI_GOOGLE_ADS_AGENT · AI_META_ADS_AGENT · AI_AUTO_PRICING · AI_AUTO_ADS
+GOOGLE_ADS_INTELLIGENCE · AI_GOOGLE_ADS_AGENT · AI_META_ADS_AGENT
+AI_AUTO_PRICING · AI_AUTO_ADS
 EXPERIMENT_ENGINE
 ```
 
@@ -290,3 +319,36 @@ while `AI_PRICING_AGENT` separately gates whether the model may be called —
 the deterministic pricing analytics need no AI configuration at all. The storefront
 does not depend on it. Any flag off ⇒ its surfaces disappear and its agents
 cannot run; commerce must be fully functional with every flag off.
+
+## Session 13.5 additions (business cost model + margin policy)
+
+**No autonomy change.** `GUARDRAIL_POLICY_VERSION` is unchanged, every agent
+ceiling is still RECOMMEND, `GUARDED_AUTO_ALLOWED_ACTION_TYPES` is still
+empty, `modules/guardrails/executors.ts` is still empty, every
+`GUARDRAIL_LIMITS` value is still `null`, and no action type was added or
+removed. Session 13.5 is analytics and configuration infrastructure.
+
+**Margin policy stays in ONE place.** `config/costs.ts → marginPolicy` remains
+the single home; `config/guardrails.ts` still deliberately does not duplicate
+margin floors, and the evaluator still calls the same `evaluatePriceFloor`.
+The policy gained `targetGrossMarginBps` alongside the existing
+`targetContributionMarginBps`.
+
+**MINIMUM vs TARGET is now explicit in code.** A minimum is a hard boundary
+that blocks a price-affecting action; a target is an objective whose shortfall
+is a review signal and never a block. `minimumAllowedPriceCents` consults
+FLOORS ONLY — a target can never become a floor by configuration accident, and
+`validateCostModel` rejects a target set below its own minimum.
+
+**The price floor still fails closed**, and now for one more reason: a cost
+model that is fully configured but INVALID (a negative cost, a fee ≥ 100%, an
+unreachable margin) is rejected rather than normalised into something
+plausible that would flow into the floor looking real.
+
+**Nothing in the customer path calls the floor.** Structural tests assert that
+the checkout route never references `evaluatePriceFloor`, and that no file in
+`lib/commerce`, `lib/cart` or `lib/configuration` gates on cost readiness.
+Missing cost configuration blocks profit analytics and future price actions —
+never a sale.
+
+See `docs/UNIT_ECONOMICS.md` §16–§18.

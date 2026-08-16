@@ -36,20 +36,69 @@ export {
 } from "./engine";
 export {
   computeCosts,
+  computeLineCosts,
+  computeShippingEconomics,
+  evaluateMarginAgainstPolicy,
   evaluatePriceFloor,
   minimumAllowedPriceCents,
+  paymentFeeCents,
   productCostCents,
 } from "./cost-model";
 export type {
   CostBreakdown,
   CostComputation,
   CostModelConfig,
+  CustomerShippingChargeBasis,
+  LineCogs,
+  LineCostComputation,
+  LineVariableCosts,
+  ManufacturingTier,
   MarginPolicyConfig,
+  MarginVerdict,
+  MarginVerdictState,
+  OrderCostConfig,
   PaymentFeeConfig,
   PriceFloorVerdict,
   ProductCostConfig,
   ShippingCostBasis,
+  ShippingEconomics,
+  ShippingPolicyConfig,
 } from "./cost-model";
+export {
+  computeOrderUnitEconomics,
+  computePaidMediaEconomics,
+  evaluateOrderMarginPolicy,
+  marginBps,
+} from "./unit-economics";
+export type {
+  EconomicsStatus,
+  LineEconomics,
+  OrderCogs,
+  OrderEconomicsInput,
+  OrderEconomicsLineInput,
+  OrderShipping,
+  OrderVariableCosts,
+  PaidMediaEconomics,
+  UnitEconomics,
+} from "./unit-economics";
+export { validateCostModel } from "./validate";
+export type { CostConfigIssue, CostConfigIssueSeverity, CostConfigValidation } from "./validate";
+export {
+  captureOrderCostSnapshot,
+  economicsFromSnapshot,
+  HISTORICAL_COST_UNAVAILABLE,
+  HISTORICAL_COST_UNAVAILABLE_REASON,
+  isOrderCostSnapshot,
+} from "./snapshot";
+export type { CapturedOrderCosts, OrderCostSnapshot, OrderLineCostSnapshot } from "./snapshot";
+export { assessCostReadiness, isCostModelConfigured } from "./readiness";
+export type {
+  CapabilityState,
+  CategoryState,
+  CostCapability,
+  CostReadiness,
+  CostReadinessCategory,
+} from "./readiness";
 
 export type PriceCalculation =
   | {

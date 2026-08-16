@@ -111,7 +111,36 @@ executor exists for any business action type).
   cannot run price variants (docs/EXPERIMENTATION.md §24), and no
   `PRICE_CHANGE` executor exists. Both remain deferred.
 - See docs/PRICING_INTELLIGENCE.md.
-## Stage H — Google Ads   (read-only → recommend → approval → guarded auto)
+## Stage H1 — Google Ads READ-ONLY ✅ COMPLETE (Session 13, 2026-08-15)
+
+Ad spend is no longer a blind spot. `lib/google-ads` reads Google Ads
+reporting through `GoogleAdsService:search` and **cannot mutate anything** —
+the single URL builder appends the literal `/googleAds:search`, there is no
+generic `request()`, GAQL has no mutation verb, and the provider interface
+has three read methods. `modules/google-ads-intelligence` turns persisted
+daily snapshots into deterministic advertising analytics (Google-native
+metrics, the first-party lens, EXACT/MAPPED/UNMATCHED campaign attribution
+with coverage, CAC and ROAS with named denominators, the
+Google-vs-first-party discrepancy view, data-quality signals) with no
+`lib/ai` import, no `lib/google-ads` import and no `fetch`. The Google Ads
+Agent is RECOMMEND-only, tool-free, and its output schema has no budget,
+status, bid, keyword or ad field. See docs/GOOGLE_ADS_INTELLIGENCE.md.
+
+Honest caveats carried forward: search terms and keywords are NOT ingested;
+per-campaign first-party revenue depends on tracking-template coverage;
+**profit on ad spend stays UNAVAILABLE** while `config/costs.ts` is
+unconfigured, so revenue ROAS is never profitability.
+
+## Stage H2 — Google Ads recommendations → approval → guarded auto (next)
+
+Needs: real ad-spend limits in `config/guardrails.ts`
+(`maximumDailyAdSpendCents`, `maximumCampaignBudgetChangePct`,
+`maximumNewCampaignTestBudgetCents` — all `null` today), a separate
+`GoogleAdsMutationProvider` with its own OAuth scope, the full executor
+contract from docs/AI_ACTION_CENTER.md, and operating history. Until then
+`AD_BUDGET_CHANGE` / `AD_PAUSE` / `AD_RESUME` / `AD_CREATIVE_TEST` stay
+registered, unmapped, executor-less and limit-blocked.
+
 ## Stage I — Meta Ads     (same progression)
 ## Stage J — Guarded Autonomy
 - With sufficient history, selectively promote low-risk actions to

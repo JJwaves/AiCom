@@ -111,7 +111,8 @@ arbitrary queries.
 | CEO / Business Review | daily summaries + recommendations | RECOMMEND (implemented S09) |
 | Pricing Intelligence | interpret pricing performance, raise reviews | RECOMMEND (implemented S12; engine stays authority) |
 | CRO | propose experiments | RECOMMEND |
-| Google Ads / Meta Ads | (deferred) | OBSERVE |
+| Google Ads (S13, read-only) | RECOMMEND | RECOMMEND |
+| Meta Ads | (deferred) | OBSERVE |
 
 Modes (`OBSERVE < RECOMMEND < GUARDED_AUTO < AUTONOMOUS`) are stored per
 agent in `AgentConfig` and enforced by the guardrail engine — not by
@@ -202,19 +203,24 @@ catalog product, `quantityTier` must be a real tier of that product, and
 `requiresCostConfiguration`/`requiresExperiment` are RECOMPUTED by the server
 (a disagreement with the model is logged, never honoured).
 
-### 5 · Google Ads Agent — Stage H (deferred)
+### 5 · Google Ads Agent — Stage H · **IMPLEMENTED, READ-ONLY (Session 13 — docs/GOOGLE_ADS_INTELLIGENCE.md is authoritative)**
 
 | Dimension | Specification |
 | --- | --- |
-| Responsibility | Stage 1: read-only performance reporting joined to first-party attribution/contribution profit. Later stages: recommendations → approved actions → guarded automation. |
-| Inputs | Google Ads API read scopes, first-party attribution, contribution-profit analytics. |
-| Outputs | Reports; later `AgentDecision` rows (budget/bid/keyword proposals). |
-| Allowed tools | Read-only Ads reporting tools; decision writer (Stage H2+). |
-| Prohibited | Any write to Google Ads until its stage explicitly grants it; spend changes beyond `maximumAdBudgetChangePct`/`maximumDailyAdSpend`; campaign creation/deletion without approval. |
-| Autonomy | OBSERVE → RECOMMEND → (much later, per-action) GUARDED_AUTO. |
-| Data access | Ads read API + own analytics; credentials live server-side, never in prompts or tool outputs. |
-| Guardrails | Budget-change caps, daily-spend caps, human approval below AUTONOMOUS, kill-switch flag. |
-| Audit | Every read logged summarily; every proposed/executed change = AgentDecision with before/after; AiUsage. |
+| Responsibility | Stage 1: read-only performance reporting joined to first-party attribution. Later stages: approved actions → guarded automation. ✅ S13: interprets the deterministic `GoogleAdsIntelligenceSnapshot` (connection/freshness states, Google-native spend/traffic/conversions, the first-party funnel and orders for Google Ads traffic, per-campaign performance with match quality, attribution coverage, the Google-vs-first-party discrepancy, data-quality signals) into REVIEW recommendations. |
+| Inputs | ✅ S13: the snapshot context is the ONLY input — bounded, PII-free, credential-free. The agent has NO Google Ads access at all and cannot even read from Google. |
+| Outputs | ✅ S13: `AgentDecision` rows (agentType `google_ads`) + an append-only `google_ads_reports` document. All REVIEW-shaped. |
+| Allowed tools | **NONE.** `AGENT_TOOL_PERMISSIONS.google_ads = []`; one REASONING `generateStructuredObject` call. |
+| Prohibited | Every write to Google Ads. ✅ S13 makes them UNREPRESENTABLE: the output schema has no `proposedDailyBudgetCents`, no `budgetChangePct`, no `newStatus`, no `pause`, no `bidCents`, no `keywordText`, no `adCopy`, and its recommendation→action table maps to review types only. |
+| Autonomy | ✅ S13: default OBSERVE → RECOMMEND; **ceiling unchanged at RECOMMEND**; guarded-auto allow-list still empty. |
+| Data access | ✅ S13: persisted daily snapshots only. Credentials live in server env, never in the database, a prompt, a log line, or the browser. |
+| Guardrails | `maximumDailyAdSpendCents` / `maximumCampaignBudgetChangePct` / `maximumNewCampaignTestBudgetCents` are all `null`, so every ad action is execution-ineligible with the missing configuration named — including a HUMAN_ADMIN proposal. `AD_BUDGET_CHANGE`/`AD_PAUSE`/`AD_RESUME`/`AD_CREATIVE_TEST` remain registered, unmapped, and executor-less. |
+| Audit | ✅ S13: every sync writes a `google_ads_sync_runs` row (range, rows, status, normalized error code, redacted message, server-derived actor); every review writes a `google_ads_reports` document plus AiUsage. |
+
+Server-side validation of the model's output: metric/evidence/signal
+references are filtered against exactly what the context printed (none
+surviving ⇒ the recommendation is DROPPED), and `campaignId` must be a
+campaign the snapshot actually contained (anything else becomes `null`).
 
 ### 6 · Meta Ads Agent — Stage I (deferred)
 

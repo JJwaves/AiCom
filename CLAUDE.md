@@ -53,6 +53,134 @@ limits, refund authorization, agent autonomy, approvals.
 
 ## Current project stage
 
+**Session 13.5 "Business Cost Model + Margin Policy" COMPLETE (2026-08-16) —
+the platform now has a complete, deterministic, configurable unit-economics
+model, and STILL knows none of the numbers. `modules/pricing` is the one cost
+authority (NO `lib/ai` import, NO `db/` import, NO fetch — asserted
+structurally), and `config/costs.ts` remains 100% `null` `[TO BE PROVIDED]`:
+this session implemented the model, the owner supplies the values, and a
+structural test scans the file for any numeric literal so an "industry
+average" cannot be slipped in. **THREE COST SCOPES, and order-level costs are
+applied EXACTLY ONCE**: per-unit (manufacturing ± size ± material or a
+quantity tier, printing ink, packaging, other variable), per-line (printing
+setup — one screen per artwork), per-order (order packaging [COGS], fulfilment
+handling [selling cost], the processor's FIXED fee, the shipping subsidy). A
+`per_order` freight basis is additionally deduplicated PER PRODUCT, because
+two lines of the same product are one shipment — a real double-count that the
+multi-line tests now pin. **SHIPPING SUBSIDY, NOT SHIPPING COST**: `subsidy =
+max(actualFreight − customerShippingCharge, 0)`, never negative — profiting on
+shipping is preserved SEPARATELY in `shippingMarginCents` and deliberately NOT
+added to contribution, because the charge is not inside recorded order
+revenue; `customerCharge: not_collected` is a STRUCTURAL fact (orders have no
+shipping column; `totalCents = subtotalCents`), not an assumption. **THE
+LADDER IS FOUR NAMED LEVELS**: sell price → −product COGS → GROSS PROFIT →
+−variable selling/fulfilment → CONTRIBUTION PROFIT BEFORE PAID MEDIA →
+−attributed ad spend → CONTRIBUTION PROFIT AFTER PAID MEDIA; nothing is ever
+called "net profit". **AVAILABILITY IS PER LEVEL** — `UnitEconomics` carries
+`grossStatus` and `contributionStatus` separately, so a missing payment fee
+leaves gross AVAILABLE and contribution UNAVAILABLE rather than hiding both.
+Margins are integer bps and are `null` — never NaN, never Infinity, never 0 —
+on zero revenue. **MINIMUM ≠ TARGET**: `minimumGrossMarginBps` /
+`minimumContributionMarginBps` are hard floors that block a price action;
+`targetGrossMarginBps` (new) / `targetContributionMarginBps` are objectives
+whose shortfall is a REVIEW signal, and `minimumAllowedPriceCents` consults
+floors only. All four ship `null` — this session chose no margin value.
+**HISTORICAL PROFIT COMES FROM A SNAPSHOT, NEVER FROM TODAY'S COSTS APPLIED
+BACKWARDS**: migration 0008 adds `orders.cost_model_version` +
+`orders.cost_snapshot_json` + `order_lines.cost_snapshot_json`, written
+FORWARD ONLY and best-effort (capture failure never blocks an order); an order
+without one reports `HISTORICAL_COST_UNAVAILABLE`, and a clearly-labelled
+`CURRENT_CONFIG_SCENARIO` basis exists but is never the dashboard default.
+**POAS IS REAL NOW, AND STILL UNAVAILABLE**: `POAS = contribution profit
+before paid media ÷ ad spend` beside `ROAS = revenue ÷ ad spend` — separate
+fields, separate formulas, no field named merely `roas` or `poas`; it requires
+contribution profit AND real spend AND compatible currency AND adequate
+attribution coverage, and any gap yields UNAVAILABLE or PARTIAL rather than an
+approximation. `validateCostModel` fails LOUDLY on present-and-wrong values
+(negative costs, fractional cents, fee ≥ 100%, margin < 0% or ≥ 100%, target
+below its own minimum, unreachable contribution floor, unordered/duplicate
+tiers, unknown product, missing size/print option, bad carton size) and never
+normalises them; `null` is not an error. A shared READ-ONLY
+`CostReadinessPanel` on `/admin/business-intelligence` +
+`/admin/pricing-intelligence` shows every input Configured/Missing/Invalid and
+what it unlocks — **there is no cost editor; `config/costs.ts` stays the single
+authority**. **COST CONFIGURATION NEVER BLOCKS A SALE**: browser-verified a
+real checkout completing with every cost null, no commerce file imports cost
+readiness, and the checkout route is asserted never to reference the price
+floor. NO new agent, NO storefront price change, NO MOQ change, NO discounts,
+NO price/ads mutations, NO GUARDED_AUTO, NO executor, NO autonomy change —
+`GUARDRAIL_POLICY_VERSION` is unchanged. 1072 tests (966 → 1072: 106 new).
+Next milestone: Session 14 "Google Ads Recommendation Agent + Guarded Action
+Preparation" (do not start automatically) — or, worth more, the owner filling
+`config/costs.ts`.**
+
+**Session 13 "Google Ads Read-Only Intelligence" COMPLETE (2026-08-15) — the
+platform can now SEE what advertising costs, without acquiring any power over
+it. The read-only invariant is STRUCTURAL, not promised: `lib/google-ads`
+has ONE URL builder and it appends the LITERAL `/googleAds:search` (the
+method is not a parameter, so no `:mutate` endpoint can be CONSTRUCTED
+anywhere in the repo), there is no exported `request(method, path, body)`,
+GAQL — the only reachable query language — has no mutation verb, the
+transport refuses any query not starting with SELECT, and
+`GoogleAdsReportingProvider` exposes exactly three read methods
+(`status`/`getAccountInfo`/`getCampaignDailyMetrics`). Adding campaign
+mutation requires DELETING A TEST. `modules/google-ads-intelligence` is the
+deterministic advertising-analytics authority with NO `lib/ai` import, NO
+`lib/google-ads` import and NO `fetch` — it reads PERSISTED daily snapshots,
+so a dashboard render is never an API call and an outage cannot change a
+number. **Google's numbers and ours are separate TYPES, not separate
+labels**: `GoogleNativeTotals` has no `orders`/`revenueCents` field,
+`GoogleAdsFunnel` has no `googleConversions`/`googleConversionValueCents`
+field, and `AdEfficiency` has no field named merely `cac` or `roas` — so
+`googleReportedCostPerConversionCents` can never become
+`firstPartyCostPerOrderCents` by a careless destructure, and the two are
+displayed side by side with a discrepancy view that reports the gap and its
+five standing causes instead of "correcting" either side. Attribution has
+THREE honest tiers and no fuzzy one — EXACT (`utm_campaign` = campaign id),
+MAPPED (normalized name), UNMATCHED (revenue still counts account-wide,
+under no campaign); `gclid` is a BOOLEAN "this was a paid click" and is never
+stored, rendered, serialized or sent to a model; two campaigns normalizing to
+the same name make BOTH unmatchable rather than a coin flip. Reporting days
+stay on the ACCOUNT's calendar (a UTC period maps to the account-days it
+OVERLAPS, inclusively, and the page prints the zone and the exact range).
+**NOT_CONNECTED / SYNC_FAILED / STALE / PARTIAL are four states and none of
+them is zero** — freshness advances only on a COMPLETE sync, a failed sync
+leaves prior rows and their timestamp untouched, and credentials removed while
+data remains still shows the data, saying it is frozen. Sync is IDEMPOTENT
+(`UNIQUE(account, campaign, day)` upsert ⇒ syncing twice cannot double spend;
+Google's RESTATEMENT of a recent day UPDATES in place, never appends).
+CAC/ROAS carry named denominators (first-party CAC = spend ÷ BagDirect orders
+attributed to a Google Ads click, NOT Google conversions); currency mismatch
+BLOCKS every cross-lens ratio (no FX model, none invented); **POAS is
+UNAVAILABLE** while `config/costs.ts` is null — revenue ROAS is never called
+profitability. Migration 0007 adds `ad_accounts` / `ad_campaign_daily_metrics`
+/ `google_ads_sync_runs` / `google_ads_reports`; **no table stores a
+credential**, and the conversion columns are prefixed `google_` precisely so
+they can never read as orders. The Google Ads Agent
+(`lib/ai/agents/google-ads`, RECOMMEND) has NO tools, NO Google access at all,
+makes ONE REASONING structured call over the PII-free snapshot, and **its
+output schema cannot express a mutation** — no `proposedDailyBudgetCents`, no
+`budgetChangePct`, no `newStatus`, no `pause`, no `bidCents`, no
+`keywordText`, no `adCopy` — so "raise Campaign X to $500/day" is unwritable
+rather than filtered; server-side every metric/evidence/signal ref is
+validated against exactly what the context printed (none surviving ⇒ dropped)
+and `campaignId` against the campaigns the snapshot contained.
+`GUARDRAIL_POLICY_VERSION` → `2026-08-15.s13.1`; GOOGLE_ADS_AGENT default
+autonomy OBSERVE → RECOMMEND (ceiling unchanged); one permission added
+(`DATA_QUALITY_REVIEW`, review-only). **`AD_BUDGET_CHANGE`/`AD_PAUSE`/
+`AD_RESUME`/`AD_CREATIVE_TEST` are ABSENT from the mapping table, the executor
+registry is still EMPTY, and their limits are still `null` — so even a
+HUMAN_ADMIN proposal is execution-ineligible with the missing configuration
+named.** Search terms and keywords are deliberately NOT ingested (declared,
+not faked). `/admin/google-ads-intelligence` behind the S08 auth + the new
+`GOOGLE_ADS_INTELLIGENCE` flag (agent generation additionally behind
+`AI_GOOGLE_ADS_AGENT`); three write-guarded routes (test-connection / sync /
+ads-review); syncing never spends AI tokens. Session 09's metrics were
+EXTENDED, not rewritten — `attribution.adSpendIntegrated` stays `false` and a
+separate `adSpend` section carries its own availability. 966 tests (763 → 966: 203 new). Next
+milestone: Session 14 "Google Ads Recommendation Agent + Guarded Action
+Preparation" (do not start automatically).**
+
 **Session 12 "Pricing Intelligence Agent" COMPLETE (2026-08-15) — the
 platform can now UNDERSTAND its own pricing without acquiring any power over
 it. `modules/pricing-intelligence` (no `lib/ai` import, no price-mutation
@@ -189,22 +317,24 @@ with AI off/down; CEO review generates ONLY from the explicit admin
 button. MEASURE→SYNTHESIZE→EXPLAIN→RECOMMEND, never execute. Next
 milestone: Session 10 "Guardrails + AI Action Center" — DONE, see above.**
 
-## Current architecture (2026-08-15, post-Session 12)
+## Current architecture (2026-08-15, post-Session 13)
 
 Working B2B storefront, verified end-to-end (see
 docs/CURRENT_SYSTEM_AUDIT.md + its Session-02 resolution note):
-- Next.js 16.3 App Router · React 19 · TS · Tailwind v4 · zod · vitest (763 tests)
+- Next.js 16.3 App Router · React 19 · TS · Tailwind v4 · zod · vitest (1072 tests)
   · Drizzle ORM + Postgres (PGlite embedded dev/test, node-postgres prod).
-- **Database (Session 03; +1 table S08; +1 S09; +3 S10; +1 S11; +1 S12):**
-  `db/schema.ts` (27 tables: sessions, events, customers, businesses,
+- **Database (Session 03; +1 table S08; +1 S09; +3 S10; +1 S11; +1 S12; +4 S13):**
+  `db/schema.ts` (31 tables: sessions, events, customers, businesses,
   orders+lines, quotes, artworks, configurations, conversations+messages,
   conversation_classifications (S08), ceo_reports (S09),
   pricing_reports (S12), need profiles,
   ai_usage, agent_decisions, approvals, agent_configs, agent_actions +
   guardrail_evaluations + agent_action_events (S10), insights,
   opportunities, experiments + experiment_assignments +
-  experiment_events (S11)) + additive SQL migrations in
-  `db/migrations/` (0000–0006).
+  experiment_events (S11), ad_accounts + ad_campaign_daily_metrics +
+  google_ads_sync_runs + google_ads_reports (S13)) + additive SQL migrations
+  in `db/migrations/` (0000–0008; 0008 adds order/line COST SNAPSHOT columns,
+  S13.5).
   `DATABASE_URL` unset ⇒ embedded PGlite at `.data/pglite` self-migrates
   (zero-setup dev; tests use `memory://`); set ⇒ real Postgres, migrations
   applied explicitly via `npm run db:migrate`. **`NODE_ENV=production`
@@ -627,21 +757,97 @@ docs/CURRENT_SYSTEM_AUDIT.md + its Session-02 resolution note):
   `AI_PRICING_AGENT`), `lib/admin/write-guard.ts` on the mutation route;
   deterministic analytics render with zero AI configuration and a provider
   outage leaves the previous review visible.
+- **Google Ads Read-Only Intelligence (Session 13 —
+  docs/GOOGLE_ADS_INTELLIGENCE.md is authoritative):** four layers, each
+  unable to cross the next. `lib/google-ads` is the ONLY door to Google and
+  it opens one way: `client.ts` has a single URL builder appending the
+  LITERAL `/googleAds:search` (the method is not a parameter ⇒ no `:mutate`
+  URL is constructible anywhere), no exported `request(method, path, body)`,
+  a SELECT-only guard, `queries.ts` holding the CLOSED two-query set
+  (`customer` identity; `campaign` × `segments.date` with impressions/clicks/
+  cost_micros/conversions/conversions_value — no click_view, no audience, no
+  per-person field), `auth.ts` (env credentials + OAuth refresh + a
+  module-private token cache with no exported reader), `errors.ts` (10
+  normalized codes + `redact()` stripping bearer/ya29/1// tokens, secrets and
+  developer tokens from anything persisted, logged or displayed) and
+  `reporting-provider.ts` (the interface exposes exactly `status` /
+  `getAccountInfo` / `getCampaignDailyMetrics`, plus
+  `FakeGoogleAdsReportingProvider` with a byte-identical surface). Money
+  converts ONCE at the boundary: `cost_micros → round(micros/10_000)` cents
+  (rounded, not truncated — sub-cent spend is real), `conversions_value` (a
+  DOUBLE in currency units) → `round(v*100)`. `lib/data/google-ads-service.ts`
+  owns the three tables with an IDEMPOTENT upsert on
+  `(adAccountId, campaignId, date)` — running a sync twice cannot double
+  spend, and a Google RESTATEMENT overwrites that day in place rather than
+  appending. `lib/google-ads/sync.ts` is the explicit admin operation
+  (account identity FIRST so a credential failure costs no reporting quota,
+  then the bounded report; SUCCESS / PARTIAL / FAILED, and only SUCCESS
+  advances `lastSuccessfulSyncAt`). `modules/google-ads-intelligence` is the
+  DETERMINISTIC authority with NO `lib/ai`, NO `lib/google-ads` and NO
+  `fetch` (all asserted structurally): dates.ts (account-calendar day math —
+  a UTC period maps to the account-days it OVERLAPS; `Intl` does DST),
+  connection.ts (CONNECTED / NOT_CONNECTED / CONFIGURATION_INVALID /
+  NEVER_SYNCED + FRESH / STALE / PARTIAL / SYNC_FAILED / NOT_CONNECTED, from
+  documented thresholds), native.ts (Google's lens; every rate `null` on a
+  zero or sub-minimum denominator, never 0 and never Infinity),
+  attribution.ts (the paid-traffic test + EXACT/MAPPED/UNMATCHED matching,
+  ambiguous names refusing, NO fuzzy tier, NO gclid→campaign resolution),
+  firstparty.ts (our lens, reusing the S08/S09 bounded reads — no second
+  source of truth), efficiency.ts (four separately-NAMED concepts + the
+  currency gate + POAS permanently UNAVAILABLE), discrepancy.ts (both sides
+  + five standing causes, never a correction), campaigns.ts (one row, two
+  lenses, plus match quality and the click→session/session→conversation/
+  conversation→order quality chain), signals.ts (count-based observations,
+  each with a limitation, never a root-cause diagnosis), spend.ts (the
+  narrow `adSpend` section S09's snapshot and the CEO context consume) →
+  ONE GoogleAdsIntelligenceSnapshot (JSON-serializable, PII-free,
+  credential-free). `config/google-ads.ts` centralizes the API VERSION
+  (`v25`, `SUPPORTED_API_VERSIONS`; an unsupported `GOOGLE_ADS_API_VERSION`
+  throws rather than silently falling back), sync/quota bounds (30-day
+  default lookback, 180-day max range, 10k rows, 50 pages, 30s timeout),
+  freshness thresholds, and the CLOSED 7-type recommendation taxonomy with
+  its REVIEW-ONLY action mapping. Google Ads Agent `lib/ai/agents/google-ads`
+  (RECOMMEND): NO tools, NO Google access, ONE REASONING
+  `generateStructuredObject` over a bounded context that prints the
+  ENFORCEMENT RULES and the connection/profit truth FIRST (truncation-safe);
+  prompt `ai_google_ads_review` v1.0.0. Persistence: append-only
+  `google_ads_reports` + identity-deduped AgentDecisions
+  (`GOOGLE_ADS:<type>:<campaign|account>:<refs>:<days>d`, pending rows
+  refresh in place, human verdicts frozen) → `MARKETING_REVIEW` /
+  `DATA_QUALITY_REVIEW` in the Action Center. Admin:
+  `/admin/google-ads-intelligence` + POST
+  `/api/admin/google-ads/{test-connection,sync,ads-review}` behind the S08
+  auth + the new `GOOGLE_ADS_INTELLIGENCE` flag and
+  `lib/admin/write-guard.ts`; the connection test accepts NO parameters, so a
+  client cannot ask the platform to probe an arbitrary Google Ads account.
 - `lib/commerce` — provider abstraction; `mock` active, `shopify`
   Storefront skeleton env-gated (variant mapping TODO, needs real store).
   **All catalog reads go through `lib/commerce/catalog.ts`** (provider-
   backed; loud mock fallback while the Shopify mapping is incomplete —
   checkout never falls back). Client components receive catalog data as
   props from server components, never by importing `config/products`.
-- `modules/pricing` — **the sole pricing authority**: `engine.ts` (tier
-  kernel, unchanged Session-01 math), `cost-model.ts` (manufacturing/
-  material/printing/setup/packaging/shipping/payment-fee costs, gross +
-  contribution profit/margins, `minimumAllowedPriceCents`,
-  `evaluatePriceFloor` fail-closed guardrail), `calculatePrice()` facade.
-  Costs live in `config/costs.ts` — **every value is a `null`
-  `[TO BE PROVIDED]` placeholder**; margins report "unavailable" and price
-  floors fail closed until the owner provides real economics. Cost/margin
-  figures are server-only — never sent to the browser.
+- `modules/pricing` — **the sole pricing AND unit-economics authority**
+  (docs/UNIT_ECONOMICS.md is authoritative; no `lib/ai`, no `db/`, no fetch):
+  `engine.ts` (tier kernel, unchanged Session-01 math), `cost-model.ts`
+  (per-unit/per-line/per-order cost scopes, optional factory quantity tiers,
+  `paymentFeeCents` [one fixed fee per TRANSACTION],
+  `computeShippingEconomics` [subsidy = max(actual − charged, 0), never
+  negative; shipping margin preserved separately],
+  `evaluateMarginAgainstPolicy` [BELOW_MINIMUM / BELOW_TARGET /
+  AT_OR_ABOVE_TARGET / NO_TARGET / UNAVAILABLE], `minimumAllowedPriceCents`
+  [FLOORS only — a target is never a floor], `evaluatePriceFloor` fail-closed
+  guardrail), `unit-economics.ts` (the order-level ladder: gross profit →
+  contribution before paid media → contribution after paid media + POAS;
+  order-level costs applied exactly ONCE; per-level availability; NO per-line
+  contribution because no allocation rule exists), `snapshot.ts` (forward-only
+  order cost snapshots stamped with `costModelVersion`), `validate.ts` (config
+  validation that fails loudly and never normalises), `readiness.ts` (the
+  owner-facing Configured/Missing/Invalid view + `isCostModelConfigured`, THE
+  one completeness definition), `calculatePrice()` facade. Costs live in
+  `config/costs.ts` — **every value is a `null` `[TO BE PROVIDED]`
+  placeholder**; margins report "unavailable", price floors fail closed, and
+  **missing costs never block a sale**. Cost/margin figures are server-only —
+  never sent to the browser, a prompt or an analytics event.
 - `/api/checkout` — **server-side re-quote**: validates every cart line
   against the live catalog (ids, artwork requirement, custom-quote
   routing), re-prices with the engine, answers 409 REPRICED on any drift
@@ -1580,6 +1786,221 @@ pricing; the engine still owns it.** Storefront/commerce verified untouched
    BUSINESS_CONFIG_TODO (three-way cost split + a pricing section),
    .env.example.
 
+## Completed in Session 13 (2026-08-15) — Google Ads Read-Only Intelligence
+
+READ → INGEST → RECONCILE → MEASURE → INTERPRET. Never MUTATE → OPTIMIZE →
+EXECUTE. Storefront/commerce verified untouched (every S02–S12 test green;
+no commerce, cart, checkout, configuration or `modules/pricing` file
+modified; product page prices byte-identical; a test asserts Google Ads code
+appears under `/admin` only).
+
+1. **`lib/google-ads/`** — the READ-ONLY adapter: `auth.ts` (5 required env
+   vars + optional manager id + optional version pin; OAuth refresh with a
+   module-private token cache), `client.ts` (ONE literal `:search` endpoint,
+   pagination, 10 normalized error codes, request-id preserved, bodies
+   discarded), `queries.ts` (the CLOSED query set + `YYYY-MM-DD` validation
+   as the injection guard), `reporting-provider.ts` (three read methods,
+   live + fake), `sync.ts` (idempotent explicit sync + connection test),
+   `errors.ts` (redaction), `credential-snapshot.ts` (the non-secret bridge
+   to the deterministic module).
+2. **`modules/google-ads-intelligence/`** — the deterministic authority (no
+   `lib/ai`, no `lib/google-ads`, no `fetch`): types, dates, connection,
+   native, attribution, firstparty, efficiency, discrepancy, campaigns,
+   signals, spend, snapshot, report.
+3. **`config/google-ads.ts`** — API version + supported list, sync/quota
+   bounds, freshness thresholds, reporting minimums, the CLOSED 7-type
+   recommendation taxonomy and its review-only mapping, and the
+   `SEARCH_TERMS_INGESTED`/`KEYWORDS_INGESTED` `false` constants that make a
+   deferral a declaration rather than an empty table.
+4. **Schema (migration `0007_google_ads_intelligence.sql`, additive)** —
+   `ad_accounts` (currency + time zone, never assumed),
+   `ad_campaign_daily_metrics` (`UNIQUE(account, campaign, date)`),
+   `google_ads_sync_runs` (append-only audit, redacted messages),
+   `google_ads_reports`. **No table stores a credential.**
+5. **Google Ads Agent** — `lib/ai/agents/google-ads/{schema,context,agent}.ts`
+   + prompt `ai_google_ads_review` v1.0.0. No tools, no Google access, one
+   structured call, a schema with no budget/status/bid/keyword/ad field,
+   server-validated refs and campaign scope.
+6. **Guardrails / Action Center** — `GUARDRAIL_POLICY_VERSION` →
+   `2026-08-15.s13.1`; `GOOGLE_ADS_AGENT` default OBSERVE → RECOMMEND;
+   `+DATA_QUALITY_REVIEW` permission; `mapGoogleAdsDecisionToAction` +
+   `GOOGLE_ADS_RECOMMENDATION_TO_ACTION_TYPE`; `syncDecisionsToActions`
+   covers ceo/cro/pricing/google_ads. The four executable ad types stay
+   registered, unmapped, executor-less and limit-blocked.
+7. **Business Intelligence** — a SEPARATE `adSpend` section on
+   `BusinessHealthSnapshot` + two citable CEO metric refs. S09 semantics
+   unchanged; `attribution.adSpendIntegrated` stays `false`.
+8. **Admin** — `/admin/google-ads-intelligence` (connection & sync, both
+   lenses, funnel, campaigns, coverage, discrepancy, customer signals,
+   trends, review, data quality, sync history) + three write-guarded routes.
+9. **Tests 763 → 966** (203 new; all green; zero credentials, zero network, zero
+   real model): google-ads-adapter (47 — credential status without values,
+   API-version refusal + the no-scattered-literal scan, micros rounding,
+   response normalization + dropped rows, account-calendar dates and DST,
+   the closed query set + injection refusal, the `:search`-only endpoint,
+   headers, pagination, all 9 error classes, OAuth-failure redaction),
+   google-ads-sync (20 — first sync, idempotency, restatement, per-campaign/
+   per-day rows, window filtering, failed-sync isolation, PARTIAL, oversized
+   range refused before quota, all five freshness states, connection test),
+   google-ads-metrics (49 — native aggregation, null-never-zero rates,
+   mixed-currency null, paid-traffic identification, EXACT/MAPPED/no-fuzzy/
+   ambiguous matching, first-party counting + cancelled exclusion + unmatched
+   revenue, CAC/ROAS with denominators, PARTIAL on low coverage, the currency
+   gate, **the six §64 semantic-boundary assertions**, credentials-removed-
+   with-data, discrepancy, snapshot PII-freedom, BI ad-spend availability),
+   google-ads-readonly (33 — no mutate service, no mutation writer, no
+   generic request(), exactly one `:search` endpoint, SELECT-only GAQL, the
+   three-method interface, analytics/agent cannot reach the adapter, no
+   blended CAC, no profiling, no tools, the schema key set, the closed
+   taxonomy, mapping-table agreement, empty executor registry, HUMAN_ADMIN
+   budget change still blocked, commerce untouched, admin-only surface, and
+   the suite's own offline guarantees), google-ads-agent (22), google-ads-admin
+   (32 — fail-closed auth, both flag gates, cross-origin 403, no-Origin 403,
+   form-post 415, GET 403, strict bodies, the client cannot name the account,
+   honest NOT_CONFIGURED/NOT_CONNECTED, 503 without AI).
+10. **Browser-verified** on `next dev` (desktop + 375px mobile): the honest
+    NOT_CONNECTED state with every figure absent rather than zero; both
+    buttons returning their honest messages; then — with the DEV database
+    seeded through the REAL sync path using `FakeGoogleAdsReportingProvider`
+    (no credential, no network) — campaign metrics rendering with Google's
+    and BagDirect's numbers visibly distinct, match quality per campaign, the
+    discrepancy view, coverage, the account-timezone note, and sync history.
+    That pass caught a real inconsistency (credentials removed while data
+    remains showed "Unavailable" cards above a populated campaign table),
+    which was FIXED and locked in with a regression test. Storefront
+    unaffected; no console errors; no horizontal overflow; tables scroll
+    inside their own containers. Seed data removed afterwards.
+11. **Docs** — new docs/GOOGLE_ADS_INTELLIGENCE.md (authoritative); updated
+    ARCHITECTURE (module row + 6 decision-log entries), DATABASE_SCHEMA (the
+    four tables + the no-credential and no-orders-column notes),
+    AI_AGENT_ARCHITECTURE (agent #5 = IMPLEMENTED, read-only), AI_RUNTIME
+    (prompt), GUARDRAILS (Session 13 additions), AI_ACTION_CENTER (Google Ads
+    decisions), BUSINESS_INTELLIGENCE (the ad-spend section + why S09 did not
+    change), AI_PLATFORM_ROADMAP (Stage H1 ✅, H2 next), prompts/00-INDEX
+    (13 ✅), LAUNCH_CHECKLIST (+Google Ads section), BUSINESS_CONFIG_TODO
+    (connect / useful / still-unavailable split), .env.example.
+
+## Completed in Session 13.5 (2026-08-16) — Business Cost Model + Margin Policy
+
+SELL PRICE → DETERMINISTIC COST MODEL → GROSS PROFIT → VARIABLE SELLING COSTS
+→ CONTRIBUTION PROFIT BEFORE PAID MEDIA → ATTRIBUTED AD SPEND → CONTRIBUTION
+PROFIT AFTER PAID MEDIA. **The model is complete; the numbers are still the
+owner's to supply.** Storefront/commerce verified untouched (every S02–S13
+test green; product page prices byte-identical; a real checkout completed in
+the browser with every cost `null`).
+
+### Audit verdict on the existing model
+
+- **KEEP** — the S02 cost-model kernel: integer cents + bps, the
+  missing-input collector, `productCostCents`, the `minimumAllowedPriceCents`
+  derivations, `evaluatePriceFloor`'s fail-closed posture, S09's `Metric<T>`
+  availability model, and the guardrail engine already reading
+  `config/costs.ts → marginPolicy` rather than duplicating it.
+- **EXTEND** — cost scopes (per-unit / per-line / per-order), optional factory
+  quantity tiers, order packaging + fulfilment handling, shipping SUBSIDY
+  semantics, `targetGrossMarginBps`, a cost-model version stamp.
+- **REPLACE** — only the ambiguity: freight was subtracted as a raw cost with
+  no notion of what the customer pays, and one status covered both profit
+  levels.
+- **DEFER** — refunds, discounts (structurally absent), overhead/salaries/
+  tax, freight rate shopping, FX, negotiated quote economics, printing SIDES
+  (the configurator has no side selector — modelling one would invent a
+  manufacturing capability).
+
+1. **`modules/pricing/cost-model.ts` (extended)** — three cost scopes;
+   `ManufacturingTier[]` OPTIONAL (key absent ⇒ base applies everywhere; key
+   present ⇒ authoritative, and below the first tier is a MISSING input, never
+   a silent fallback — and factory breaks are never assumed to match the
+   storefront's sell tiers); `OrderCostConfig` (`packagingCentsPerOrder` =
+   COGS, `handlingCentsPerOrder` = variable selling cost);
+   `CustomerShippingChargeBasis` (`not_collected` / `flat_per_order` /
+   `unavailable`); `paymentFeeCents()` (round half-up ONCE per order + ONE
+   fixed fee); `computeShippingEconomics()` (subsidy ≥ 0, shipping margin
+   preserved separately and never folded into contribution);
+   `evaluateMarginAgainstPolicy()` (5 states, minimum ≠ target);
+   `computeLineCosts()` carrying `shippingScope` so order assembly can
+   deduplicate per-order freight.
+2. **`modules/pricing/unit-economics.ts` (new)** — `computeOrderUnitEconomics`
+   assembles the ladder for a whole order: order-level costs applied exactly
+   once, `per_order` freight deduplicated per product, per-level availability
+   (`grossStatus` / `contributionStatus`), integer-bps margins that are `null`
+   on zero revenue, per-line GROSS economics and **no per-line contribution
+   field at all** (§31 — no allocation rule exists, so none is invented).
+   `computePaidMediaEconomics` produces POAS and post-ad contribution.
+3. **`modules/pricing/snapshot.ts` (new)** — `captureOrderCostSnapshot` /
+   `economicsFromSnapshot` / `HISTORICAL_COST_UNAVAILABLE`. Forward only,
+   best-effort, version-stamped.
+4. **`modules/pricing/validate.ts` (new)** — `validateCostModel` with ERROR vs
+   WARNING. `null` is never an error; a present-and-wrong value always is, and
+   is never repaired into something plausible.
+5. **`modules/pricing/readiness.ts` (new)** — `assessCostReadiness`
+   (16 categories × 4 capabilities) and `isCostModelConfigured`, THE single
+   completeness definition that S09's `isCostModelFullyConfigured` and S12's
+   `assessCostReadiness` both now delegate to.
+6. **`config/costs.ts`** — `COST_MODEL_VERSION`, `orderCosts`,
+   `shippingPolicy`, `targetGrossMarginBps`. **Every business value is still
+   `null`**, and `tests/unit-economics-separation.test.ts` scans the file for
+   any numeric literal so no average can be slipped in.
+7. **Schema (migration `0008_order_cost_snapshots.sql`, additive)** —
+   `orders.cost_model_version`, `orders.cost_snapshot_json`,
+   `order_lines.cost_snapshot_json`. `createOrder` captures best-effort and
+   swallows failures; with costs unconfigured it writes nothing and the order
+   is unaffected.
+8. **Business Intelligence** — `profitability.ts` rebuilt on the unit-economics
+   model with `historicalCostBasis` (`SNAPSHOT_ONLY` default /
+   `CURRENT_CONFIG_SCENARIO` labelled), separate gross/contribution coverage,
+   and `ordersWithoutCostSnapshot` / `ordersWithoutContribution` surfaced.
+   `products.ts` costs lines from their own snapshots. S09 availability
+   semantics unchanged.
+9. **Pricing Intelligence** — readiness extended for the new inputs and the
+   completeness verdict delegated; `SPECIFIC_PRICE_CHANGE` still BLOCKED,
+   `AUTOMATED_PRICE_CHANGE` still NOT_SUPPORTED, the Pricing Agent's schema
+   still cannot express a price.
+10. **Google Ads Intelligence** — real POAS: `AdEfficiency` gained
+    `contributionBeforePaidMediaCents`, `profitOnAdSpend` and
+    `postAdContributionCents`; `GoogleAdsFunnel`/`CampaignFirstParty` gained
+    `contributionBeforePaidMediaCents` (null, never 0) and
+    `ordersWithContribution`. Four gates (costs · spend · currency · coverage)
+    each downgrade to UNAVAILABLE or PARTIAL rather than approximating. ROAS
+    and POAS remain separate fields. Read-only boundary untouched.
+11. **Admin** — shared read-only `components/admin/cost-readiness.tsx` on
+    `/admin/business-intelligence` and `/admin/pricing-intelligence`; a "Did
+    the advertising make money?" section on `/admin/google-ads-intelligence`.
+    No cost editor anywhere.
+12. **Tests 966 → 1072** (106 new; zero credentials/network/AI provider):
+    `unit-economics` (58 — the null-config state, the $10,000/$5,700/$4,300
+    fixture ladder, payment-fee rounding + one fee per order, all five
+    shipping-subsidy cases, per-level availability, multi-line with
+    per-product freight dedup, quantity tiers incl. fail-closed below the
+    first tier, minimum-vs-target across all five verdicts, zero-revenue
+    safety, snapshots + immutability under a later config change, ROAS-vs-POAS
+    and the six Google Ads POAS availability cases),
+    `cost-config-validation` (27 — 15 invalid-value classes, `null` is not an
+    error, the readiness view in both the null and fully-configured states,
+    INVALID blocking capabilities), `unit-economics-separation` (21 — no
+    lib/ai, no db, no fetch, no estimated-cost field, no numeric literal in
+    config/costs.ts, commerce never gates on cost readiness, checkout never
+    calls the price floor, storefront tier prices asserted unchanged, no new
+    agent/executor/action type, every ceiling still RECOMMEND, every guardrail
+    limit still null, no sales tool exposes cost data, contribution never
+    unqualified, ROAS/POAS never aliased). Existing S09 profit-math tests now
+    run on the labelled scenario basis and gained snapshot-semantics coverage.
+13. **Browser-verified** on `next dev` (desktop + 375px mobile): the honest
+    all-missing readiness panel with the version stamp on both admin pages;
+    POAS/contribution unavailable on the Google Ads page with the 32 blocking
+    paths listed; `HISTORICAL_COST_UNAVAILABLE` on every profit card with
+    "6 of 6 orders carry no cost snapshot"; **a real checkout completing with
+    every cost null** (order MOCK-MSW6LT63); storefront tier prices unchanged
+    ($0.62 → $0.33); no console errors; no page-level horizontal overflow
+    (wide tables scroll inside their own containers).
+14. **Docs** — new `docs/UNIT_ECONOMICS.md` (authoritative, 23 sections);
+    updated ARCHITECTURE (module row + decisions 55–61), DATABASE_SCHEMA
+    (order cost snapshots), BUSINESS_INTELLIGENCE (profitability rebuilt),
+    PRICING_INTELLIGENCE (§24), GOOGLE_ADS_INTELLIGENCE (§22 POAS), GUARDRAILS
+    (S13.5 additions — no autonomy change), BUSINESS_CONFIG_TODO (cost-model
+    section rewritten with the four-way classification and a fill-in owner
+    template), LAUNCH_CHECKLIST (+Unit economics section).
+
 ## Important decisions (and why)
 
 1. **Database is the first ADD** — every roadmap capability consumes
@@ -1884,6 +2305,50 @@ pricing; the engine still owns it.** Storefront/commerce verified untouched
     abandonment. Same doctrine as the S02 cost model: ship the refusal, not an
     invented number.
 
+50. **(S13) Google Ads mutation is UNCONSTRUCTIBLE, not merely uncalled** —
+    `lib/google-ads/client.ts` has one URL builder and it appends the literal
+    `/googleAds:search`; the method is not a parameter, there is no exported
+    `request(method, path, body)`, GAQL has no mutation verb, the transport
+    refuses a non-SELECT query, and the provider interface has three read
+    methods. Chosen over adopting a Google Ads client library, whose surface
+    would include every mutate service and leave "we simply do not call them"
+    as the only guard. A structural test asserts each of these, so adding
+    campaign mutation requires deleting a test.
+51. **(S13) Google's numbers and ours are separate TYPES** —
+    `GoogleNativeTotals` has no `orders`/`revenueCents`, `GoogleAdsFunnel`
+    has no `googleConversions`/`googleConversionValueCents`, `AdEfficiency`
+    has no field named merely `cac` or `roas`. A Google "conversion" is
+    whatever that account's conversion actions count — possibly a form view.
+    Where the two disagree, BOTH are shown with the five standing causes;
+    nothing merges, averages or corrects either side. Chosen over one blended
+    attribution model, which would make a guess look like a measurement.
+52. **(S13) Attribution has three honest tiers and no fuzzy one** — EXACT
+    (`utm_campaign` = campaign id), MAPPED (normalized name), UNMATCHED
+    (revenue counts account-wide, under no campaign). `gclid` is used only as
+    a BOOLEAN "this was a paid click" and its value never leaves the matching
+    function — resolving it to a campaign needs Google's `click_view`, which
+    is deliberately not ingested. Two campaigns normalizing to the same name
+    make BOTH unmatchable rather than a coin flip. Coverage is reported with
+    an owner-language interpretation, and below 50% first-party CAC/ROAS go
+    PARTIAL. Chosen over approximate string matching, which would turn
+    revenue attribution into a guess wearing a number.
+53. **(S13) Reporting days stay on the ACCOUNT's calendar** — Google reports
+    a day in the account's time zone and daily totals cannot be re-cut into
+    UTC without hourly data this integration does not fetch, so a UTC period
+    maps to the account-days it OVERLAPS, inclusively, and the surface prints
+    the zone, the exact range, and the fact that boundary days may include
+    hours outside the window. Chosen over silently assuming UTC, which shifts
+    spend onto the wrong day at both ends of every window.
+54. **(S13) NOT CONNECTED, SYNC FAILED, STALE and PARTIAL are four states,
+    and none of them is zero** — freshness advances only on a COMPLETE sync;
+    a failed sync leaves prior rows and their timestamp untouched; a
+    truncated sync keeps its data without claiming freshness; and credentials
+    removed while data remains still SHOWS the data, saying it is real but
+    frozen. The idempotent `(account, campaign, day)` upsert means a re-sync
+    restates rather than accumulates. Chosen over `?? 0`, which would let a
+    missing integration read as free advertising — the exact error this
+    session exists to prevent.
+
 ## Known issues
 
 - ~~Configurator state is six `useState` hooks local to
@@ -2075,21 +2540,83 @@ pricing; the engine still owns it.** Storefront/commerce verified untouched
   placeholder — a DEMO_PRICING_ACTIVE data-quality warning says so, and every
   pricing conclusion drawn now is a conclusion about the placeholder.
 
+- (S13) Google Ads sync is MANUAL — there is no scheduler, so "weekly
+  reporting" means pressing the button weekly. Freshness thresholds
+  (26h fresh / 72h stale) describe how recently someone pressed it.
+- (S13) Search-term and keyword performance are NOT ingested. Campaign-level
+  economics came first, and Google withholds low-volume search terms for
+  privacy, so that table would be incomplete by construction. The snapshot
+  and the page declare the absence rather than rendering an empty table.
+- (S13) Per-campaign first-party revenue depends on tracking templates.
+  Without `{campaignid}` (EXACT) or a `utm_campaign` matching the campaign
+  name (MAPPED), real visits are UNMATCHED: account-level figures stay
+  correct, per-campaign figures are understated, and the coverage section
+  says by how much. A `SPEND_WITHOUT_SESSIONS` signal exists precisely so
+  "no tracking" is not mistaken for "no traffic" — and it explicitly is NOT
+  evidence of click fraud.
+- (S13) Google's clicks and our sessions are not expected to match: a
+  visitor who leaves before first-party tracking runs is a click with no
+  session. The gap is reported and is not lost revenue.
+- (S13) Cost per NEW CUSTOMER is not computed — checkout is anonymous, so
+  first-time vs repeat is not deterministically known. Only cost per
+  attributed ORDER exists, and it is named that way everywhere.
+- (S13) Session 13 is single-account by design (no multi-tenant OAuth
+  onboarding). More than one `ad_accounts` row would mean the customer id
+  changed; the most recently updated wins.
+- (S13) Google Ads analytics share the S08–S12 bounded-load posture (5,000
+  rows/query) and `/admin/google-ads-intelligence` inherits the storefront
+  layout chrome, like every admin page since S08.
+- (S13) `config/costs.ts` is still unfilled, so POAS is unavailable: revenue
+  ROAS is shown and is explicitly not profitability. A campaign with strong
+  revenue ROAS can still lose money on every order.
+
+- (S13.5) **Every value in `config/costs.ts` is still `null`**, so gross
+  profit, contribution profit, POAS and the minimum safe price are all
+  unavailable. That is the shipped state, not a bug: this session built the
+  model and deliberately chose none of the numbers.
+- (S13.5) **Orders placed before this session carry no cost snapshot**, so
+  their profit reads `HISTORICAL_COST_UNAVAILABLE` permanently. Today's costs
+  are never applied backwards. Profit will appear only for orders placed after
+  `config/costs.ts` is filled.
+- (S13.5) A `flat_per_order` customer shipping charge is supported but makes
+  shipping economics PARTIAL, because `orders` records no per-order shipping
+  charge. Real shipping charging needs an order-model change alongside the
+  config.
+- (S13.5) `per_carton` freight rounds per LINE, not per order (separate lines
+  are separate artwork and are packed apart). `per_order` freight is
+  deduplicated per PRODUCT within an order.
+- (S13.5) Per-product profitability is GROSS only. Order-level costs (payment
+  fixed fee, order packaging, handling, shipping subsidy) are never allocated
+  across products — no deterministic rule exists and none is invented.
+- (S13.5) Refunds, discounts, overhead, salaries, rent, tax/duty, freight rate
+  shopping, dimensional weight, FX and negotiated quote economics are all
+  outside this model. It is contribution accounting, not a P&L.
+- (S13.5) The configured-cost browser pass was NOT run: it would have required
+  writing invented values into `config/costs.ts`, which this session forbids.
+  The configured-state math is covered by 85 unit tests instead.
+
 ## Business configuration still needed
 
 See `BUSINESS_CONFIG_TODO.md` — notably: real prices (site shows DEMO
 notices until `NEXT_PUBLIC_DEMO_PRICING=false`; until then every S12 pricing
-conclusion is about a placeholder price list, and the dashboard says so), the
-entire cost model (now structured in `config/costs.ts`, every value a `null`
-`[TO BE PROVIDED]` placeholder — margins stay "unavailable", price guardrails
-fail closed, and **S12's `SPECIFIC_PRICE_CHANGE` readiness stays BLOCKED**
-until filled together with `maximumPriceDecreasePct` /
-`maximumPriceIncreasePct`), factory identity/photos, policies
+conclusion is about a placeholder price list, and the dashboard says so), **the
+entire cost model** (S13.5 completed the MODEL; `config/costs.ts` is still
+100% `null` `[TO BE PROVIDED]` — margins, contribution profit, POAS and the
+minimum safe price all stay "unavailable", price guardrails fail closed, and
+S12's `SPECIFIC_PRICE_CHANGE` readiness stays BLOCKED until filled together
+with `maximumPriceDecreasePct` / `maximumPriceIncreasePct`. A fill-in owner
+template is in BUSINESS_CONFIG_TODO → "Cost model"; the architecture is
+docs/UNIT_ECONOMICS.md. **Missing costs never block a sale** — only profit
+analytics and future price actions), factory identity/photos, policies
 legal review, Shopify store + variant mapping, production `DATABASE_URL`
 (+ `npm run db:migrate` at deploy), consent-policy review for first-party
 events, AI provider key + budget caps + **model pricing
 (`config/ai-pricing.ts`, null placeholders — budget caps fail closed until
-filled)**, guardrail thresholds — including
+filled)**, **Google Ads read-only credentials (the five `GOOGLE_ADS_*`
+server variables — until they exist the dashboard reads NOT_CONNECTED, which
+is never interpreted as $0 spend; a PRODUCTION account is additionally needed
+for the figures to mean anything, since a Google Ads test account serves no
+real ads)**, guardrail thresholds — including
 **`maximumExperimentTrafficPct`, which is REQUIRED before running any
 experiment in production (the launch route refuses while it is null and
 never assumes 100%)** — and escalation destination.
@@ -2116,8 +2643,14 @@ content — promotion is a human source/config change), **GUARDED_AUTO CRO**
 and a real `CRO_EXPERIMENT_LAUNCH` executor (need operating history, the
 guardrail limits, and the full executor contract), **adaptive traffic /
 bandits / RL** (deliberately never at this stage), **multi-arm experiments**
-(needs a multiple-comparison correction), **scheduled CRO reviews**, **Google Ads Agent** (S13+ —
-until then NO ad-spend ingestion, NO CAC/ROAS anywhere), **Meta Ads
+(needs a multiple-comparison correction), **scheduled CRO reviews**, **Google Ads MUTATION of any
+kind** (S13 is read-only: budget changes, pause/resume, campaign creation,
+keyword management, ad creative and conversion upload all require a SEPARATE
+`GoogleAdsMutationProvider` with its own OAuth scope, real ad-spend limits in
+`config/guardrails.ts`, and the full executor contract — none exists),
+**scheduled Google Ads sync** (manual admin action today), **Google Ads
+search-term and keyword ingestion** (declared as not ingested rather than
+faked), **Google Ads guarded automation**, **Meta Ads
 Agent**, autonomous commerce/background actions (never — every commerce
 mutation traces to an explicit customer message or tap; S08/S09
 intelligence additionally runs only on explicit admin actions). Also
@@ -2132,7 +2665,13 @@ CEO review delivery (manual admin actions today), quote-payload demand
 mining, painPoints/objections need-profile array extraction,
 owner-configured confirmation thresholds (BUSINESS_CONFIG_TODO),
 multi-currency conversion model (headline metrics stay single-currency
-until one exists). Order per `docs/AI_PLATFORM_ROADMAP.md`.
+until one exists). **S13.5 additionally defers: the owner's real cost values,
+advanced freight modelling (rate shopping, dimensional weight, zone tables),
+refund economics (the order model supports no refunds), negotiated quote
+economics, per-order customer shipping charges (needs an order-model column),
+overhead/salary/tax allocation, per-line contribution allocation (no
+deterministic rule exists), and a cost-editing admin panel (`config/costs.ts`
+stays the single authority).** Order per `docs/AI_PLATFORM_ROADMAP.md`.
 
 ### Deferred technical debt (Session 03 audit — accepted, not forgotten)
 
@@ -2161,33 +2700,57 @@ the 03.5 hardening pass (small blast radius, none block Session 04):
 
 ## Recommended next session
 
-**Session 13 — Google Ads Read-Only Intelligence** — run
-`prompts/13-google-ads-readonly.md`.
+**Session 14 — Google Ads Recommendation Agent + Guarded Action Preparation.**
+Do not start it automatically.
 
-Why this and not something else: it is the only remaining input the platform
-is structurally blind to. Every intelligence layer built so far
-(S08 customer, S09 business, S11 conversion, S12 pricing) says the same
-thing in its data-quality section — **advertising spend is not integrated, so
-CAC and ROAS are not computed and attribution shows first-party revenue
-only**. S09 already models first/last touch, landing pages and campaign
-params from real sessions; the missing half is what each campaign COST.
+**Before it, and worth more: fill `config/costs.ts`.** Session 13.5 built the
+complete unit-economics model and deliberately supplied none of its numbers.
+Filling it unblocks gross profit, contribution profit before paid media, the
+minimum safe price and POAS across S09, S12 AND S13 at once — POAS being the
+only advertising metric that can tell you whether a campaign makes money. The
+fill-in template is in BUSINESS_CONFIG_TODO → "Cost model". That is a
+business-input task, not a coding session.
 
-Prerequisites exist: the guardrail taxonomy already registers
-`AD_BUDGET_CHANGE` / `AD_PAUSE` / `AD_RESUME` / `AD_CREATIVE_TEST` with
-`GOOGLE_ADS_AGENT` permitted exactly those and every one of them
-`NOT_IMPLEMENTED`; the Action Center is the review surface; `AiUsage` and the
-budget guard bound AI spend.
+Why this and not something else: Session 13 built the measurement layer and
+deliberately stopped at the boundary. The platform can now see what each
+campaign costs and what it produced in first-party terms, and it can raise
+REVIEWS about that — but every advertising ACTION remains unrepresentable,
+unmapped, executor-less and limit-blocked. Session 14 is where the owner
+decides whether to cross that line, and under what constraints.
 
-Boundaries that must stay: **READ-ONLY**. No ad-spend mutation, no campaign
-creation, no bid changes, no automated budget moves — `maximumDailyAdSpendCents`
-and `maximumCampaignBudgetChangePct` are still `null`, so any spend action
-reports missing configuration and stays execution-ineligible regardless. Do
-not compute CAC or ROAS until real spend data actually lands, and do not
-invent a conversion-attribution model to make the numbers line up; Google's
-attribution and our first-party attribution will disagree, and the honest
-move is to report both and say why.
+What it would have to establish, in order:
 
-Also available if the owner prefers: filling `config/costs.ts` unblocks
-profit intelligence across S09 and S12 at once — margin, minimum safe price,
-and the first class of pricing recommendation that could ever carry a number.
-That is a business-input task, not a coding session.
+1. **Real ad-spend limits** in `config/guardrails.ts` —
+   `maximumDailyAdSpendCents`, `maximumCampaignBudgetChangePct`,
+   `maximumNewCampaignTestBudgetCents`. All three are `null` today, and a
+   `null` limit BLOCKS; it never means "no limit". These are business
+   inputs, not code.
+2. **A separate `GoogleAdsMutationProvider`** — its own file, its own OAuth
+   scope, its own tests. The reporting provider is never extended, because
+   its three-method surface is what makes the read-only guarantee checkable.
+3. **The first real executor**, satisfying the contract in
+   docs/AI_ACTION_CENTER.md end to end: validated action → fresh evaluation →
+   human approval → idempotency key → before/after snapshot → audit →
+   rollback. `modules/guardrails/executors.ts` has been empty since S10 on
+   purpose; registering the first entry is the single largest authority
+   change this platform has made.
+4. **Human approval per action**, with GUARDED_AUTO left for Stage J after
+   real operating history.
+
+Boundaries that must survive it: the READ path stays structurally read-only
+(a mutation provider is added BESIDE it, never merged into it); Google's
+conversions never become BagDirect orders; and profit-based decisions stay
+unavailable until `config/costs.ts` is filled.
+
+Also available if the owner prefers, and arguably worth more: **filling
+`config/costs.ts`**. It unblocks profit intelligence across S09, S12 AND S13
+at once — margin, minimum safe price, the first pricing recommendation that
+could ever carry a number, and POAS, which is the only advertising metric
+that can actually tell you whether a campaign makes money. That is a
+business-input task, not a coding session.
+
+Second alternative: **improve Google Ads tracking coverage** before adding
+any automation. Adding `{campaignid}` to tracking templates moves attribution
+from MAPPED to EXACT and raises match coverage, which is what makes every
+per-campaign number on the new dashboard trustworthy. Also a configuration
+task, not a coding session.

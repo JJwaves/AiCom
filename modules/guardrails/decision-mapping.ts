@@ -263,6 +263,80 @@ export function mapPricingDecisionToAction(decision: MappableDecision): MappedAc
   };
 }
 
+/* ------------------------------------------------------------------ */
+/* Session 13 — Google Ads decisions                                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The Google Ads Agent's CLOSED recommendation types → the CLOSED action
+ * taxonomy (Session 13 spec §39).
+ *
+ * EVERY entry is a REVIEW-ONLY action type. `AD_BUDGET_CHANGE`, `AD_PAUSE`,
+ * `AD_RESUME` and `AD_CREATIVE_TEST` are deliberately ABSENT: a Google Ads
+ * recommendation cannot become an executable advertising action by any
+ * mapping, whatever the model wrote — and the agent's output schema has no
+ * budget, status or bid field to carry one anyway.
+ *
+ * Those four types remain REGISTERED in `actions.ts` (Session 10) because a
+ * later, guarded session will implement them under human approval.
+ * Registered, unmapped, executor-less and limit-blocked is exactly the state
+ * Session 13 intends.
+ *
+ * Duplicated from `config/google-ads.ts` on purpose: this module is
+ * deterministic authority and must not import a config that could later grow
+ * a dependency on the model layer. A test asserts the two tables agree.
+ */
+export const GOOGLE_ADS_RECOMMENDATION_TO_ACTION_TYPE: Record<string, string> = {
+  CAMPAIGN_REVIEW: "MARKETING_REVIEW",
+  BUDGET_REVIEW: "MARKETING_REVIEW",
+  SEARCH_TERM_REVIEW: "MARKETING_REVIEW",
+  KEYWORD_REVIEW: "MARKETING_REVIEW",
+  LANDING_PAGE_REVIEW: "MARKETING_REVIEW",
+  ATTRIBUTION_REVIEW: "MARKETING_REVIEW",
+  DATA_QUALITY_REVIEW: "DATA_QUALITY_REVIEW",
+};
+
+/**
+ * Map one Google Ads decision to a review-shaped proposed action, or null
+ * when it carries no recognised recommendation type (nothing is invented
+ * from prose — same rule as CEO, CRO and pricing decisions).
+ */
+export function mapGoogleAdsDecisionToAction(decision: MappableDecision): MappedAction | null {
+  const params = (decision.proposedActionJson?.params ?? {}) as Record<string, unknown>;
+  const support = decision.supportingDataJson ?? {};
+
+  const recommendationType = str(support.recommendationType, 64) ?? str(params.recommendationType, 64);
+  if (!recommendationType) return null;
+  const actionType = GOOGLE_ADS_RECOMMENDATION_TO_ACTION_TYPE[recommendationType];
+  if (!actionType) return null;
+
+  const title = str(support.title, 200) ?? str(params.title, 200) ?? `${recommendationType} recommendation`;
+  const campaignId = str(support.campaignId, 120);
+
+  const payloadCandidate = {
+    title,
+    observation: decision.observation.slice(0, 2000),
+    question: (str(params.recommendation, 2000) ?? decision.reasoningSummary).slice(0, 2000),
+    expectedImpact: campaignId ? `Scope: campaign ${campaignId}`.slice(0, 600) : null,
+    limitations: strArray(support.limitations, 8, 300),
+    periodDays: numberOrNull(support.periodDays ?? params.periodDays),
+    metricRefs: strArray(support.supportingMetricRefs ?? params.supportingMetricRefs, 16, 120),
+    evidenceRefs: strArray(support.evidenceRefs ?? params.evidenceRefs, 16, 64),
+  };
+
+  const parsed = reviewActionPayloadSchema.safeParse(payloadCandidate);
+  if (!parsed.success) return null;
+
+  const modelRisk = DECISION_RISK_TO_LEVEL[decision.riskLevel] ?? null;
+  return {
+    actionType,
+    title,
+    identityKey: str(params.identityKey, 200),
+    payload: parsed.data as unknown as Record<string, unknown>,
+    modelSuggestedRiskLevel: isRiskLevel(modelRisk) ? modelRisk : null,
+  };
+}
+
 /**
  * Dispatch by agent type. Unknown agent types map to null — a new agent
  * gets no action taxonomy by accident.
@@ -271,5 +345,6 @@ export function mapAgentDecisionToAction(decision: MappableDecision): MappedActi
   if (decision.agentType === "ceo") return mapDecisionToAction(decision);
   if (decision.agentType === "cro") return mapCroDecisionToAction(decision);
   if (decision.agentType === "pricing") return mapPricingDecisionToAction(decision);
+  if (decision.agentType === "google_ads") return mapGoogleAdsDecisionToAction(decision);
   return null;
 }

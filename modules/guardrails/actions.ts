@@ -405,7 +405,29 @@ export const SOURCE_PERMITTED_ACTION_TYPES: Record<string, readonly string[]> = 
    */
   PRICING_AGENT: ["PRICING_REVIEW", "MOQ_REVIEW", "DATA_QUALITY_REVIEW", "PRICE_CHANGE", "PRICE_EXPERIMENT"],
   CRO_AGENT: ["CRO_REVIEW", "CRO_EXPERIMENT_PROPOSAL", "CRO_EXPERIMENT_LAUNCH"],
-  GOOGLE_ADS_AGENT: ["MARKETING_REVIEW", "AD_BUDGET_CHANGE", "AD_PAUSE", "AD_RESUME", "AD_CREATIVE_TEST"],
+  /**
+   * Session 13 adds `DATA_QUALITY_REVIEW` — a REVIEW-ONLY type granting zero
+   * authority — so an advertising question we CANNOT answer ("Google Ads has
+   * never synced", "spend and revenue are in different currencies") routes
+   * honestly instead of being forced into a MARKETING_REVIEW that would
+   * misrepresent a configuration gap as a campaign problem.
+   *
+   * `AD_BUDGET_CHANGE` / `AD_PAUSE` / `AD_RESUME` / `AD_CREATIVE_TEST` remain
+   * listed from Session 10 and remain UNREACHABLE in practice: the Google Ads
+   * Agent's output schema has no budget, status or bid field, and its
+   * recommendation→action table (`config/google-ads.ts`) maps to review types
+   * only. They are reachable solely by an explicit HUMAN_ADMIN proposal, which
+   * is still NOT_IMPLEMENTED, still executor-less, and still blocked by the
+   * unset `maximumDailyAdSpendCents` / `maximumCampaignBudgetChangePct`.
+   */
+  GOOGLE_ADS_AGENT: [
+    "MARKETING_REVIEW",
+    "DATA_QUALITY_REVIEW",
+    "AD_BUDGET_CHANGE",
+    "AD_PAUSE",
+    "AD_RESUME",
+    "AD_CREATIVE_TEST",
+  ],
   META_ADS_AGENT: ["MARKETING_REVIEW", "AD_BUDGET_CHANGE", "AD_PAUSE", "AD_RESUME", "AD_CREATIVE_TEST"],
   /** A human may raise anything the model may not — still fully guardrailed. */
   HUMAN_ADMIN: ACTION_TYPES,
