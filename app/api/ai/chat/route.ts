@@ -7,14 +7,9 @@ import { aiLog } from "@/lib/ai/log";
 import { findActiveConversation, listMessages } from "@/lib/data/conversation-service";
 import { parseCookies, sessionFromRequest, setSessionCookies } from "@/lib/data/request-session";
 import { getSession, SESSION_COOKIE } from "@/lib/data/session-service";
-import {
-  AI_UNAVAILABLE_MESSAGE,
-  MAX_MESSAGE_CHARS,
-  RATE_LIMITED_MESSAGE,
-  chatIpLimiter,
-  chatSessionLimiter,
-  clientIpKey,
-} from "./shared";
+import { enforceRateLimit } from "@/lib/rate-limit";
+import { rateLimitedResponse } from "@/lib/rate-limit/http";
+import { AI_UNAVAILABLE_MESSAGE, MAX_MESSAGE_CHARS } from "./shared";
 
 /**
  * Customer-facing Sales chat API (Session 05 spec §18–§19).
@@ -28,10 +23,14 @@ import {
  * required; anything else returns the customer-safe fallback copy with a
  * normalized code — provider internals never cross this boundary.
  *
- * Abuse protection: body-size cap, message-length cap, and two in-memory
- * token buckets (per-session + per-IP). Per-instance only — the deployment
- * edge owns robust distributed limiting (docs/AI_SALES_AGENT.md); the AI
- * budget guard stays the spend backstop.
+ * Abuse protection (Session 03 §16): body-size cap, message-length cap, and
+ * the centralized two-layer limiter — a per-instance token bucket plus a
+ * durable shared counter, per session AND per keyed network identity
+ * (lib/rate-limit). The NETWORK scope is enforced BEFORE a session is
+ * resolved so a cookie-dropping script cannot mint a session row per
+ * request. Underneath it all the AI budget guard remains the hard spend
+ * backstop: request limiting bounds the RATE, the budget bounds the TOTAL.
+ * One anonymous session cannot cause uncontrolled Anthropic spend.
  */
 
 export const runtime = "nodejs";
@@ -98,24 +97,19 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, code: "INVALID" }, { status: 422 });
   }
 
-  const ip = chatIpLimiter.take(`ip:${clientIpKey(req)}`);
-  if (!ip.allowed) {
-    return NextResponse.json(
-      { ok: false, code: "RATE_LIMITED", message: RATE_LIMITED_MESSAGE, retryAfterSeconds: ip.retryAfterSeconds },
-      { status: 429, headers: { "Retry-After": String(ip.retryAfterSeconds) } },
-    );
-  }
+  const networkLimit = await enforceRateLimit({ route: "ai_chat", req, scopes: ["network"] });
+  if (!networkLimit.allowed) return rateLimitedResponse(networkLimit);
 
   const ctx = await sessionFromRequest(req);
   if (!ctx) return aiUnavailable();
 
-  const perSession = chatSessionLimiter.take(`session:${ctx.session.id}`);
-  if (!perSession.allowed) {
-    return NextResponse.json(
-      { ok: false, code: "RATE_LIMITED", message: RATE_LIMITED_MESSAGE, retryAfterSeconds: perSession.retryAfterSeconds },
-      { status: 429, headers: { "Retry-After": String(perSession.retryAfterSeconds) } },
-    );
-  }
+  const sessionLimit = await enforceRateLimit({
+    route: "ai_chat",
+    req,
+    sessionId: ctx.session.id,
+    scopes: ["session"],
+  });
+  if (!sessionLimit.allowed) return rateLimitedResponse(sessionLimit);
 
   try {
     const result = await runSalesAgentTurn({

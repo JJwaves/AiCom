@@ -53,6 +53,206 @@ limits, refund authorization, agent autonomy, approvals.
 
 ## Current project stage
 
+**PRODUCTION LAUNCH SESSION 03 "Operational Hardening" COMPLETE (2026-08-16)
+— the four P1 operational risks are closed: an authoritative purchase now
+reaches the ad platforms, unexpected failures reach a person, an abusive
+stranger cannot spend the owner's money, a customer asking for a human is
+actually escalated, a permanently-lost webhook is recoverable, and the owner
+has one page that computes whether this system can safely take a sale.**
+
+**1. THE PURCHASE IS THE PAID ORDER, AND THE BROWSER IS ASKED NOTHING.** The
+confirmation page fired `purchase` whenever the URL said `?placed=1` and a
+matching object sat in `sessionStorage`. Both are browser state: the parameter
+could be typed, the stored object was written BEFORE any payment existed, and
+a customer who abandoned the Shopify checkout could still reach a page
+reporting a sale. Both inputs are gone (asserted repo-wide). The path is now
+`Shopify paid order → signed webhook → markOrderPaid → GET
+/api/orders/confirmation → analytics`. The confirmation endpoint is
+SESSION-SCOPED (an order id is not an authorization model — ids travel in
+URLs, history and screenshots), answers a non-existent order and someone
+else's order IDENTICALLY (no existence oracle), mints no session (a GET that
+writes is a write amplifier), and returns no cost, margin, attribution,
+session id, customer id or email. `/api/checkout` now returns BagDirect's own
+order id — remembered as a PENDING INTENTION, never a purchase — and no copy
+of the order.
+
+**2. GA4 + GOOGLE ADS + META, CONSENT-AWARE AND DEDUPLICATED.** All three
+receive COPIES of a transaction whose truth already exists in
+`purchase_completed`. Consent has TWO axes now: `analytics` gates GA4,
+`advertising` gates the ad platforms — "Analytics only" is a real choice
+honoured all the way down. Every destination gets the same `transaction_id`
+(Shopify's order id), so a refresh cannot inflate revenue even if the code
+runs twice; a local `localStorage` guard stops the repeat being SENT, because
+"the vendor will deduplicate it" is a claim about someone else's system.
+Google Ads needs BOTH `NEXT_PUBLIC_GOOGLE_ADS_ID` and
+`NEXT_PUBLIC_GOOGLE_ADS_PURCHASE_LABEL` — an id alone cannot address a
+conversion and is reported as NOT configured. **The reliability limitation is
+documented, not hidden**: browser conversion tracking undercounts because it
+needs the buyer to come back; BagDirect's own `purchase_completed` is complete
+regardless, and docs/ANALYTICS_PRODUCTION.md tells the owner to close the gap
+with Shopify's own customer events against the SAME conversion action. **Meta
+CAPI is DEFERRED and said so** — the Pixel already emits an `eventID` equal to
+the transaction id, so it becomes a server-side change only. **The Google Ads
+reporting provider gained NO write path** (asserted): the conversion is a
+gtag send from the browser, and `lib/google-ads` still contains no mutation
+and no conversion-upload API.
+
+**3. ANALYTICS CAN NEVER TOUCH COMMERCE.** `lib/analytics/conversions.ts`
+imports no `lib/data`, no `db/`, no `lib/commerce` (asserted). Every vendor
+branch is individually try/caught. The client purchase module makes exactly
+ONE `fetch`, a GET to the confirmation endpoint. If GA4, Ads and Meta all
+fail, the order is still complete, paid, fulfilled and counted.
+
+**4. RATE LIMITING IS THREE LAYERS, AND THE CODE OWNS TWO.** Layer 1 is the
+per-instance token bucket (cheap, synchronous, refuses obvious abuse before
+any I/O). Layer 2 is a DURABLE Postgres fixed-window counter — one atomic
+`INSERT … ON CONFLICT DO UPDATE … RETURNING`, so concurrent instances cannot
+both read "under the limit". Postgres and not Redis because production already
+requires one, so a shared counter costs one table and zero new vendors,
+credentials, failure modes or bills. **Layer 0 — platform/WAF — is OWNER
+CONFIGURATION and is a stated launch requirement**: nothing here pretends a
+per-instance memory limiter is globally sufficient on Vercel. `/api/events`
+(the endpoint the audit named as unbounded), `/api/configuration`,
+`/api/cart/line`, `/api/quote`, `/api/checkout`, both artwork routes,
+`/api/ai/chat` and admin writes all route through ONE policy table
+(`lib/rate-limit/policy.ts`) with a route CLASS: PUBLIC_LOW_COST /
+PUBLIC_DB_WRITE / PUBLIC_EXTERNAL_COST / AUTHENTICATED. **The NETWORK scope is
+checked BEFORE `sessionFromRequest`** (asserted) — a cookie-dropping caller
+would otherwise force a session-row write per request just by arriving. **A
+store outage NEVER opens the gate**: it degrades to the per-instance limit and
+logs `DURABLE_UNAVAILABLE`; there is no path in which a database failure
+grants unlimited Anthropic spend, and `assertWithinAiBudget` remains the hard
+financial backstop underneath.
+
+**5. A RAW IP IS NEVER PERSISTED.** Rate limiting needs to tell two callers
+apart, not to know who they are, so the network identity becomes a keyed
+HMAC-SHA256 the moment it is read; only the digest reaches a counter key, a
+log line or the durable store. Exactly ONE file reads `x-forwarded-for`
+(asserted). With `RATE_LIMIT_IP_SALT` unset the key is ephemeral per process —
+network-scoped durable limits degrade to per-instance, and nothing persisted
+can be correlated to a person even in principle. Both modes documented.
+
+**6. CHECKOUT AND ARTWORK ABUSE ARE BOUNDED WITHOUT BREAKING B2B.** Checkout
+is limited per CHECKOUT (8/min/session), not per line — a purchasing manager
+ordering six configurations sends one request. Artwork gained two PRE-upload
+controls, because every Session 02 control was a check performed AFTER the
+caller consumed storage: the signed PUT now covers **Content-Length** as well
+as key and content type (a URL issued for a 40 KB logo cannot upload 25 MB;
+Content-Length is a forbidden header in `fetch`, so the browser sets it from
+the body and the caller cannot forge it), and a per-session ALLOWANCE
+(`ARTWORK_MAX_UPLOADS_PER_SESSION`, default 25/24h) bounds the TOTAL objects
+one anonymous session can create — which a rate limiter does not, since it
+bounds the rate.
+
+**7. ESCALATIONS REACH A HUMAN, AND SAY SO HONESTLY.** Session 05 persisted a
+handoff as a `system` message inside a conversation: queryable, and invisible.
+Now there is a `human_handoffs` row with a delivery lifecycle, `/admin/handoffs`
+with retry and mark-handled, and outbound delivery to
+`HUMAN_HANDOFF_WEBHOOK_URL` (falling back to `QUOTE_WEBHOOK_URL`) — a generic
+JSON POST because the owner's stack is unknown and one webhook reaches Slack,
+Zapier, email automation and helpdesks without embedding any of them.
+**PERSISTENCE IS PRIMARY**: the row is written BEFORE any delivery attempt and
+a failure updates the row rather than throwing, so the assistant may
+truthfully say a request was RECORDED and never that a human was NOTIFIED.
+The payload carries the id, reason, summary, the customer's question,
+voluntarily-supplied contact details and an admin deep link — **no
+transcript, no need profile, no secret, no session identity** (asserted).
+
+**8. A LOST WEBHOOK IS RECOVERABLE.** Shopify retries for ~48 hours and then
+stops; an endpoint down for that window loses the payment's notification
+permanently and the order sits at `pending_payment` forever. `POST
+/api/admin/commerce/reconcile` reads a bounded window of Shopify orders (one
+GraphQL **query**; no mutation is defined in that file or importable from it,
+asserted) and repairs through **the SAME reconciliation service the webhook
+uses** — including the one row-locked `transitioned` flag — so a repaired
+order is indistinguishable from a webhook one and there is no second
+order-processing implementation. **IDEMPOTENT by construction**: an order a
+webhook already handled reports `alreadyConsistent`, a second sweep repairs
+nothing, and a webhook arriving after a repair fires nothing. Refund totals
+are **SET** by the sweep (Shopify's running `totalRefunded`) and **ADDED** by
+the webhook (one refund event) — accumulating a cumulative figure is exactly
+the double-count a naive version ships. Runs are recorded; `truncated` and
+`failed` are honest states, never "found nothing". Requires the **`read_orders`**
+Shopify scope, and nothing broader. **No cron** — deliberate.
+
+**9. HEALTH: LIVENESS AND READINESS ARE DIFFERENT QUESTIONS.**
+`/api/health/live` does nothing but answer — a liveness probe touching the
+database would tell the platform to RESTART the app when the DATABASE was
+down, turning degradation into an outage in a loop. `/api/health/ready` runs
+the deterministic readiness service plus one `select 1`. It makes **NO
+external API call** (asserted by test): an uptime poller would otherwise burn
+Shopify's rate limit forever, and a vendor's slow minute would read as
+BagDirect being down. It **never depends on AI, Google Ads, CRO, pricing
+intelligence or customer intelligence** — those are optional enhancements.
+200 ready / 200 degraded / 503 not_ready. No secret at any verbosity
+(asserted against real credential values).
+
+**10. LAUNCH READINESS IS COMPUTED, NOT REMEMBERED.**
+`modules/launch-readiness` evaluates COMMERCE · DATABASE · PRODUCT · ARTWORK ·
+AI · ANALYTICS · ADMIN · MONITORING · OPERATIONS · BUSINESS_CONFIG with no AI
+and no network, and `/admin/launch-readiness` renders it owner-first
+("12 Shopify variants are unmapped", with `SHOPIFY_MERCHANDISE_MAP` as small
+grey text). **Only MANDATORY checks can block** — the rule is applied once,
+centrally, so an optional check computing BLOCKED is downgraded and commerce
+stays sellable with every AI flag off. **WARNING is a first-class state**: it
+is where everything lives that needs a HUMAN — Shopify tax settings, a backup
+policy, a real test order, alert rules, the platform WAF, `npm run ai:smoke`
+— and those NEVER self-resolve.
+
+**11. THE AI BUDGET SHARP EDGE IS SURFACED BEFORE A CUSTOMER FINDS IT.**
+`assertWithinAiBudget` fails closed when budgets are set and the active model
+has no price in `config/ai-pricing.ts` (unchanged, and correct). That used to
+surface at the worst moment: the first customer to open the chat got the
+unavailable message and the owner heard it from them. Readiness now reports
+`AI_BUDGET_CONFIG_INVALID` naming the unpriced models. **No provider price was
+invented** — `config/ai-pricing.ts` is still 100% `null`.
+
+**12. STRUCTURED LOGGING, CORRELATION IDS AND ERROR TRACKING.** One JSON line
+per event with a closed `subsystem` list, so an alert rule can filter on a
+field instead of grepping a prefix. **Two redaction mechanisms**: fields are
+scalars (a credentials object cannot be passed), and both secret-looking
+NAMES and known credential SHAPES (`shpat_`, `sk-ant-`, AWS key ids,
+`Bearer …`, Google refresh tokens) are stripped wherever they appear —
+including inside a provider's own error text, which is where credentials
+actually leak from. A correlation id (`x-request-id`) follows checkout →
+Shopify → order → webhook → artwork and returns to the browser. Error tracking
+is a TRANSPORT, not an SDK (`SENTRY_DSN` envelope ingest, or
+`ERROR_WEBHOOK_URL`), works unconfigured, and what it does NOT do — browser
+capture, source maps, tracing — is stated rather than implied. **Expected
+business outcomes are not errors**: below MOQ, 409 REPRICED, unmapped
+configuration, rate-limited callers are the system working, and reporting them
+would train the owner to ignore the channel.
+
+**13. THE DOMAIN BECAME CONFIGURATION.** `example.com` was hard-coded and five
+surfaces built URLs from it — canonical metadata, sitemap, robots.txt, and two
+JSON-LD blocks. Launched as-is that publishes structured data pointing at a
+domain the owner does not own, which is worse than publishing none because
+search engines act on it. Now `NEXT_PUBLIC_SITE_DOMAIN`; unset, readiness
+BLOCKS and **robots.txt refuses crawling entirely**, while `next build` keeps
+working — missing owner input must never make the build impossible.
+
+**14. `[TO BE PROVIDED]` CANNOT REACH LAUNCH UNNOTICED.** A deterministic scan
+over customer-facing business configuration BLOCKS on any placeholder a
+customer would read. **No legal or business copy was written** (§43).
+
+Migration `0010_operational_hardening.sql` (additive): `rate_limit_counters`,
+`human_handoffs`, `commerce_reconciliation_runs`. **NO AI authority change** —
+no new agent, no new tool, no autonomy, executor registry still EMPTY, every
+guardrail limit still null, Google Ads still read-only, no price/ad/refund
+executor. **1409 tests (1262 → 1409: 147 new).** Docs: new
+`docs/PRODUCTION_OPERATIONS.md`, `docs/ANALYTICS_PRODUCTION.md`,
+`docs/OBSERVABILITY.md`.
+
+**REMAINING BLOCKERS ARE OWNER DATA AND OWNER CONFIGURATION, NOT ENGINEERING:**
+Shopify credentials + the `read_orders` scope + webhook registration; the
+merchandise map; artwork storage credentials; real prices; MOQ confirmation;
+`NEXT_PUBLIC_SITE_DOMAIN`; business placeholders; a pooled `DATABASE_URL` with
+backups and a tested restore; platform/WAF rate-limit rules; monitoring alert
+rules; and a verified real test order and refund. **`/admin/launch-readiness`
+is the exact list, computed.** Next: Production Launch Session 04 — Production
+Configuration + End-to-End Soft Launch Validation (do not start
+automatically).
+
 **PRODUCTION LAUNCH SESSION 02 "Real Commerce Termination" COMPLETE
 (2026-08-16) — a real customer can now configure a real product, get the
 engine's price, upload artwork that survives the browser, pay on Shopify, and
@@ -2140,6 +2340,77 @@ the browser with every cost `null`).
     section rewritten with the four-way classification and a fill-in owner
     template), LAUNCH_CHECKLIST (+Unit economics section).
 
+## Completed in Production Launch Session 03 (2026-08-16) — Tracking, Monitoring, Abuse Protection + Operational Hardening
+
+**Purchase / conversion tracking**
+- `lib/commerce/order-confirmation.ts` — the ONE read path for a confirmation.
+  `isOrderPaid` is `paidAt !== null` for Shopify (written only by
+  `markOrderPaid`, inside a row-locked transaction, from an HMAC-verified
+  webhook); the mock branch is dev-only and reported `demo: true`.
+- `GET /api/orders/confirmation?order=…` — session-scoped, 404-identical for
+  unknown and foreign orders, mints no session, returns no cost/margin/
+  attribution/identity.
+- `app/order-status/page.tsx` rewritten: polls the server, shows an honest
+  "confirming payment" state, fires the purchase only on a paid answer.
+  `?placed=1` and the `sessionStorage` order copy are gone (asserted).
+- `lib/analytics/purchase.ts` — pending-order intention, exactly-once guard,
+  `firePurchase` refuses an unpaid order.
+- `lib/analytics/conversions.ts` — GA4 / Google Ads / Meta delivery, per-axis
+  consent, per-vendor try/catch, no commerce imports.
+- `lib/analytics/track.ts` gained two-axis consent (`setConsent`).
+- `AnalyticsProvider` loads gtag for GA4 and/or Ads (each gated by its own
+  axis) and runs the pending-purchase check on mount.
+- `/api/checkout` returns BagDirect's order id and no order payload.
+
+**Rate / abuse protection**
+- `lib/rate-limit/` — `bucket.ts` (per-instance, moved), `identity.ts` (keyed
+  HMAC network digest), `policy.ts` (route classes + limits), `store.ts`
+  (durable Postgres fixed window + memory + resolution), `index.ts`
+  (`enforceRateLimit`, layered, scope-selectable), `http.ts` (the one 429).
+- Wired: `/api/events`, `/api/configuration`, `/api/cart/line`, `/api/quote`,
+  `/api/checkout`, `/api/artwork/upload`, `/api/artwork/[id]/complete`,
+  `/api/ai/chat`, admin writes. Network scope always before session minting.
+- Artwork: signed `Content-Length` + per-session allowance
+  (`config/artwork.ts`, `countArtworkForSession`).
+
+**Human escalation**
+- `human_handoffs` table + `lib/data/handoff-service.ts` +
+  `lib/escalation/delivery.ts` + `/admin/handoffs` (+ retry / mark-handled
+  routes). The escalation tool persists first, delivers second, and never
+  fails on delivery.
+
+**Shopify reconciliation**
+- `lib/commerce/shopify-orders.ts` (read-only query, `read_orders` scope),
+  `reconcileOrderSnapshot` in the existing reconciliation service,
+  `setOrderRefundTotal` (absolute, never accumulating),
+  `lib/commerce/reconciliation.ts` (bounded sweep + run records),
+  `commerce_reconciliation_runs`, `POST /api/admin/commerce/reconcile`.
+
+**Health / monitoring / readiness**
+- `lib/observability/{logger,correlation,error-tracking}.ts`.
+- `/api/health/live`, `/api/health/ready`.
+- `modules/launch-readiness/` (types, checks, placeholders, report) and
+  `/admin/launch-readiness`.
+- `config/site.ts` — canonical domain; `robots.txt` refuses crawling unset.
+
+**Boundaries preserved (asserted in `tests/operational-hardening-separation.test.ts`)**
+- Google Ads reporting remains structurally read-only, with no
+  conversion-upload path; the Ads conversion is a browser gtag send.
+- The reconciliation reader defines no mutation; repairs route through the
+  same service as the webhook.
+- Executor registry still empty; no price, ad, refund or payment tool.
+- `markOrderPaid` is callable from exactly two files.
+- The purchase event is fired from exactly one module, and only on `paid`.
+- Analytics imports no order/checkout/database code; the confirmation
+  endpoint is GET-only and session-minting-free.
+- Exactly one file reads `x-forwarded-for`; the durable store never sees a
+  request.
+
+**1409 tests (1262 → 1409).** New suites: `purchase-tracking`,
+`analytics-conversions`, `rate-limit-architecture`, `escalation-delivery`,
+`reconciliation`, `health-readiness`, `observability`, `artwork-abuse`,
+`operational-hardening-separation`.
+
 ## Important decisions (and why)
 
 1. **Database is the first ADD** — every roadmap capability consumes
@@ -2490,6 +2761,32 @@ the browser with every cost `null`).
 
 ## Known issues
 
+- **(PL-S03) Browser-based ad conversion tracking undercounts.** GA4 and
+  Google Ads only see a purchase if the buyer returns to a BagDirect page
+  after paying on Shopify. BagDirect's own `purchase_completed` is complete
+  regardless — this is a measurement gap, not a data gap. Closing it means
+  configuring Shopify's own customer-events tracking against the SAME
+  conversion action (docs/ANALYTICS_PRODUCTION.md §7).
+- **(PL-S03) Meta Conversions API is not implemented.** The browser Pixel
+  emits an `eventID` equal to the transaction id, so adding CAPI later is a
+  server-side change only. `META_ACCESS_TOKEN` / `META_DATASET_ID` are read
+  by no code today.
+- **(PL-S03) Reconciliation is manual.** The sweep exists; no cron runs it.
+  A permanently-lost webhook is only recovered when someone presses the
+  button, so `WEBHOOK_GAP_REPAIRED` is worth alerting on.
+- **(PL-S03) Handoff delivery has no automatic retry.** A failed delivery is
+  recorded and retryable from `/admin/handoffs`; nothing retries it in the
+  background.
+- **(PL-S03) Error tracking is a minimal transport, not the Sentry SDK.** No
+  browser/client-side capture, no source-map symbolication, no release
+  tracking, no performance tracing, no breadcrumbs.
+- **(PL-S03) The durable rate limiter is a FIXED window**, so up to ~2x the
+  nominal rate can pass across a window boundary. The per-instance token
+  bucket in front smooths that, and the platform/WAF layer is the real outer
+  bound.
+- **(PL-S03) Admin auth is still one shared Basic credential.** Every
+  `handledBy` and `triggeredBy` reads as the single configured admin; there
+  is no per-person audit trail.
 - ~~Configurator state is six `useState` hooks local to
   `ProductConfigurator`~~ — **RESOLVED in Session 06**: `lib/configuration`
   shared store + `/api/configuration` writer (source "configurator"/"ai");
@@ -2795,7 +3092,33 @@ for the figures to mean anything, since a Google Ads test account serves no
 real ads)**, guardrail thresholds — including
 **`maximumExperimentTrafficPct`, which is REQUIRED before running any
 experiment in production (the launch route refuses while it is null and
-never assumes 100%)** — and escalation destination.
+never assumes 100%)**.
+
+**Added by Production Launch Session 03** (all owner input; the mechanisms
+exist, the values do not):
+- **`NEXT_PUBLIC_SITE_DOMAIN`** — BUILD-TIME. Unset, launch readiness BLOCKS
+  and robots.txt refuses crawling rather than advertising a sitemap at a
+  placeholder domain.
+- **`read_orders` on the Shopify Admin token** — required by reconciliation,
+  and nothing broader. Changing scopes reinstalls the app and issues a NEW
+  token.
+- **Platform / WAF rate-limit rules** — the only layer that can refuse a
+  request before it costs a function invocation. Nothing in the repository
+  substitutes for it.
+- **Monitoring alert rules** — nothing here can guarantee a person reads an
+  error. Suggested set: docs/OBSERVABILITY.md §4.
+- **Database backups / PITR, and a TESTED restore** — BagDirect does not back
+  up the database and cannot query whether you do.
+- **A pooled `DATABASE_URL`** — a direct connection exhausts `max_connections`
+  under ordinary serverless traffic.
+- **`HUMAN_HANDOFF_WEBHOOK_URL`** (falls back to `QUOTE_WEBHOOK_URL`) —
+  without it escalations are stored but nobody is notified.
+- **`SENTRY_DSN` or `ERROR_WEBHOOK_URL`**, and **`RATE_LIMIT_IP_SALT`**.
+- **`NEXT_PUBLIC_GOOGLE_ADS_ID` AND `NEXT_PUBLIC_GOOGLE_ADS_PURCHASE_LABEL`** —
+  both, or the conversion cannot be addressed.
+- **A verified real test order and a verified refund**, plus **Shopify US
+  shipping profile and tax settings** — owner verification, permanently
+  WARNING until a person confirms them.
 
 ## Deferred work
 
@@ -2876,36 +3199,67 @@ the 03.5 hardening pass (small blast radius, none block Session 04):
 
 ## Recommended next session
 
-**Production Launch Session 03 — Tracking, Monitoring, Abuse Protection +
-Operational Hardening.** Do not start it automatically.
+**Production Launch Session 04 — Production Configuration + End-to-End Soft
+Launch Validation.** Do not start it automatically.
 
-Launch Session 02 closed the four commerce blockers. What it deliberately did
-NOT do, and what Session 03 exists for:
+**The engineering for a real, safe sale is done.** Sessions 02 and 03 closed
+every P0 commerce blocker and every P1 operational risk. What remains is
+owner data and owner configuration — and `/admin/launch-readiness` computes
+the exact list from the running system, which is more trustworthy than
+anything written down here.
 
-1. **Conversion tracking for advertising.** An authoritative first-party
-   `purchase_completed` now exists for real Shopify orders (§48) — Session 03
-   connects it downstream to GA4, Google Ads and Meta. Until then, ad platforms
-   cannot see real purchases.
-2. **Monitoring, health checks and alerting.** Session 02 logs production
-   commerce failures clearly and safely but builds no Sentry, no health
-   endpoint, no alert. A webhook endpoint that goes down silently loses paid
-   orders — that is the highest-value thing to monitor.
-3. **General API rate limiting.** Only the new upload endpoint got abuse
-   controls (§50). `/api/events`, `/api/configuration` and `/api/cart/line`
-   still rely on bounded payloads and platform-edge limiting.
-4. **Escalation delivery.** Human handoffs are still recorded and not routed
-   anywhere (owner config).
-5. **A reconciliation sweep** for permanently-lost webhooks (see Known issues).
+### Remaining P0 — all owner input, none engineering
 
-**Before any of it, and worth more: the owner's data.** The engineering for a
-real sale is done; a real sale still needs a Shopify store, the merchandise
-map, artwork storage credentials, real prices and a verified test order. That
-is a business-input task, not a coding session — LAUNCH_CHECKLIST.md
-"Commerce — Shopify production" is the exact list.
+| Blocker | Where |
+| --- | --- |
+| Shopify store domain + Admin token (with `read_orders`) + webhook secret + webhook registration | env + Shopify admin |
+| The merchandise map | `config/shopify.ts` (ships empty) |
+| Artwork storage credentials, private bucket, CORS | env |
+| Real prices, then `NEXT_PUBLIC_DEMO_PRICING=false` | `config/products.ts` |
+| MOQ confirmation | `config/business.ts` |
+| `NEXT_PUBLIC_SITE_DOMAIN` | env (build-time) |
+| Customer-facing `[TO BE PROVIDED]` values | `config/business.ts` |
+| Production pooled `DATABASE_URL` + `npm run db:migrate` + backups + a tested restore | env + provider |
+| `ADMIN_USER` / `ADMIN_PASSWORD` | env |
+| A verified real test order and a verified refund | Shopify + the smoke test in docs/PRODUCTION_OPERATIONS.md §9 |
+| Shopify US shipping profile and tax settings verified | Shopify admin |
 
-Also still outstanding from before this session, unchanged in priority:
-**filling `config/costs.ts`**, which unblocks gross profit, contribution
-profit, the minimum safe price and POAS across S09, S12 and S13 at once.
+### Remaining P1 — materially wanted before real traffic, still owner-side
+
+- **Platform / WAF rate-limit rules.** The application layers exist; the outer
+  one is configuration.
+- **Monitoring alert rules.** Nothing in the repository can guarantee a person
+  reads an error.
+- **`HUMAN_HANDOFF_WEBHOOK_URL`** and **`QUOTE_WEBHOOK_URL`** — otherwise a
+  customer asking for a human, or a B2B quote, waits until someone opens a
+  page.
+- **`SENTRY_DSN` or `ERROR_WEBHOOK_URL`**, and **`RATE_LIMIT_IP_SALT`**.
+- **Google Ads conversion id AND label**, plus a tracking template carrying
+  `{campaignid}` so first-party attribution can match campaigns.
+- **`npm run ai:smoke`** before enabling AI Sales for customers. It was NOT
+  run this session — no credentials were present, and inventing a passing
+  result would be worse than reporting none.
+
+### What Session 04 would actually DO
+
+Not new features. Configuration, then proof:
+
+1. Walk `/admin/launch-readiness` to green (or to owner-verified WARNING).
+2. Run the launch smoke test end to end: one real payment, one refund, with
+   every assertion in docs/PRODUCTION_OPERATIONS.md §9 checked.
+3. Verify conversion delivery in GA4 DebugView and the Google Ads tag
+   diagnostic, including that a refresh does not double-count.
+4. Set the soft-launch flag matrix, remembering that
+   `EXPERIMENT_ENGINE_ENABLED` changes render mode and needs a rebuild.
+5. Send a small amount of real traffic, and watch the alerts fire (or not).
+
+**And still, from before all of it and arguably worth more than any of it:
+filling `config/costs.ts`.** Session 13.5 built the complete unit-economics
+model and deliberately supplied none of its numbers. Filling it unblocks gross
+profit, contribution profit, the minimum safe price and POAS across S09, S12
+and S13 at once — POAS being the only advertising metric that can tell you
+whether a campaign makes money. The template is in BUSINESS_CONFIG_TODO →
+"Cost model". A business-input task, not a coding session.
 
 ---
 

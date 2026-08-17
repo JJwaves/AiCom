@@ -227,18 +227,19 @@ export async function findOrderByCheckoutRef(provider: string, checkoutRef: stri
 export async function attachProviderOrderId(input: {
   orderId: string;
   providerOrderId: string;
-}): Promise<{ attached: boolean; conflict: boolean }> {
+  /** `linked` distinguishes a NEW link from a re-confirmation of an existing one. */
+}): Promise<{ attached: boolean; conflict: boolean; linked: boolean }> {
   const db = await getDb();
   const existing = await getOrder(input.orderId);
-  if (!existing) return { attached: false, conflict: false };
-  if (existing.order.providerOrderId === input.providerOrderId) return { attached: true, conflict: false };
-  if (existing.order.providerOrderId) return { attached: false, conflict: true };
+  if (!existing) return { attached: false, conflict: false, linked: false };
+  if (existing.order.providerOrderId === input.providerOrderId) return { attached: true, conflict: false, linked: false };
+  if (existing.order.providerOrderId) return { attached: false, conflict: true, linked: false };
 
   await db
     .update(orders)
     .set({ providerOrderId: input.providerOrderId, updatedAt: new Date() })
     .where(eq(orders.id, input.orderId));
-  return { attached: true, conflict: false };
+  return { attached: true, conflict: false, linked: true };
 }
 
 export type OrderPaymentResult = {
@@ -339,6 +340,52 @@ export async function recordOrderRefund(input: {
       .where(eq(orders.id, input.orderId))
       .returning();
     return { order: updated, fullyRefunded };
+  });
+}
+
+/**
+ * Set the CUMULATIVE refunded total to the provider's authoritative figure
+ * (Production Launch Session 03 §25, §28).
+ *
+ * `recordOrderRefund` ACCUMULATES, which is right for a `refunds/create`
+ * webhook: each delivery describes one new refund event. A reconciliation
+ * sweep sees something different — Shopify's `totalRefunded`, the running
+ * total — and adding that to an existing total would double-count every
+ * refund on every sweep.
+ *
+ * So reconciliation SETS rather than adds. That makes it idempotent by
+ * construction: running the sweep twice writes the same number twice, and
+ * `changed` reports whether anything actually moved. The value never
+ * decreases (a provider figure lower than what we already recorded is
+ * treated as stale and ignored), so a webhook that arrived first is never
+ * undone by a sweep reading an older snapshot.
+ */
+export async function setOrderRefundTotal(input: {
+  orderId: string;
+  refundedTotalCents: number;
+}): Promise<{ order: OrderRow; changed: boolean; fullyRefunded: boolean } | null> {
+  const db = await getDb();
+  return db.transaction(async (tx) => {
+    const [locked] = await tx.select().from(orders).where(eq(orders.id, input.orderId)).for("update").limit(1);
+    if (!locked) return null;
+
+    const refunded = Math.max(locked.refundedTotalCents, Math.max(0, input.refundedTotalCents));
+    const fullyRefunded = refunded >= locked.totalCents && locked.totalCents > 0;
+    const statusChange = fullyRefunded && locked.status !== "refunded";
+    if (refunded === locked.refundedTotalCents && !statusChange) {
+      return { order: locked, changed: false, fullyRefunded };
+    }
+
+    const [updated] = await tx
+      .update(orders)
+      .set({
+        refundedTotalCents: refunded,
+        ...(fullyRefunded ? { status: "refunded" } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(orders.id, input.orderId))
+      .returning();
+    return { order: updated, changed: true, fullyRefunded };
   });
 }
 

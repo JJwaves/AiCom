@@ -1,5 +1,6 @@
 import { attributionToMetadata, readAttribution } from "@/lib/attribution/attribution";
-import type { Cart, CartLine } from "@/types/commerce";
+import { rememberPendingOrder } from "@/lib/analytics/purchase";
+import type { CartLine } from "@/types/commerce";
 
 /**
  * Shared client-side checkout submission (Session 07) — the ONE path every
@@ -12,18 +13,25 @@ import type { Cart, CartLine } from "@/types/commerce";
  * The checkout destination is exclusively what /api/checkout returns
  * (provider-generated). Nothing in this module accepts a URL from anywhere
  * else.
+ *
+ * Production Launch Session 03 §3: this module no longer stores a copy of
+ * the ORDER in the browser. It stores the order ID as a pending intention,
+ * and the confirmation surface asks the server whether that order was paid.
+ * A client-held order payload could never be evidence of payment, and while
+ * it existed it was what the purchase event was fired from.
  */
 
 export type CheckoutSubmitResult =
-  | { kind: "mock-order"; orderId: string; order: { cart: Cart; createdAt: string } }
-  | { kind: "redirect"; url: string }
+  /** `orderId` is BAGDIRECT's order id — what the confirmation surface asks the server about. */
+  | { kind: "mock-order"; orderId: string | null }
+  | { kind: "redirect"; url: string; orderId: string | null }
   | { kind: "repriced"; lines: { lineId: string; quantity: number; unitPriceCents: number; totalCents: number }[] }
   | { kind: "invalid"; message: string }
   | { kind: "error"; message: string };
 
 type CheckoutResponse =
-  | { ok: true; result: { kind: "mock"; orderId: string }; order: { cart: Cart; createdAt: string } }
-  | { ok: true; result: { kind: "redirect"; url: string } }
+  | { ok: true; result: { kind: "mock"; orderId: string }; orderId: string | null }
+  | { ok: true; result: { kind: "redirect"; url: string }; orderId: string | null }
   | { ok: false; code: "REPRICED"; lines: { lineId: string; quantity: number; unitPriceCents: number; totalCents: number }[] }
   | { ok: false; code: string; error?: string; errors?: { lineId: string; reason: string }[] };
 
@@ -48,8 +56,12 @@ export async function submitCartCheckout(lines: CartLine[]): Promise<CheckoutSub
     const data = (await res.json()) as CheckoutResponse;
 
     if (data.ok) {
-      if ("order" in data) return { kind: "mock-order", orderId: data.result.orderId, order: data.order };
-      return { kind: "redirect", url: data.result.url };
+      // The BagDirect order id is remembered as a PENDING order — an
+      // intention to pay, never a purchase. Only the server, reading the
+      // webhook-written paid flag, can turn it into one.
+      if (data.orderId) rememberPendingOrder(data.orderId);
+      if (data.result.kind === "mock") return { kind: "mock-order", orderId: data.orderId };
+      return { kind: "redirect", url: data.result.url, orderId: data.orderId };
     }
     if (data.code === "REPRICED" && "lines" in data && data.lines) {
       return { kind: "repriced", lines: data.lines };
@@ -63,11 +75,3 @@ export async function submitCartCheckout(lines: CartLine[]): Promise<CheckoutSub
   }
 }
 
-/** Persist the SERVER-priced order payload for the demo confirmation page (mock provider only). */
-export function persistMockOrderPayload(orderId: string, order: { cart: Cart; createdAt: string }): void {
-  try {
-    sessionStorage.setItem(`order:${orderId}`, JSON.stringify(order));
-  } catch {
-    /* confirmation page falls back to its "order recorded" copy */
-  }
-}

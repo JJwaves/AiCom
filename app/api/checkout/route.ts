@@ -15,6 +15,11 @@ import { sessionFromRequest, setSessionCookies } from "@/lib/data/request-sessio
 import { markConverted, type SessionRow } from "@/lib/data/session-service";
 import { CommerceConfigurationError } from "@/lib/commerce/config";
 import { ShopifyCheckoutError } from "@/lib/commerce/shopify";
+import { correlationIdFrom, withCorrelationHeader } from "@/lib/observability/correlation";
+import { captureException } from "@/lib/observability/error-tracking";
+import { logError, logInfo, logWarn } from "@/lib/observability/logger";
+import { enforceRateLimit } from "@/lib/rate-limit";
+import { rateLimitedResponse } from "@/lib/rate-limit/http";
 import type { Cart, CartLine, Product } from "@/types/commerce";
 
 /**
@@ -28,6 +33,17 @@ import type { Cart, CartLine, Product } from "@/types/commerce";
  *
  * Margin telemetry runs server-side only — cost and margin figures are
  * business-internal and are NEVER included in any response.
+ *
+ * ABUSE (Production Launch Session 03 §17): with Shopify live, each accepted
+ * request creates a DRAFT ORDER in the owner's admin — a record a human may
+ * have to clean up, against an API with its own quota. So checkout is rate
+ * limited per session and per keyed network identity. The limit is per
+ * CHECKOUT, not per line: a B2B buyer ordering six configurations still
+ * sends one request, and legitimate multi-line purchasing is untouched.
+ *
+ * CORRELATION (§35): one id is minted here and travels through the Shopify
+ * provider call, the order row and the log line, then returns to the browser
+ * in `x-request-id` so a customer can quote it to support.
  */
 
 export const runtime = "nodejs";
@@ -110,6 +126,11 @@ function validateAndPrice(line: CheckoutRequestLine, product: Product): { ok: tr
 }
 
 export async function POST(req: Request) {
+  const correlationId = correlationIdFrom(req);
+
+  const networkLimit = await enforceRateLimit({ route: "checkout", req, scopes: ["network"] });
+  if (!networkLimit.allowed) return withCorrelationHeader(rateLimitedResponse(networkLimit), correlationId);
+
   let body: unknown;
   try {
     body = await req.json();
@@ -191,6 +212,16 @@ export async function POST(req: Request) {
   // as its correlation reference.
   const sessionCtx = await sessionFromRequest(req);
 
+  if (sessionCtx) {
+    const sessionLimit = await enforceRateLimit({
+      route: "checkout",
+      req,
+      sessionId: sessionCtx.session.id,
+      scopes: ["session"],
+    });
+    if (!sessionLimit.allowed) return withCorrelationHeader(rateLimitedResponse(sessionLimit), correlationId);
+  }
+
   // Artwork must be real, verified, and THIS session's (Session 02 §28) —
   // an id copied from elsewhere must not put someone else's logo on a bag.
   if (sessionCtx) {
@@ -225,18 +256,19 @@ export async function POST(req: Request) {
         sessionId: sessionCtx?.session.id ?? null,
       });
       if (result.kind !== "mock") throw new Error("mock provider returned a non-mock checkout result");
-      if (sessionCtx) {
-        await persistMockOrder(sessionCtx.session, serverLines, cart, attribution, result.orderId);
-      }
-      // The client also keeps the server-priced payload for the demo
-      // confirmation page (sessionStorage) — the DB row is the record.
+      const mockOrderId = sessionCtx
+        ? await persistMockOrder(sessionCtx.session, serverLines, cart, attribution, result.orderId)
+        : null;
+      // The BagDirect order id is what the confirmation surface asks the
+      // server about (§4). The browser no longer carries a copy of the order
+      // itself: a client-held payload is not evidence that anything was paid.
       const res = NextResponse.json({
         ok: true,
         result,
-        order: { cart, attribution, createdAt: new Date().toISOString() },
+        orderId: mockOrderId,
       });
       if (sessionCtx) setSessionCookies(res, sessionCtx.session);
-      return res;
+      return withCorrelationHeader(res, correlationId);
     }
 
     /* ---------------------------------------------------------------- */
@@ -263,10 +295,19 @@ export async function POST(req: Request) {
       // Without a session there is no artwork ownership check, no
       // attribution and no way to reconcile the paid order. Refusing beats
       // taking money for something we cannot fulfil or trace.
-      console.error("[checkout] refusing Shopify checkout without a session (cookies blocked?)");
-      return NextResponse.json(
-        { ok: false, code: "PROVIDER_ERROR", error: "Checkout is temporarily unavailable. Nothing was charged." },
-        { status: 503 },
+      logError({
+        subsystem: "checkout",
+        event: "session_unavailable",
+        correlationId,
+        code: "NO_SESSION",
+        detail: "refusing Shopify checkout without a session (cookies blocked, or the database is unreachable)",
+      });
+      return withCorrelationHeader(
+        NextResponse.json(
+          { ok: false, code: "PROVIDER_ERROR", error: "Checkout is temporarily unavailable. Nothing was charged." },
+          { status: 503 },
+        ),
+        correlationId,
       );
     }
 
@@ -300,37 +341,92 @@ export async function POST(req: Request) {
       },
     }).catch((err) => console.error("[checkout] checkout_started event failed", err));
 
-    // Only the URL crosses to the browser — never the draft order id.
-    const res = NextResponse.json({ ok: true, result: { kind: "redirect", url: result.url } });
+    logInfo({
+      subsystem: "checkout",
+      event: "checkout_created",
+      correlationId,
+      orderId: pending.orderId,
+      lines: cart.lines.length,
+      totalCents: cart.lines.reduce((sum, l) => sum + l.totalCents, 0),
+      currency: cart.currency,
+    });
+
+    // Only the URL and BAGDIRECT's own order id cross to the browser — never
+    // Shopify's draft order id. The order id is what the confirmation surface
+    // later asks the server about, and it is session-scoped on read.
+    const res = NextResponse.json({
+      ok: true,
+      result: { kind: "redirect", url: result.url },
+      orderId: pending.orderId,
+    });
     setSessionCookies(res, sessionCtx.session);
-    return res;
+    return withCorrelationHeader(res, correlationId);
   } catch (err) {
     // Commerce MISCONFIGURATION is not a transient provider blip — it means
     // production is running without a way to take money. It is logged as such
     // and still answered with customer-safe copy (never a stack trace or a
     // Shopify API message, §42).
     if (err instanceof CommerceConfigurationError) {
-      console.error("[checkout] COMMERCE IS NOT CONFIGURED — no checkout can be created", err.message);
-      return NextResponse.json(
-        { ok: false, code: "PROVIDER_ERROR", error: "Checkout is temporarily unavailable" },
-        { status: 503 },
+      // Reported as an exception, not merely logged: a production deploy that
+      // cannot take money is the single most urgent failure in the system.
+      captureException(err, {
+        subsystem: "checkout",
+        event: "commerce_not_configured",
+        correlationId,
+        code: "COMMERCE_NOT_CONFIGURED",
+      });
+      return withCorrelationHeader(
+        NextResponse.json(
+          { ok: false, code: "PROVIDER_ERROR", error: "Checkout is temporarily unavailable" },
+          { status: 503 },
+        ),
+        correlationId,
       );
     }
     if (err instanceof ShopifyCheckoutError) {
-      console.error(`[checkout] Shopify checkout failed (${err.code})`, err.message);
+      if (err.code === "UNMAPPED_CONFIGURATION") {
+        // EXPECTED business outcome (§37), not an exception: the owner has
+        // not mapped this combination yet and the customer is routed to a
+        // quote. Loud in the log, absent from the error tracker.
+        logWarn({
+          subsystem: "checkout",
+          event: "unmapped_configuration",
+          correlationId,
+          code: err.code,
+          detail: err.message,
+        });
+      } else {
+        captureException(err, {
+          subsystem: "checkout",
+          event: "shopify_checkout_failed",
+          correlationId,
+          code: err.code,
+        });
+      }
       const customerFacing =
         err.code === "UNMAPPED_CONFIGURATION"
           ? "That exact combination isn't available to order online yet — request a custom quote and we'll set it up."
           : "Checkout is temporarily unavailable. Nothing was charged — try again in a moment.";
-      return NextResponse.json(
-        { ok: false, code: err.code === "UNMAPPED_CONFIGURATION" ? "UNAVAILABLE_CONFIGURATION" : "PROVIDER_ERROR", error: customerFacing },
-        { status: err.code === "UNMAPPED_CONFIGURATION" ? 409 : 502 },
+      return withCorrelationHeader(
+        NextResponse.json(
+          { ok: false, code: err.code === "UNMAPPED_CONFIGURATION" ? "UNAVAILABLE_CONFIGURATION" : "PROVIDER_ERROR", error: customerFacing },
+          { status: err.code === "UNMAPPED_CONFIGURATION" ? 409 : 502 },
+        ),
+        correlationId,
       );
     }
-    console.error("[checkout] provider createCheckout failed", err);
-    return NextResponse.json(
-      { ok: false, code: "PROVIDER_ERROR", error: "Checkout is temporarily unavailable" },
-      { status: 502 },
+    captureException(err, {
+      subsystem: "checkout",
+      event: "create_checkout_failed",
+      correlationId,
+      code: "PROVIDER_ERROR",
+    });
+    return withCorrelationHeader(
+      NextResponse.json(
+        { ok: false, code: "PROVIDER_ERROR", error: "Checkout is temporarily unavailable" },
+        { status: 502 },
+      ),
+      correlationId,
     );
   }
 }
@@ -348,7 +444,7 @@ async function persistMockOrder(
   cart: Cart,
   attribution: Record<string, string>,
   providerOrderId: string,
-): Promise<void> {
+): Promise<string | null> {
   try {
     // AI-assisted attribution (S07): conservative material-assistance check —
     // aiAssisted only when the chat demonstrably touched commerce; the latest
@@ -448,8 +544,10 @@ async function persistMockOrder(
         { customerId: session.customerId },
       );
     }
+    return order.id;
   } catch (err) {
     console.error(`[checkout] order persistence failed for ${providerOrderId} — commerce unaffected`, err);
+    return null;
   }
 }
 

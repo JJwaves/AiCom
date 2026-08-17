@@ -6,6 +6,8 @@ import {
 } from "@/lib/data/conversation-service";
 import { getNeedProfile } from "@/lib/data/customer-need-service";
 import { recordServerEvent } from "@/lib/data/event-service";
+import { createHandoff } from "@/lib/data/handoff-service";
+import { deliverHandoff } from "@/lib/escalation/delivery";
 import { aiLog } from "../log";
 import type { ToolDefinition } from "./types";
 
@@ -23,9 +25,18 @@ import type { ToolDefinition } from "./types";
  * 3. Marks the conversation escalated (status+outcome; NOT ended — the
  *    customer can keep chatting while a human follows up).
  * 4. Emits the `human_handoff_requested` first-party event and a loud
- *    server log. Delivery to a real inbox/CRM is deliberately deferred:
- *    the escalation destination is owner configuration
- *    (BUSINESS_CONFIG_TODO) — until then the record is queryable in the DB.
+ *    server log.
+ * 5. Production Launch Session 03 §20–§22: writes a HumanHandoff ROW — the
+ *    operational object with a delivery lifecycle — and then ATTEMPTS
+ *    DELIVERY to the owner's configured destination.
+ *
+ * ORDERING IS THE CONTRACT. Persistence happens first and is what the tool's
+ * success depends on; delivery happens after and CANNOT fail the tool. So
+ * the assistant may truthfully tell the customer their request has been
+ * RECORDED, and never claims a human has been NOTIFIED — a claim about a
+ * webhook, a Slack workspace or an inbox that BagDirect does not own and
+ * cannot verify. A failed delivery leaves a `failed` row with its attempt
+ * count, visible at /admin/handoffs and retryable there (§22).
  *
  * Identity comes from the server-minted ToolExecutionContext; the model
  * cannot escalate someone else's conversation.
@@ -157,6 +168,31 @@ export const requestHumanHelpTool: ToolDefinition<z.infer<typeof escalationInput
       structured: handoff,
     });
     await markConversationEscalated(ctx.conversationId);
+
+    // The operational record. Written BEFORE any delivery attempt, so a
+    // delivery outage can never lose an escalation (§22).
+    const row = await createHandoff({
+      conversationId: ctx.conversationId,
+      sessionId: ctx.sessionId,
+      customerId: ctx.customerId ?? null,
+      reason: input.reason,
+      requirementSummary: input.requirementSummary,
+      customerQuestion: input.customerQuestion ?? null,
+      contactName: input.contactName ?? null,
+      contactEmail: input.contactEmail ?? null,
+      contactPhone: input.contactPhone ?? null,
+      productId: conversation.productId ?? null,
+    });
+
+    // Delivery is best-effort by design: its failure is RECORDED on the row,
+    // never raised. The customer has already been promised a record, not a
+    // notification.
+    await deliverHandoff(row).catch((err) =>
+      aiLog("escalation_delivery_error", {
+        conversationId: ctx.conversationId,
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    );
 
     try {
       await recordServerEvent({

@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { POST as chatPost } from "@/app/api/ai/chat/route";
-import { __resetChatRateLimitersForTests } from "@/app/api/ai/chat/shared";
+import { __resetRateLimitsForTests } from "@/lib/rate-limit";
 import { getDb } from "@/db/client";
 import { events } from "@/db/schema";
 import { PRODUCTS } from "@/config/products";
@@ -39,7 +39,7 @@ afterEach(() => {
 });
 beforeEach(async () => {
   await resetDb();
-  __resetChatRateLimitersForTests();
+  __resetRateLimitsForTests();
   setEnv("AI_RUNTIME_ENABLED", "true");
   setEnv("AI_SALES_ENABLED", "true");
   setEnv("ANTHROPIC_API_KEY", "test-key-never-used");

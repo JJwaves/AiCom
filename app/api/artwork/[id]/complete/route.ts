@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { getArtworkForSession, markArtworkStatus, markArtworkUploaded } from "@/lib/data/artwork-service";
 import { sessionFromRequest, setSessionCookies } from "@/lib/data/request-session";
+import { captureException } from "@/lib/observability/error-tracking";
+import { correlationIdFrom } from "@/lib/observability/correlation";
+import { enforceRateLimit } from "@/lib/rate-limit";
+import { rateLimitedResponse } from "@/lib/rate-limit/http";
 import { getArtworkStorage } from "@/lib/storage/artwork-storage";
 import { ARTWORK_MAGIC_PREFIX_BYTES, ARTWORK_MAX_BYTES, verifyArtworkContent } from "@/lib/validation/artwork";
 
@@ -24,6 +28,10 @@ export const runtime = "nodejs";
 export async function POST(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   const req = _req;
   const { id } = await ctx.params;
+  const correlationId = correlationIdFrom(req);
+
+  const networkLimit = await enforceRateLimit({ route: "artwork_complete", req, scopes: ["network"] });
+  if (!networkLimit.allowed) return rateLimitedResponse(networkLimit);
 
   const sessionCtx = await sessionFromRequest(req);
   if (!sessionCtx) {
@@ -50,6 +58,14 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
     setSessionCookies(res, sessionCtx.session);
     return res;
   }
+
+  const sessionLimit = await enforceRateLimit({
+    route: "artwork_complete",
+    req,
+    sessionId: sessionCtx.session.id,
+    scopes: ["session"],
+  });
+  if (!sessionLimit.allowed) return rateLimitedResponse(sessionLimit);
 
   const storage = getArtworkStorage();
   if (!storage) {
@@ -109,7 +125,13 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
     setSessionCookies(res, sessionCtx.session);
     return res;
   } catch (err) {
-    console.error(`[artwork] verification failed for ${artwork.id}`, err);
+    captureException(err, {
+      subsystem: "artwork",
+      event: "verification_failed",
+      correlationId,
+      code: "STORAGE_ERROR",
+      fields: { artworkId: artwork.id },
+    });
     return NextResponse.json(
       { ok: false, code: "STORAGE_ERROR", error: "We couldn't confirm that upload. Try again in a moment." },
       { status: 502 },

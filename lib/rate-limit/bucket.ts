@@ -1,18 +1,19 @@
 /**
- * Lightweight in-memory token-bucket rate limiter (Session 05 spec §19).
+ * In-memory token-bucket rate limiter — the FIRST layer of the rate-limit
+ * architecture (Session 05 spec §19; generalized in Production Launch
+ * Session 03 §13).
  *
- * Purpose-built for the AI chat endpoint, which has direct per-request API
- * cost: it must not be completely unbounded. Deliberately NOT a distributed
- * limiter — no Redis, no new infrastructure. Scope and limits:
+ * It is cheap, synchronous and always available, which makes it the right
+ * first gate: an abusive caller is refused before a database round trip or a
+ * provider call happens. It is also, on its own, NOT globally authoritative:
  *
- * - State is per server instance (Map in module memory). On serverless /
+ * - State is per server instance (a Map in module memory). On serverless /
  *   multi-instance deploys each instance enforces independently, so the
- *   effective global limit is (instances × capacity). Robust distributed
- *   rate limiting belongs at the deployment edge (platform/CDN/WAF) —
- *   documented in docs/AI_SALES_AGENT.md and LAUNCH_CHECKLIST. The AI
- *   budget guard remains the hard spend backstop underneath.
- * - Keys are caller-chosen (session id, with an IP fallback for
- *   cookie-less clients). Buckets are pruned lazily once full-capacity
+ *   effective global limit is (instances x capacity). This file never
+ *   pretends otherwise, and `lib/rate-limit/index.ts` layers a durable
+ *   shared-store limiter on top for exactly that reason.
+ * - Keys are caller-chosen (a session id, or a keyed hash of the network
+ *   identity — never a raw IP). Buckets are pruned lazily once full-capacity
  *   idle, so the map cannot grow without bound.
  */
 

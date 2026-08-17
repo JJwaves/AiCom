@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { useRouter } from "next/navigation";
 import { track } from "@/lib/analytics/track";
 import { useCart } from "@/lib/cart/cart-context";
-import { persistMockOrderPayload, submitCartCheckout } from "@/lib/cart/checkout-client";
+import { submitCartCheckout } from "@/lib/cart/checkout-client";
 import {
   isConfiguratorMounted,
   publishAiConfigurationUpdate,
@@ -480,10 +480,9 @@ export function PackagingExpertChat() {
       const result = await submitCartCheckout(lines);
       switch (result.kind) {
         case "mock-order":
-          persistMockOrderPayload(result.orderId, result.order);
           setCheckoutState(messageIndex, { status: "idle" });
           setOpen(false);
-          router.push(`/order-status?order=${result.orderId}&placed=1`);
+          router.push(result.orderId ? `/order-status?order=${result.orderId}` : "/order-status");
           return;
         case "redirect":
           // Server/provider-generated checkout URL — the only external

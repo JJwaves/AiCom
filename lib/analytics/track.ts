@@ -46,16 +46,33 @@ declare global {
 }
 
 let consentGranted = false;
+let advertisingGranted = false;
 const buffer: AnalyticsEvent[] = [];
 const firedPurchases = new Set<string>();
 
-export function grantAnalyticsConsent(): void {
-  consentGranted = true;
+/**
+ * Consent has TWO axes, because the destinations do (Production Launch
+ * Session 03 §6–§8). GA4 is measurement; Google Ads and the Meta Pixel are
+ * advertising. A visitor who chose "Analytics only" gets the first and not
+ * the second, and `deliverPurchaseConversions` reads exactly these flags.
+ */
+export function setConsent(input: { analytics: boolean; advertising: boolean }): void {
+  consentGranted = input.analytics;
+  advertisingGranted = input.advertising;
+  if (!consentGranted) return;
   while (buffer.length) push(buffer.shift() as AnalyticsEvent);
+}
+
+export function grantAnalyticsConsent(): void {
+  setConsent({ analytics: true, advertising: advertisingGranted });
 }
 
 export function hasAnalyticsConsent(): boolean {
   return consentGranted;
+}
+
+export function hasAdvertisingConsent(): boolean {
+  return advertisingGranted;
 }
 
 function push(event: AnalyticsEvent): void {

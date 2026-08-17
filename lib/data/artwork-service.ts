@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, lt, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db/client";
 import { artworks } from "@/db/schema";
@@ -199,6 +199,27 @@ export async function listAbandonedArtwork(olderThanDays = 30): Promise<ArtworkR
         lt(artworks.createdAt, cutoff),
       ),
     );
+}
+
+/**
+ * How many artwork records this session has created since `since`
+ * (Production Launch Session 03 §19).
+ *
+ * Backs the per-session upload ALLOWANCE. Rate limiting bounds how FAST a
+ * caller can mint signed upload URLs; this bounds how MANY objects one
+ * anonymous session can create in the owner's bucket at any speed — the two
+ * answer different questions, and only the second bounds total storage cost.
+ *
+ * Every status counts, deliberately: a rejected or abandoned upload still
+ * consumed a signed URL and may still have put bytes in the bucket.
+ */
+export async function countArtworkForSession(sessionId: string, since: Date): Promise<number> {
+  const db = await getDb();
+  const [row] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(artworks)
+    .where(and(eq(artworks.sessionId, sessionId), gte(artworks.createdAt, since)));
+  return Number(row?.count ?? 0);
 }
 
 /** Counts by status — operational visibility for the launch checklist. */

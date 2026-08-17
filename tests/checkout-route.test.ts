@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { POST } from "@/app/api/checkout/route";
 import { PRODUCTS } from "@/config/products";
 import { createPendingArtwork, markArtworkUploaded } from "@/lib/data/artwork-service";
+import { getOrder } from "@/lib/data/order-service";
 import { SESSION_COOKIE } from "@/lib/data/session-service";
 import { makeSession } from "./db-helpers";
 
@@ -70,13 +71,19 @@ describe("POST /api/checkout", () => {
     expect(data.ok).toBe(true);
     expect(data.result.kind).toBe("mock");
     expect(data.result.orderId).toMatch(/^MOCK-/);
-    expect(data.order.cart.lines).toHaveLength(1);
-    expect(data.order.cart.lines[0].unitPriceCents).toBe(42);
-    expect(data.order.cart.lines[0].totalCents).toBe(42 * 5000);
-    expect(data.order.cart.lines[0].title).toBe(product.title);
-    expect(data.order.cart.currency).toBe("USD");
-    expect(data.order.attribution).toEqual({ utm_source: "test" });
-    expect(typeof data.order.createdAt).toBe("string");
+    // Production Launch Session 03 §3: the response carries BAGDIRECT's own
+    // order id and NOT a copy of the order. A client-held order payload was
+    // what the old confirmation page fired its purchase event from.
+    expect(data.orderId).toMatch(/^ord_/);
+    expect(data.order).toBeUndefined();
+
+    const record = await getOrder(data.orderId);
+    expect(record?.lines).toHaveLength(1);
+    expect(record?.lines[0].unitPriceCents).toBe(42);
+    expect(record?.lines[0].totalCents).toBe(42 * 5000);
+    expect(record?.lines[0].title).toBe(product.title);
+    expect(record?.order.currency).toBe("USD");
+    expect(record?.order.attributionJson).toEqual({ utm_source: "test" });
   });
 
   it("re-prices tampered totals with 409 and the authoritative quote", async () => {
@@ -110,7 +117,8 @@ describe("POST /api/checkout", () => {
     );
     expect(res.status).toBe(200);
     const data = await res.json();
-    expect(data.order.cart.lines[0].unitPriceCents).toBe(47);
+    const record = await getOrder(data.orderId);
+    expect(record?.lines[0].unitPriceCents).toBe(47);
   });
 
   it("refuses a printed line whose artwork is only a legacy browser object URL", async () => {

@@ -25,6 +25,9 @@
   --color-ok-soft: oklch(95% 0.03 152);
   --color-error: oklch(50% 0.18 26);
   --color-error-soft: oklch(96% 0.02 26);
+  /* Warning — the third readiness state: not broken, not ready either. */
+  --color-warn: oklch(48% 0.11 75);
+  --color-warn-soft: oklch(96% 0.04 82);
   --color-focus: oklch(52% 0.2 256);
 
   /* ---- Type ---- */
@@ -75,6 +78,8 @@
   --color-ok-soft: var(--color-ok-soft);
   --color-error: var(--color-error);
   --color-error-soft: var(--color-error-soft);
+  --color-warn: var(--color-warn);
+  --color-warn-soft: var(--color-warn-soft);
   --font-display: var(--font-display);
   --font-body: var(--font-body);
   --font-mono: var(--font-mono);

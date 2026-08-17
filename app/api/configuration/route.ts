@@ -10,6 +10,8 @@ import { MAX_QUANTITY } from "@/lib/configuration/validation";
 import { parseCookies, sessionFromRequest, setSessionCookies } from "@/lib/data/request-session";
 import { getSession, SESSION_COOKIE } from "@/lib/data/session-service";
 import { configurationSchema } from "@/lib/validation/checkout";
+import { enforceRateLimit } from "@/lib/rate-limit";
+import { rateLimitedResponse } from "@/lib/rate-limit/http";
 
 /**
  * Shared-configuration persistence API (Session 06).
@@ -32,8 +34,12 @@ import { configurationSchema } from "@/lib/validation/checkout";
  * GET ?productId=… returns the session's live configuration row for restore
  * (no session is minted; unknown browsers just have no configuration).
  *
- * Rate limiting: like /api/events, this write-light intake relies on the
- * platform edge (LAUNCH_CHECKLIST) — payloads are strictly bounded here.
+ * Rate limiting (Production Launch Session 03 §15): classified
+ * PUBLIC_DB_WRITE and enforced through the centralized limiter — network
+ * scope before a session is minted, session scope after. The limits are set
+ * for a human fiddling with a configurator at full speed, so a real customer
+ * never meets them. The platform/WAF layer remains the hard outer bound
+ * (docs/OBSERVABILITY.md).
  */
 
 export const runtime = "nodejs";
@@ -73,6 +79,9 @@ function toWireConfiguration(result: Extract<ApplyConfigurationResult, { status:
 }
 
 export async function POST(req: Request) {
+  const networkLimit = await enforceRateLimit({ route: "configuration", req, scopes: ["network"] });
+  if (!networkLimit.allowed) return rateLimitedResponse(networkLimit);
+
   let raw: string;
   try {
     raw = await req.text();
@@ -99,6 +108,14 @@ export async function POST(req: Request) {
     // locally; the client silently retries on a later change.
     return NextResponse.json({ ok: false, code: "SESSION_UNAVAILABLE" }, { status: 503 });
   }
+
+  const sessionLimit = await enforceRateLimit({
+    route: "configuration",
+    req,
+    sessionId: ctx.session.id,
+    scopes: ["session"],
+  });
+  if (!sessionLimit.allowed) return rateLimitedResponse(sessionLimit);
 
   try {
     const result =

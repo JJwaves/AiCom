@@ -33,7 +33,15 @@ export const DOWNLOAD_URL_TTL_SECONDS = 10 * 60;
 export type SignedUpload = {
   url: string;
   method: "PUT";
-  /** Headers the browser MUST send verbatim — they are part of the signature. */
+  /**
+   * Headers the browser MUST send verbatim — they are part of the signature.
+   *
+   * Deliberately does NOT include Content-Length even though the signature
+   * covers it: Content-Length is a forbidden header name in `fetch`, so the
+   * browser sets it itself from the body. That is precisely what makes it a
+   * useful binding — the value cannot be forged by the caller, and a body of
+   * any other size fails the signature at the storage backend.
+   */
   headers: Record<string, string>;
   expiresInSeconds: number;
 };
@@ -46,7 +54,7 @@ export type StoredObject = { contentLength: number; contentType: string | null }
  */
 export interface ArtworkStorage {
   readonly provider: string;
-  createUploadUrl(input: { key: string; contentType: string }): Promise<SignedUpload>;
+  createUploadUrl(input: { key: string; contentType: string; contentLength: number }): Promise<SignedUpload>;
   /** Object metadata, or null when the object does not exist. */
   head(key: string): Promise<StoredObject | null>;
   /** First `length` bytes — used for server-side magic-number verification. */
@@ -63,13 +71,26 @@ export function createS3ArtworkStorage(config: S3StorageConfig): ArtworkStorage 
   return {
     provider: "s3",
 
-    async createUploadUrl({ key, contentType }): Promise<SignedUpload> {
+    async createUploadUrl({ key, contentType, contentLength }): Promise<SignedUpload> {
       const url = presignS3Url(config, {
         method: "PUT",
         key,
         expiresInSeconds: UPLOAD_URL_TTL_SECONDS,
-        // Signing content-type pins what the object is stored as.
-        signedHeaders: { "content-type": contentType },
+        /*
+         * THREE BINDINGS, all server-chosen (Production Launch Session 03 §18):
+         *   key            — in the URL path, so one URL writes ONE object
+         *   content-type   — pins what the object is stored as
+         *   content-length — pins HOW BIG it may be
+         *
+         * The size binding is the new one. Before it, a signed URL issued for
+         * a declared 40 KB logo could be used to upload 25 MB — or, with a
+         * bucket that does not enforce a maximum, considerably more — because
+         * nothing in the signature mentioned size. The server still verifies
+         * the stored object afterwards (HEAD + magic bytes), but a
+         * post-upload check is a check on storage the caller already
+         * consumed; this refuses it at the storage backend instead.
+         */
+        signedHeaders: { "content-type": contentType, "content-length": String(contentLength) },
       });
       return { url, method: "PUT", headers: { "Content-Type": contentType }, expiresInSeconds: UPLOAD_URL_TTL_SECONDS };
     },

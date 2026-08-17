@@ -4,6 +4,8 @@ import { prepareCartLineFromConfiguration } from "@/lib/commerce/cart-line";
 import { markConversationOutcomeForSession } from "@/lib/data/conversation-service";
 import { recordServerEvent } from "@/lib/data/event-service";
 import { sessionFromRequest, setSessionCookies } from "@/lib/data/request-session";
+import { enforceRateLimit } from "@/lib/rate-limit";
+import { rateLimitedResponse } from "@/lib/rate-limit/http";
 
 /**
  * AI-assisted cart-line preparation API (Session 07) — the endpoint behind
@@ -19,8 +21,10 @@ import { sessionFromRequest, setSessionCookies } from "@/lib/data/request-sessio
  * current state. STRICT body schema: a price/artwork/admin key is a loud
  * 422, never silently stripped.
  *
- * Rate limiting: bounded payloads; edge limiting is the LAUNCH_CHECKLIST
- * item (same posture as /api/configuration).
+ * Rate limiting (Production Launch Session 03 §15): PUBLIC_DB_WRITE through
+ * the centralized limiter, network scope first, session scope once identity
+ * is known. A chip tap is human-paced by construction, so the limits are far
+ * above any real interaction.
  */
 
 export const runtime = "nodejs";
@@ -34,6 +38,9 @@ const bodySchema = z.strictObject({
 });
 
 export async function POST(req: Request) {
+  const networkLimit = await enforceRateLimit({ route: "cart_line", req, scopes: ["network"] });
+  if (!networkLimit.allowed) return rateLimitedResponse(networkLimit);
+
   let raw: string;
   try {
     raw = await req.text();
@@ -58,6 +65,14 @@ export async function POST(req: Request) {
   if (!ctx) {
     return NextResponse.json({ ok: false, code: "SESSION_UNAVAILABLE" }, { status: 503 });
   }
+
+  const sessionLimit = await enforceRateLimit({
+    route: "cart_line",
+    req,
+    sessionId: ctx.session.id,
+    scopes: ["session"],
+  });
+  if (!sessionLimit.allowed) return rateLimitedResponse(sessionLimit);
 
   try {
     const result = await prepareCartLineFromConfiguration({

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { GET, POST } from "@/app/api/ai/chat/route";
-import { __resetChatRateLimitersForTests, AI_UNAVAILABLE_MESSAGE } from "@/app/api/ai/chat/shared";
+import { AI_UNAVAILABLE_MESSAGE } from "@/app/api/ai/chat/shared";
+import { __resetRateLimitsForTests } from "@/lib/rate-limit";
 import { FakeAiProvider, type FakeStep } from "@/lib/ai";
 import { __setSalesTestProvider, runSalesAgentTurn } from "@/lib/ai/agents/sales";
 import { makeSession, resetDb } from "./db-helpers";
@@ -26,7 +27,7 @@ afterEach(() => {
 });
 beforeEach(async () => {
   await resetDb();
-  __resetChatRateLimitersForTests();
+  __resetRateLimitsForTests();
   setEnv("AI_RUNTIME_ENABLED", "true");
   setEnv("AI_SALES_ENABLED", "true");
   setEnv("ANTHROPIC_API_KEY", "test-key-never-used");

@@ -4,22 +4,34 @@ import Script from "next/script";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { captureVisit } from "@/lib/attribution/attribution";
-import { grantAnalyticsConsent, track } from "@/lib/analytics/track";
+import { confirmPendingPurchase } from "@/lib/analytics/purchase";
+import { setConsent, track } from "@/lib/analytics/track";
 
 /**
  * Analytics + attribution + consent infrastructure.
  *
  * - Captures campaign attribution on every route change.
  * - Fires page_view into the dataLayer.
- * - Loads GTM / GA4 / Meta Pixel only when (a) their env IDs exist and
- *   (b) the visitor has granted consent. No dark patterns: the banner is
- *   dismissible, declines are respected, and nothing loads before consent.
- * - Server-side Meta CAPI uses META_ACCESS_TOKEN (server-only env; never
- *   referenced in client code).
+ * - Loads GTM / gtag (GA4 + Google Ads) / Meta Pixel only when (a) their env
+ *   IDs exist and (b) the visitor has granted the RELEVANT consent. No dark
+ *   patterns: the banner is dismissible, declines are respected, and nothing
+ *   loads before consent.
+ * - Consent has two axes: `analytics` gates measurement (GA4), `advertising`
+ *   gates the ad platforms (Google Ads, Meta). "Analytics only" is a real
+ *   choice, honoured all the way down to `deliverPurchaseConversions`.
+ *
+ * PENDING PURCHASE CONFIRMATION (Production Launch Session 03 §3, §4). A
+ * customer who pays on Shopify comes back to *some* BagDirect page — often
+ * the confirmation page, sometimes the home page, sometimes a product page.
+ * So the check runs here, once per mount: if a pending order exists, the
+ * SERVER is asked whether it is paid, and only a paid answer fires a
+ * purchase. Nothing about the return navigation itself is treated as
+ * payment.
  */
 
 const GTM_ID = process.env.NEXT_PUBLIC_GTM_ID;
 const GA4_ID = process.env.NEXT_PUBLIC_GA4_ID;
+const GOOGLE_ADS_ID = process.env.NEXT_PUBLIC_GOOGLE_ADS_ID;
 const META_PIXEL_ID = process.env.NEXT_PUBLIC_META_PIXEL_ID;
 
 const CONSENT_KEY = "bd_consent_v1";
@@ -28,13 +40,20 @@ type Consent = { analytics: boolean; advertising: boolean; ts: string };
 
 export function AnalyticsProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const [consent, setConsent] = useState<Consent | null | "unset">("unset");
+  const [consent, setStoredConsent] = useState<Consent | null | "unset">("unset");
 
   // Attribution capture + page_view per navigation
   useEffect(() => {
     captureVisit();
     track({ name: "page_view", params: { page_path: pathname } });
   }, [pathname]);
+
+  // Did a pending checkout become a paid order while the customer was away?
+  // Exception-safe by construction (the helper swallows its own failures):
+  // an analytics check must never break a page render.
+  useEffect(() => {
+    void confirmPendingPurchase();
+  }, []);
 
   // Restore consent choice. SSR-safe hydration: localStorage is client-only,
   // so the stored choice can only be read in an effect after mount.
@@ -44,13 +63,13 @@ export function AnalyticsProvider({ children }: { children: React.ReactNode }) {
       const raw = localStorage.getItem(CONSENT_KEY);
       if (raw) {
         const c = JSON.parse(raw) as Consent;
-        setConsent(c);
-        if (c.analytics) grantAnalyticsConsent();
+        setStoredConsent(c);
+        setConsent({ analytics: c.analytics, advertising: c.advertising });
       } else {
-        setConsent(null);
+        setStoredConsent(null);
       }
     } catch {
-      setConsent(null);
+      setStoredConsent(null);
     }
     /* eslint-enable react-hooks/set-state-in-effect */
   }, []);
@@ -62,8 +81,8 @@ export function AnalyticsProvider({ children }: { children: React.ReactNode }) {
     } catch {
       /* best effort */
     }
-    setConsent(c);
-    if (analytics) grantAnalyticsConsent();
+    setStoredConsent(c);
+    setConsent({ analytics, advertising });
   };
 
   const loadTags = consent !== "unset" && consent !== null && consent.analytics;
@@ -80,12 +99,28 @@ export function AnalyticsProvider({ children }: { children: React.ReactNode }) {
         </Script>
       )}
 
-      {/* GA4 direct (when not routed through GTM) */}
-      {loadTags && !GTM_ID && GA4_ID && (
+      {/*
+        gtag (GA4 + Google Ads), when not routed through GTM.
+
+        ONE loader for both destinations, because that is how gtag.js works:
+        the library is loaded once and each destination is `config`-ured on
+        it. Each config is gated by ITS OWN consent axis, so "Analytics only"
+        loads GA4 and never configures the Ads destination.
+
+        `window.gtag` must be a real function, not the local one inside this
+        script tag: lib/analytics/conversions.ts sends the purchase through
+        `window.gtag`.
+      */}
+      {!GTM_ID && ((loadTags && GA4_ID) || (loadAdTags && GOOGLE_ADS_ID)) && (
         <>
-          <Script src={`https://www.googletagmanager.com/gtag/js?id=${GA4_ID}`} strategy="afterInteractive" />
-          <Script id="ga4" strategy="afterInteractive">
-            {`window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','${GA4_ID}');`}
+          <Script
+            src={`https://www.googletagmanager.com/gtag/js?id=${loadTags && GA4_ID ? GA4_ID : GOOGLE_ADS_ID}`}
+            strategy="afterInteractive"
+          />
+          <Script id="gtag-init" strategy="afterInteractive">
+            {`window.dataLayer=window.dataLayer||[];window.gtag=window.gtag||function(){dataLayer.push(arguments);};gtag('js',new Date());` +
+              `${loadTags && GA4_ID ? `gtag('config','${GA4_ID}');` : ""}` +
+              `${loadAdTags && GOOGLE_ADS_ID ? `gtag('config','${GOOGLE_ADS_ID}');` : ""}`}
           </Script>
         </>
       )}

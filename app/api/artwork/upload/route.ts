@@ -7,10 +7,15 @@ import {
   safeArtworkFileName,
   validateArtworkFile,
 } from "@/lib/validation/artwork";
-import { createPendingArtwork } from "@/lib/data/artwork-service";
+import { artworkUploadAllowance } from "@/config/artwork";
+import { countArtworkForSession, createPendingArtwork } from "@/lib/data/artwork-service";
 import { newId } from "@/lib/data/id";
 import { sessionFromRequest, setSessionCookies } from "@/lib/data/request-session";
-import { createRateLimiter } from "@/lib/rate-limit";
+import { captureException } from "@/lib/observability/error-tracking";
+import { correlationIdFrom } from "@/lib/observability/correlation";
+import { logWarn } from "@/lib/observability/logger";
+import { enforceRateLimit } from "@/lib/rate-limit";
+import { rateLimitedResponse } from "@/lib/rate-limit/http";
 import { ArtworkStorageConfigurationError, requireArtworkStorage } from "@/lib/storage/artwork-storage";
 
 /**
@@ -26,6 +31,15 @@ import { ArtworkStorageConfigurationError, requireArtworkStorage } from "@/lib/s
  * learns the bucket credentials, and the row it creates is `pending_upload`:
  * unusable by commerce until POST /api/artwork/[id]/complete independently
  * verifies the stored bytes.
+ *
+ * Production Launch Session 03 adds two PRE-upload protections (§18, §19),
+ * because everything Session 02 built was a check performed AFTER the caller
+ * had already consumed storage:
+ *   - the signature now covers CONTENT-LENGTH as well as key and content
+ *     type, so a URL issued for a 40 KB logo cannot upload 25 MB;
+ *   - a per-session ALLOWANCE bounds how many objects one anonymous session
+ *     can create at all (config/artwork.ts), which rate limiting alone does
+ *     not: a limiter bounds the RATE, not the TOTAL.
  */
 
 export const runtime = "nodejs";
@@ -40,20 +54,12 @@ const bodySchema = z
 
 const MAX_BODY_BYTES = 4 * 1024;
 
-/**
- * Abuse control scoped to THIS endpoint only (§50): a signed URL is a
- * capability, so minting them must be bounded. General API rate limiting
- * remains a Launch Session 03 item.
- */
-const sessionLimiter = createRateLimiter({ capacity: 10, refillPerMinute: 10 });
-const ipLimiter = createRateLimiter({ capacity: 30, refillPerMinute: 30 });
-
-function clientIp(req: Request): string {
-  const forwarded = req.headers.get("x-forwarded-for");
-  return forwarded?.split(",")[0]?.trim() || req.headers.get("x-real-ip") || "unknown";
-}
-
 export async function POST(req: Request) {
+  const correlationId = correlationIdFrom(req);
+
+  const networkLimit = await enforceRateLimit({ route: "artwork_upload", req, scopes: ["network"] });
+  if (!networkLimit.allowed) return rateLimitedResponse(networkLimit);
+
   const contentType = req.headers.get("content-type") ?? "";
   if (!contentType.includes("application/json")) {
     return NextResponse.json({ ok: false, code: "BAD_REQUEST", error: "Expected application/json" }, { status: 415 });
@@ -98,17 +104,51 @@ export async function POST(req: Request) {
     );
   }
 
-  for (const [limiter, key] of [
-    [sessionLimiter, `s:${sessionCtx.session.id}`],
-    [ipLimiter, `i:${clientIp(req)}`],
-  ] as const) {
-    const verdict = limiter.take(key);
-    if (!verdict.allowed) {
-      return NextResponse.json(
-        { ok: false, code: "RATE_LIMITED", error: "Too many uploads. Wait a moment and try again." },
-        { status: 429, headers: { "Retry-After": String(verdict.retryAfterSeconds) } },
-      );
-    }
+  const sessionLimit = await enforceRateLimit({
+    route: "artwork_upload",
+    req,
+    sessionId: sessionCtx.session.id,
+    scopes: ["session"],
+  });
+  if (!sessionLimit.allowed) return rateLimitedResponse(sessionLimit);
+
+  // Total allowance, not rate: a patient script kept under every per-minute
+  // limit could still create unbounded objects over a day.
+  const allowance = artworkUploadAllowance();
+  const since = new Date(Date.now() - allowance.windowHours * 60 * 60 * 1000);
+  const used = await countArtworkForSession(sessionCtx.session.id, since).catch((err) => {
+    // A counting failure must not silently disable the allowance, and must
+    // not block a paying customer either. It is logged and treated as
+    // "unknown", with the rate limiter and the storage bucket's own policy
+    // still in force.
+    logWarn({
+      subsystem: "artwork",
+      event: "upload_allowance_check_failed",
+      correlationId,
+      code: "ALLOWANCE_CHECK_FAILED",
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return 0;
+  });
+  if (used >= allowance.maxPerSession) {
+    logWarn({
+      subsystem: "artwork",
+      event: "upload_allowance_exhausted",
+      correlationId,
+      code: "UPLOAD_ALLOWANCE_EXCEEDED",
+      used,
+      maxPerSession: allowance.maxPerSession,
+      windowHours: allowance.windowHours,
+    });
+    return NextResponse.json(
+      {
+        ok: false,
+        code: "UPLOAD_LIMIT_REACHED",
+        error:
+          "You've uploaded a lot of files from this browser today. Contact us and we'll take the rest of your artwork by email.",
+      },
+      { status: 429 },
+    );
   }
 
   let storage;
@@ -137,7 +177,7 @@ export async function POST(req: Request) {
 
   try {
     const [upload] = await Promise.all([
-      storage.createUploadUrl({ key, contentType: storedContentType }),
+      storage.createUploadUrl({ key, contentType: storedContentType, contentLength: parsed.data.fileSizeBytes }),
       createPendingArtwork({
         id: artworkId,
         sessionId: sessionCtx.session.id,
@@ -159,7 +199,12 @@ export async function POST(req: Request) {
     setSessionCookies(res, sessionCtx.session);
     return res;
   } catch (err) {
-    console.error("[artwork] failed to prepare upload", err);
+    captureException(err, {
+      subsystem: "artwork",
+      event: "upload_preparation_failed",
+      correlationId,
+      code: "STORAGE_ERROR",
+    });
     return NextResponse.json(
       { ok: false, code: "STORAGE_ERROR", error: "We couldn't start that upload. Try again in a moment." },
       { status: 502 },

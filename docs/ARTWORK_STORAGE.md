@@ -363,13 +363,75 @@ redaction · SigV4 URL shape and determinism.
 - **Quote artwork is metadata-only** (§13).
 - **Object deletion is deferred** — privacy redaction nulls the key but leaves
   the object (§11, §12).
-- **Size is enforced after upload, not during.** The signed PUT does not sign
-  `Content-Length`, so a client could upload more than it declared; the
-  completion check catches it, deletes the object and rejects the artwork. A
-  bucket lifecycle rule or a signed content-length is the tightening step.
+- ~~Size is enforced after upload, not during.~~ **Closed in Production Launch
+  Session 03 (§18):** the signed PUT now signs `Content-Length` as well as the
+  key and content type, so a URL issued for a 40 KB logo cannot upload 25 MB.
+  Content-Length is a forbidden header name in `fetch`, so the browser sets it
+  from the body — which is what makes it a binding the caller cannot forge.
+  The post-upload HEAD and magic-byte check remain as defence in depth.
 - **No virus scanning.** Format verification is not malware detection.
 - **No image dimension or DPI check.** Whether a logo is print-quality is a
   human proof-review step, and the proof workflow is not automated.
 - **No thumbnail or preview generation** — the uploader shows a filename, not
   a rendered preview, since this session removed the object URL that used to
   provide one.
+
+
+---
+
+## 16. Upload allowances and durability (Production Launch Session 03)
+
+### Per-session allowance (§19)
+
+Rate limiting bounds how FAST a caller can mint signed upload URLs. It does
+not bound how MANY objects one anonymous session can create over a day — a
+patient script staying under every per-minute limit could still fill a bucket.
+So there is a separate total allowance:
+
+```bash
+ARTWORK_MAX_UPLOADS_PER_SESSION=25   # default
+ARTWORK_UPLOAD_WINDOW_HOURS=24       # default
+```
+
+Every artwork row counts, including `rejected` and `abandoned` ones: they
+consumed a signed URL and may have put bytes in the bucket.
+
+Deliberately generous. The default is sized from real B2B behaviour — a
+multi-line order with a logo per line, plus re-exports, plus failed attempts —
+and then multiplied. A blocked customer is a lost order; an over-uploading one
+costs fractions of a cent per file. Exceeding it returns
+`UPLOAD_LIMIT_REACHED` with copy that tells the customer to email the rest of
+their artwork, not a blank failure.
+
+If the allowance check itself fails (a database problem), it is logged and
+treated as "unknown" rather than blocking a paying customer — the rate limiter
+and the bucket's own policy still apply.
+
+### Rate limiting (§15)
+
+| Route | Class | Session | Network |
+| --- | --- | --- | --- |
+| `/api/artwork/upload` | PUBLIC_EXTERNAL_COST | 10/min | 30/min |
+| `/api/artwork/[id]/complete` | PUBLIC_LOW_COST | 60/min | 180/min |
+
+Minting a signed URL is minting a capability, so it is the tighter of the two.
+Verification is a HEAD plus a 16-byte ranged GET.
+
+### Durability — OWNER VERIFICATION REQUIRED (§52)
+
+**S3-compatible storage being durable does not automatically satisfy a
+business backup policy, and BagDirect cannot query your bucket's settings.**
+
+For soft launch, durable object storage is enough. What the owner should
+confirm and record:
+
+- **Versioning enabled** on the bucket, so an accidental overwrite or delete
+  is recoverable.
+- **Lifecycle rules** consistent with the retention decision in §12.
+- **Cross-region replication is DEFERRED**, explicitly. It is a real cost and
+  a real decision, not an oversight — a single-region bucket losing a region
+  would lose in-flight artwork for unfulfilled orders. Revisit when order
+  volume makes that loss material.
+
+Launch readiness reports this as `ARTWORK_DURABILITY`, owner-verified, and it
+never self-resolves.

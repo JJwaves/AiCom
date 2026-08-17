@@ -8,6 +8,7 @@ import {
   markOrderCancelled,
   markOrderPaid,
   recordOrderRefund,
+  setOrderRefundTotal,
 } from "@/lib/data/order-service";
 import { markConverted } from "@/lib/data/session-service";
 import { listCatalogProducts } from "@/lib/commerce/catalog";
@@ -52,6 +53,14 @@ export type ReconciliationOutcome = {
   outcome: "processed" | "ignored";
   orderId: string | null;
   detail: string;
+  /**
+   * Did this call actually CHANGE BagDirect state? (Production Launch
+   * Session 03 §27.) The webhook path does not need it — Shopify only asks
+   * "did you handle it" — but a reconciliation sweep must be able to report
+   * "inspected 40 orders, repaired 1", and "processed" alone cannot tell
+   * a repair from a no-op confirmation that everything was already correct.
+   */
+  changed?: boolean;
 };
 
 /** Resolve the BagDirect order this Shopify order belongs to. */
@@ -98,6 +107,7 @@ export async function reconcileOrderCreated(payload: ShopifyOrderPayload): Promi
     return {
       outcome: "processed",
       orderId: record.order.id,
+      changed: false,
       detail: `linked to Shopify order ${payload.providerOrderId} (financial_status=${payload.financialStatus ?? "unknown"}, not yet paid)`,
     };
   }
@@ -135,6 +145,7 @@ async function applyPayment(payload: ShopifyOrderPayload, orderId: string): Prom
     return {
       outcome: "processed",
       orderId,
+      changed: false,
       detail: `already paid (status=${result.order.status}) — no duplicate purchase event`,
     };
   }
@@ -171,7 +182,7 @@ async function applyPayment(payload: ShopifyOrderPayload, orderId: string): Prom
     );
   }
 
-  return { outcome: "processed", orderId, detail: `paid — purchase_completed recorded once` };
+  return { outcome: "processed", orderId, changed: true, detail: `paid — purchase_completed recorded once` };
 }
 
 /**
@@ -227,6 +238,7 @@ export async function reconcileOrderCancelled(payload: ShopifyOrderPayload): Pro
   return {
     outcome: "processed",
     orderId: record.order.id,
+    changed: result.transitioned,
     detail: result.transitioned
       ? "cancelled — excluded from revenue from now on"
       : "already cancelled — no change",
@@ -254,5 +266,120 @@ export async function reconcileRefundCreated(payload: ShopifyRefundPayload): Pro
     detail: result.fullyRefunded
       ? `fully refunded (${result.order.refundedTotalCents}c) — excluded from revenue`
       : `partial refund recorded (${result.order.refundedTotalCents}c of ${result.order.totalCents}c) — order remains paid`,
+  };
+}
+
+
+/* ------------------------------------------------------------------ */
+/* Reconciliation sweep (Production Launch Session 03 §24, §25, §28)   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A provider-order SNAPSHOT: what Shopify says an order looks like right
+ * now, as opposed to a webhook's "here is a thing that just happened".
+ */
+export type ProviderOrderSnapshot = {
+  providerOrderId: string;
+  bagdirectOrderId: string | null;
+  financialStatus: string | null;
+  cancelledAt: Date | null;
+  refundedTotalCents: number;
+  currency: string | null;
+  totalCents: number | null;
+};
+
+/**
+ * Bring BagDirect's state for ONE provider order into agreement with the
+ * provider's current snapshot.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THIS IS NOT A SECOND ORDER-PROCESSING IMPLEMENTATION (§25)
+ * ═══════════════════════════════════════════════════════════════════════════
+ * It routes into exactly the same primitives the webhook path uses —
+ * `applyPayment` (and therefore the ONE `transitioned` flag that fires
+ * `purchase_completed`), `markOrderCancelled`, and the refund total. A
+ * repaired order is indistinguishable from one that arrived by webhook,
+ * because it went through the same code.
+ *
+ * IDEMPOTENT BY CONSTRUCTION (§28): every primitive it calls is a no-op when
+ * the state already matches. An order that a webhook already processed is
+ * inspected, found correct, and reported as `changed: false` — no duplicate
+ * purchase event, no duplicate order, no duplicate refund, no re-derived
+ * attribution (attribution lives on the row written at checkout and is never
+ * rebuilt here).
+ */
+export async function reconcileOrderSnapshot(snapshot: ProviderOrderSnapshot): Promise<ReconciliationOutcome> {
+  const payload: ShopifyOrderPayload = {
+    providerOrderId: snapshot.providerOrderId,
+    name: null,
+    currency: snapshot.currency,
+    totalCents: snapshot.totalCents,
+    financialStatus: snapshot.financialStatus,
+    cancelledAt: snapshot.cancelledAt,
+    bagdirectOrderId: snapshot.bagdirectOrderId,
+    bagdirectSessionId: null,
+    attribution: {},
+  };
+
+  const record = await resolveOrder(payload);
+  if (!record) {
+    // An order placed directly in the Shopify admin, or one whose correlation
+    // attribute was stripped. Reported, never fabricated into a BagDirect
+    // order with invented configuration — the same refusal the webhook path
+    // makes, for the same reason.
+    return {
+      outcome: "ignored",
+      orderId: null,
+      changed: false,
+      detail: `Shopify order ${snapshot.providerOrderId} has no matching BagDirect order (placed outside BagDirect checkout)`,
+    };
+  }
+
+  const orderId = record.order.id;
+  const attach = await attachProviderOrderId({ orderId, providerOrderId: snapshot.providerOrderId });
+  if (attach.conflict) {
+    return {
+      outcome: "ignored",
+      orderId,
+      changed: false,
+      detail: `BagDirect order ${orderId} is already linked to a different Shopify order — refusing to relink`,
+    };
+  }
+  let changed = attach.linked;
+  const details: string[] = [];
+
+  // Payment first: a cancelled-after-payment order must still have fired its
+  // purchase, and a refunded order was paid before it was refunded.
+  if (isPaidFinancialStatus(snapshot.financialStatus)) {
+    const paid = await applyPayment(payload, orderId);
+    changed = changed || paid.changed === true;
+    details.push(paid.detail);
+  }
+
+  if (snapshot.refundedTotalCents > 0) {
+    const refund = await setOrderRefundTotal({ orderId, refundedTotalCents: snapshot.refundedTotalCents });
+    if (refund?.changed) {
+      changed = true;
+      details.push(
+        refund.fullyRefunded
+          ? `refund total set to ${refund.order.refundedTotalCents}c — fully refunded, excluded from revenue`
+          : `refund total set to ${refund.order.refundedTotalCents}c (partial)`,
+      );
+    }
+  }
+
+  if (snapshot.cancelledAt) {
+    const cancelled = await markOrderCancelled({ orderId, cancelledAt: snapshot.cancelledAt });
+    if (cancelled?.transitioned) {
+      changed = true;
+      details.push("cancelled — excluded from revenue from now on");
+    }
+  }
+
+  return {
+    outcome: "processed",
+    orderId,
+    changed,
+    detail: details.length > 0 ? details.join("; ") : "already consistent — nothing to repair",
   };
 }

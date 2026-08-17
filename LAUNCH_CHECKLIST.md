@@ -3,8 +3,15 @@
 Work through in order. Items marked ⛔ are hard blockers — the site must not
 take real traffic until they pass.
 
+> **Start here:** `/admin/launch-readiness` computes most of this list from
+> the running system, so it cannot drift from what production actually does.
+> This document covers the items no code can check — the ones that need a
+> person to look at Shopify, a database provider, or a monitoring dashboard.
+> `GET /api/health/ready?verbose=1` returns the same verdicts as JSON.
+
 ## Infrastructure
-- [ ] ⛔ Domain connected (`config/business.ts` → `DOMAIN` matches DNS)
+- [ ] ⛔ `NEXT_PUBLIC_SITE_DOMAIN` set to the live domain (BUILD-TIME — requires a redeploy). Unset, robots.txt refuses crawling entirely rather than advertising a sitemap at a placeholder domain
+- [ ] ⛔ Domain connected and DNS resolving
 - [ ] ⛔ SSL active (platform-managed)
 - [ ] Security headers checked (CSP, X-Frame-Options, Referrer-Policy)
 - [ ] 404 page tested (`/definitely-not-a-page`)
@@ -15,7 +22,9 @@ take real traffic until they pass.
 - [ ] ⛔ Verified the deployed environment is NOT on the embedded PGlite fallback: with `DATABASE_URL` unset the production app must fail loudly at first database use (actionable `[db] DATABASE_URL is not set` error in server logs) — never silently store data on instance disk
 - [ ] Migration process documented in the deploy pipeline (schema changes: `npm run db:generate` in development → review SQL in `db/migrations/` → `npm run db:migrate` at deploy)
 - [ ] `npm run db:seed` never pointed at production (it writes DEMO-labeled data and refuses external databases unless forced — leave it that way)
-- [ ] Database backups/point-in-time recovery enabled on the production Postgres
+- [ ] ⛔ Pooled / serverless-safe connection string in use (Neon `-pooler`, Supabase port 6543 + `pgbouncer=true`, PgBouncer, or the platform's pooled URL). A direct connection exhausts `max_connections` under ordinary serverless traffic, and the symptom is intermittent 503s that look like an application bug
+- [ ] ⛔ Database backups / point-in-time recovery enabled on the production Postgres — **BagDirect does not back up the database and cannot query whether you do**. Record the retention window
+- [ ] ⛔ A restore has actually been TESTED into a scratch environment (an untested backup is a hypothesis)
 
 ## AI Packaging Expert (only if enabling AI_SALES for customers)
 - [ ] ⛔ Edge/platform rate limiting in front of `/api/ai/chat` (and the S07 companion `/api/cart/line`) — the built-in token buckets are per-instance application guards, not a distributed limiter (docs/AI_SALES_AGENT.md)
@@ -162,16 +171,43 @@ Architecture: `docs/ARTWORK_STORAGE.md`.
 - [ ] Factory information verified on /about
 - [ ] Real product images installed (all `images[].src` slots in `config/products.ts`)
 - [ ] Factory photos installed (FactoryBand slots)
-- [ ] ⛔ Fake/demo content removed — search the repo for "demo", "placeholder", "[TO BE PROVIDED]", "REPLACE_ME"
+- [ ] ⛔ Fake/demo content removed — search the repo for "demo", "placeholder", "[TO BE PROVIDED]", "REPLACE_ME". `/admin/launch-readiness` scans customer-facing business configuration for `[TO BE PROVIDED]` and BLOCKS on any that a customer would see
 
-## Analytics & ads
-- [ ] GA4 verified (page_view + ecommerce events in DebugView)
-- [ ] Google Ads purchase conversion verified
-- [ ] Enhanced Conversions verified
-- [ ] Meta Pixel verified (Events Manager test events)
-- [ ] Meta CAPI verified (server events arriving, `META_ACCESS_TOKEN` server-only)
-- [ ] ⛔ Purchase event deduplication verified (one purchase → one event in each platform)
-- [ ] Consent banner verified: declining blocks tags; accepting loads them
+## Analytics & ads (Session 03 — docs/ANALYTICS_PRODUCTION.md)
+> Every id below is **build-time inlined**: changing one requires a redeploy.
+> A purchase fires ONLY from a server-confirmed PAID order — never from a
+> created checkout, a redirect, `?placed=1`, or the AI.
+- [ ] `NEXT_PUBLIC_GA4_ID` (or `NEXT_PUBLIC_GTM_ID`) set; GA4 verified in DebugView
+- [ ] ⛔ If using GTM: GA4 and Google Ads tags configured **inside GTM** to trigger on the `purchase` dataLayer event (there is no `window.gtag` in a GTM install)
+- [ ] `NEXT_PUBLIC_GOOGLE_ADS_ID` **and** `NEXT_PUBLIC_GOOGLE_ADS_PURCHASE_LABEL` both set — an id without a label cannot address a conversion and is reported as not configured
+- [ ] Google Ads conversion verified in Goals → Conversions (tag diagnostic updates faster than the conversion count)
+- [ ] Google Ads tracking template / final URL suffix set so campaign identity reaches first-party attribution: `utm_source=google&utm_medium=cpc&utm_campaign={campaignid}&utm_content={creative}&utm_term={keyword}` — auto-tagging (`gclid`) stays ON
+- [ ] Meta Pixel verified (Events Manager → Test Events), if Meta is in scope
+- [ ] Meta Conversions API — **DEFERRED, not implemented.** The Pixel emits an `eventID` for future dedup; `META_ACCESS_TOKEN`/`META_DATASET_ID` are read by no code today
+- [ ] ⛔ Purchase deduplication verified: refresh the confirmation page and confirm no second purchase in any platform
+- [ ] ⛔ Understood and accepted: browser conversion tracking **undercounts** — a buyer who closes the tab on Shopify's page never fires it. BagDirect's own `purchase_completed` is complete regardless. To close the gap, configure Shopify's own customer-events tracking against the SAME conversion action
+- [ ] Consent banner verified: declining blocks every tag; "Analytics only" loads GA4 and NOT the ad platforms
+
+## Monitoring & alerting (Session 03 — docs/OBSERVABILITY.md)
+- [ ] Error tracking configured: `SENTRY_DSN` **or** `ERROR_WEBHOOK_URL`. Unconfigured, server errors reach the platform log only
+- [ ] ⛔ **Alerts configured in your monitoring provider.** Nothing in this repository can guarantee a person reads an error. At minimum: checkout error spike, `COMMERCE_NOT_CONFIGURED`, Shopify webhook failures, `WEBHOOK_GAP_REPAIRED`, database failures, readiness 503, AI provider failure / budget exhausted, artwork upload failures
+- [ ] Uptime monitor pointed at `/api/health/live` (NOT `/api/health/ready` — a readiness failure should page, not restart)
+- [ ] `/api/health/ready` returns 200 in production
+- [ ] `RATE_LIMIT_IP_SALT` set to a long random string (unset = ephemeral per-process key; network-scoped durable limits degrade to per-instance)
+- [ ] `RATE_LIMIT_DURABLE` left unset or `true` in production
+- [ ] ⛔ **Platform / WAF rate-limit rules configured** (Vercel Firewall or your CDN). This is the only layer that refuses a request before it costs a function invocation; nothing in the repository substitutes for it. Suggested rules in docs/OBSERVABILITY.md §6
+
+## Operations (Session 03 — docs/PRODUCTION_OPERATIONS.md)
+- [ ] `HUMAN_HANDOFF_WEBHOOK_URL` set (Slack workflow, Zapier/Make, email automation, helpdesk intake). Unset, escalations are stored at `/admin/handoffs` but **nobody is notified**
+- [ ] `QUOTE_WEBHOOK_URL` set — otherwise a B2B quote request is logged and never read
+- [ ] `/admin/handoffs` reachable and a test escalation delivered end to end
+- [ ] `read_orders` scope added to the Shopify Admin token (required by reconciliation; reinstalling the app issues a NEW token — update `SHOPIFY_ADMIN_API_TOKEN` and redeploy)
+- [ ] Reconciliation run once from `/admin/launch-readiness`; confirmed it repairs zero orders in a healthy system
+- [ ] ⛔ **One real (or Shopify test-mode) order placed end to end**: shipping shown, tax shown, payment completes, webhook arrives, order becomes `paid`, exactly one `purchase_completed`, artwork attached to the right order line
+- [ ] ⛔ **One refund or cancellation performed in Shopify** and confirmed to reconcile in BagDirect
+- [ ] ⛔ Shopify US shipping profile verified as covering the products
+- [ ] ⛔ Shopify tax settings verified
+- [ ] Feature flags set to the soft-launch matrix (docs/PRODUCTION_OPERATIONS.md §10). Note: `EXPERIMENT_ENGINE_ENABLED` changes render mode — toggling it requires a **rebuild**
 
 ## Search
 - [ ] Google Search Console connected + domain verified

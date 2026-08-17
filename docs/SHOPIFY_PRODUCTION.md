@@ -465,12 +465,24 @@ Server-only. Never `NEXT_PUBLIC_*`, never committed, never logged.
 | variable | purpose | required for |
 |---|---|---|
 | `SHOPIFY_STORE_DOMAIN` | `your-store.myshopify.com` | checkout |
-| `SHOPIFY_ADMIN_API_TOKEN` | Admin API access token (`shpat_…`), scope `write_draft_orders` | checkout |
+| `SHOPIFY_ADMIN_API_TOKEN` | Admin API access token (`shpat_…`), scopes `write_draft_orders` **and `read_orders`** | checkout + reconciliation |
 | `SHOPIFY_WEBHOOK_SECRET` | webhook signing secret | order reconciliation |
 | `SHOPIFY_API_VERSION` | optional pin | — |
 
 Plus `config/shopify.ts → SHOPIFY_MERCHANDISE_MAP`: one Shopify variant GID
 per purchasable configuration.
+
+**`read_orders` was added in Production Launch Session 03**, for the
+reconciliation sweep (§16) and for nothing else. It is the minimum that
+feature needs: not `write_orders`, not `read_customers`, not `read_products`,
+not `read_all_orders` (which is a separately-approved scope for orders older
+than 60 days, and is not required). If the scope is missing, the sweep records
+a `failed` run naming the reason — it never degrades into "found nothing",
+which would read as "everything is fine".
+
+Changing scopes on a custom app requires reinstalling it in the Shopify admin,
+which issues a NEW access token. Update `SHOPIFY_ADMIN_API_TOKEN` and
+redeploy.
 
 `SHOPIFY_ADMIN_API_TOKEN` was present but unused before this session; it is
 now genuinely required, for draft-order creation. There is no Storefront
@@ -534,7 +546,73 @@ payment). Do not run against live payments.
   store must be configured for the currency; the cart already refuses mixed
   currencies.
 - **No automatic webhook registration** — an operational step (§13).
-- **Scheduled reconciliation does not exist.** If a webhook is permanently
-  lost (endpoint down past Shopify's retry window), the order stays
-  `pending_payment` and must be reconciled by hand. A periodic
-  `orders since X` sweep is the obvious next hardening step.
+- **Reconciliation is manual, not scheduled.** Production Launch Session 03
+  added the sweep itself (§16 below); what does not exist is a cron that runs
+  it. That is deliberate — no scheduler was introduced this session — but it
+  does mean a lost webhook is only recovered when someone presses the button.
+
+
+---
+
+## 16. Lost-webhook reconciliation (Production Launch Session 03 §24–§28)
+
+### The failure this exists for
+
+Shopify retries a failed webhook for roughly 48 hours and then stops. An
+endpoint that was down for that whole window — a bad deploy, an expired
+certificate, a database outage — loses that payment's notification
+permanently. The customer paid. Shopify knows. The BagDirect order sits at
+`pending_payment` forever: excluded from revenue, missing from fulfilment, and
+no amount of waiting fixes it, because nothing is going to knock again.
+
+### How to run it
+
+`/admin/launch-readiness` → **Reconcile Shopify orders**, or POST to
+`/api/admin/commerce/reconcile` with `{"lookbackHours": 72}` (1 hour to 14
+days; 72 by default). Authenticated admin only, same-origin, JSON content
+type.
+
+### What it does
+
+1. Reads a bounded window of Shopify orders via one GraphQL **query**
+   (`lib/commerce/shopify-orders.ts` — no mutation is defined there and none
+   is importable from it, asserted structurally).
+2. For each one, calls `reconcileOrderSnapshot`, which routes into **the same
+   primitives the webhook path uses** — including the single row-locked
+   `transitioned` flag that fires `purchase_completed`. There is no second
+   order-processing implementation, so a repaired order is indistinguishable
+   from a webhook one.
+3. Records the run: range, orders inspected, repairs performed, already
+   consistent, failures, truncation, status.
+
+### Idempotence is the safety property
+
+Every primitive it calls is a no-op when the state already matches:
+
+| Situation | Result |
+| --- | --- |
+| Webhook already processed the order | `alreadyConsistent`, nothing changes, no duplicate purchase event |
+| Sweep run twice over the same window | Second run repairs nothing |
+| Webhook arrives after a repair | `transitioned: false`, nothing fires |
+| Order placed in the Shopify admin (no `_bd_order_id`) | Reported `unmatched`; never fabricated into a BagDirect order with invented configuration |
+
+**Refund totals are SET, not accumulated.** `recordOrderRefund` adds, which is
+right for a `refunds/create` webhook (each delivery is one new refund event).
+The sweep sees Shopify's `totalRefunded` — a running total — so it uses
+`setOrderRefundTotal`, which writes the absolute figure and never decreases
+it. Adding a cumulative figure to an existing total is exactly the
+double-counting bug a naive implementation would ship.
+
+### Reading a run
+
+- `success` — the window was fully inspected and everything is consistent or
+  repaired. **A run that repairs zero orders is the healthy result.**
+- `partial` — some orders failed, or the window was `truncated` (larger than
+  one sweep covers). Run it again for a shorter window.
+- `failed` — Shopify could not be read at all. `PROVIDER_READ_FAILED` with the
+  reason, most often a missing `read_orders` scope.
+- `not_configured` — Shopify is not configured; there is nothing to
+  reconcile.
+
+Repairs log `code:WEBHOOK_GAP_REPAIRED`. **Alert on it**: a repair means a
+payment reached you only because a human pressed a button.

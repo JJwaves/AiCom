@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useCart } from "@/lib/cart/cart-context";
-import { persistMockOrderPayload, submitCartCheckout } from "@/lib/cart/checkout-client";
+import { submitCartCheckout } from "@/lib/cart/checkout-client";
 import { quoteConfiguration } from "@/modules/pricing";
 import { track } from "@/lib/analytics/track";
 import { formatMoney, formatQty, formatUnitPrice } from "@/lib/format";
@@ -61,9 +61,9 @@ export function CartClient({ products }: { products: Product[] }) {
 
     switch (result.kind) {
       case "mock-order":
-        // Persist the SERVER-priced order for the demo confirmation page.
-        persistMockOrderPayload(result.orderId, result.order);
-        router.push(`/order-status?order=${result.orderId}&placed=1`);
+        // No `placed=1`: the confirmation page asks the SERVER whether this
+        // order is paid (§4). A query parameter is not payment.
+        router.push(result.orderId ? `/order-status?order=${result.orderId}` : "/order-status");
         return;
       case "redirect":
         window.location.href = result.url;

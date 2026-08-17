@@ -1186,3 +1186,138 @@ export const googleAdsReports = pgTable(
   },
   (t) => [index("google_ads_reports_period_idx").on(t.periodDays, t.generatedAt)],
 );
+
+/* ------------------------------------------------------------------ */
+/* Operational hardening (Production Launch Session 03)                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Durable rate-limit counters (Session 03 spec §14).
+ *
+ * The per-instance token bucket in `lib/rate-limit/bucket.ts` cannot be
+ * globally authoritative on a serverless platform: N instances mean N
+ * independent allowances. Rather than introduce Redis (new vendor, new
+ * credential, new failure mode) this uses the Postgres the platform already
+ * requires, as a FIXED-WINDOW counter — one atomic upsert per checked
+ * request, no read-modify-write race.
+ *
+ * PRIVACY: `bucketKey` embeds a session id or a KEYED HMAC of the network
+ * identity (lib/rate-limit/identity.ts). A raw IP address is never written
+ * here. Rows carry `expiresAt` and are pruned opportunistically — this table
+ * is ephemeral operational state, not a record of who visited.
+ */
+export const rateLimitCounters = pgTable(
+  "rate_limit_counters",
+  {
+    /** "<route>:<scope>:<session id | network digest>". Never a raw IP. */
+    bucketKey: text("bucket_key").notNull(),
+    /** Start of the fixed window this counter belongs to. */
+    windowStart: ts("window_start").notNull(),
+    count: integer("count").notNull().default(0),
+    /** When this row stops being meaningful and may be deleted. */
+    expiresAt: ts("expires_at").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.bucketKey, t.windowStart] }),
+    index("rate_limit_counters_expiry_idx").on(t.expiresAt),
+  ],
+);
+
+/**
+ * Human handoffs from the AI Sales Agent (Session 03 spec §20–§23).
+ *
+ * Session 05 persisted an escalation as a `system` message on the
+ * conversation and stopped there: queryable, but nobody was told. This table
+ * makes the handoff an OPERATIONAL OBJECT with a delivery lifecycle, so
+ * "a human was notified" is a recorded fact rather than an assumption.
+ *
+ * PERSISTENCE IS PRIMARY (spec §22). A delivery failure never loses the
+ * handoff: the row exists first, delivery is attempted after, and a failed
+ * attempt is recorded on the row rather than thrown away. The customer is
+ * only ever told their request was RECORDED — never that a human has been
+ * notified, because that would be a claim about a system BagDirect does not
+ * own.
+ *
+ * The conversation reference (not a transcript copy) is what links a handoff
+ * back to the full context; only a concise summary and voluntarily-supplied
+ * contact details live here.
+ */
+export const humanHandoffs = pgTable(
+  "human_handoffs",
+  {
+    id: text("id").primaryKey(),
+    conversationId: text("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    sessionId: text("session_id").references(() => sessions.id, { onDelete: "set null" }),
+    customerId: text("customer_id").references(() => customers.id, { onDelete: "set null" }),
+    /** One of ESCALATION_REASONS (lib/ai/tools/escalation-tools.ts). */
+    reason: text("reason").notNull(),
+    /** Concise requirement summary so the customer never repeats themselves. */
+    requirementSummary: text("requirement_summary").notNull(),
+    customerQuestion: text("customer_question"),
+    /** Contact details ONLY when the customer volunteered them in conversation. */
+    contactName: text("contact_name"),
+    contactEmail: text("contact_email"),
+    contactPhone: text("contact_phone"),
+    productId: text("product_id"),
+    /** pending | delivered | failed | not_configured */
+    deliveryStatus: text("delivery_status").notNull().default("pending"),
+    deliveryAttempts: integer("delivery_attempts").notNull().default(0),
+    lastAttemptAt: ts("last_attempt_at"),
+    deliveredAt: ts("delivered_at"),
+    /** Safe, redacted failure description. Never a credential, never a full response body. */
+    lastError: text("last_error"),
+    /** Owner workflow state, set from the admin surface. */
+    handledAt: ts("handled_at"),
+    handledBy: text("handled_by"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index("human_handoffs_status_idx").on(t.deliveryStatus, t.createdAt),
+    index("human_handoffs_conversation_idx").on(t.conversationId),
+  ],
+);
+
+/**
+ * Shopify reconciliation runs (Session 03 spec §24–§27).
+ *
+ * A webhook is authoritative but its DELIVERY is not guaranteed: an endpoint
+ * that was down for its whole retry window loses that payment's
+ * notification permanently, and the BagDirect order stays `pending_payment`
+ * forever while the customer's money is gone from their account. This table
+ * records each explicit repair sweep: what range was inspected, how much was
+ * found, what was repaired, and what failed.
+ *
+ * Operational metadata only. No Shopify credential, no payment data.
+ */
+export const commerceReconciliationRuns = pgTable(
+  "commerce_reconciliation_runs",
+  {
+    id: text("id").primaryKey(),
+    provider: text("provider").notNull().default("shopify"),
+    /** Inclusive bounds of the provider-side window inspected. */
+    rangeStart: ts("range_start").notNull(),
+    rangeEnd: ts("range_end").notNull(),
+    startedAt: ts("started_at").notNull().defaultNow(),
+    completedAt: ts("completed_at"),
+    /** running | success | partial | failed | not_configured */
+    status: text("status").notNull().default("running"),
+    ordersInspected: integer("orders_inspected").notNull().default(0),
+    /** Orders whose BagDirect state was actually changed by this run. */
+    repairsPerformed: integer("repairs_performed").notNull().default(0),
+    /** Orders inspected that were already correct — the healthy steady state. */
+    alreadyConsistent: integer("already_consistent").notNull().default(0),
+    failures: integer("failures").notNull().default(0),
+    /** True when a page/row cap stopped the sweep: the window is INCOMPLETE. */
+    truncated: boolean("truncated").notNull().default(false),
+    errorCode: text("error_code"),
+    /** Redacted, display-safe. Never contains a token. */
+    errorMessage: text("error_message"),
+    /** "admin:<username>" — server-derived, never client-supplied. */
+    triggeredBy: text("triggered_by").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("commerce_reconciliation_runs_status_idx").on(t.status, t.startedAt)],
+);

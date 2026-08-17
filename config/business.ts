@@ -1,15 +1,25 @@
+import { metadataDomain } from "./site";
+
 /**
  * Central business configuration.
  *
  * Every value here is editable without touching frontend components.
  * Values marked [TO BE PROVIDED] are placeholders — see BUSINESS_CONFIG_TODO.md.
+ *
+ * `DOMAIN` is no longer a literal (Production Launch Session 03 §42): it
+ * resolves from NEXT_PUBLIC_SITE_DOMAIN via config/site.ts, and falls back to
+ * the placeholder ONLY so `next build` keeps working with owner configuration
+ * missing. Use `siteDomain()` / `siteUrl()` when you need to know whether a
+ * real domain exists; use this when a string is structurally required.
  */
 
 export const BUSINESS = {
   BRAND_NAME: "Your Brand",
   /** Short display name used in headers/footers until the real brand exists. */
   DISPLAY_NAME: "BagDirect",
-  DOMAIN: "example.com",
+  get DOMAIN(): string {
+    return metadataDomain();
+  },
   TAGLINE: "Custom Takeout Bags. Factory Direct.",
   FACTORY_LOCATION: "[TO BE PROVIDED]",
   SHIPPING_ORIGIN: "[TO BE PROVIDED]",

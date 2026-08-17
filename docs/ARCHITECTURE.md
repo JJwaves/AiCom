@@ -794,3 +794,129 @@ covers S3, R2, B2, Spaces and MinIO. SigV4 presigning is ~80 lines of
 need, and a generic storage abstraction over one backend is exactly the
 over-engineering CLAUDE.md forbids. The `ArtworkStorage` port exists solely so
 tests can inject a fake — no test touches the network.
+
+---
+
+## Production Launch Session 03 — Operational Hardening (2026-08-16)
+
+**Decision 72. The purchase event comes from the PAID ORDER, and the browser
+is asked nothing.** The confirmation page used to fire `purchase` when the URL
+said `?placed=1` and a matching object sat in `sessionStorage`. Both are
+browser state: the parameter could be typed, the stored object was written
+*before* any payment existed, and a customer who abandoned the Shopify
+checkout could still reach a page reporting a sale. Now a session-scoped
+server endpoint answers one question — "is this order, which belongs to my
+session, paid?" — from the row an HMAC-verified webhook wrote. The browser
+keeps only an order ID, labelled as a PENDING INTENTION, and learns nothing
+about payment that the server did not tell it.
+
+**Decision 73. Analytics delivery is one-way and cannot touch commerce.**
+GA4, Google Ads and Meta receive COPIES of a transaction whose truth already
+exists in `purchase_completed`. The conversion module imports no order, no
+checkout and no database code (asserted structurally); every vendor branch is
+individually try/caught; and if all three fail the order is still complete,
+paid, fulfilled and counted. The reverse — an analytics failure rolling back
+or failing a payment — is unrepresentable, not merely avoided.
+
+**Decision 74. Rate limiting is three layers, and the code owns only two of
+them.** A per-instance token bucket (cheap, always available, refuses obvious
+abuse before any I/O) sits over a durable Postgres fixed-window counter (so a
+limit means the same thing across instances). The outermost layer — platform
+or WAF — is OWNER CONFIGURATION and is the only one that can refuse a request
+before it costs a function invocation. The repository never claims a
+per-instance memory limiter is globally sufficient on Vercel; that claim is
+exactly why the durable layer exists, and the platform layer is a documented
+launch requirement rather than an implied one.
+
+**Decision 75. Postgres, not Redis, for the shared counter.** Production
+already requires a Postgres, so a shared counter costs one table and zero new
+vendors, credentials, failure modes or bills. A fixed window is one atomic
+`INSERT … ON CONFLICT DO UPDATE … RETURNING`, so concurrent instances cannot
+both read "under the limit"; the known 2x-across-a-boundary cost is irrelevant
+because the token bucket in front already smooths bursts. A store outage
+degrades to the per-instance limit and is logged — there is no code path in
+which a database failure grants unlimited AI spend.
+
+**Decision 76. A raw IP is never persisted.** Rate limiting needs to tell two
+callers apart, not to know who they are, so the network identity is reduced to
+a keyed HMAC the moment it is read; only the digest reaches a counter key, a
+log line or the durable store. With `RATE_LIMIT_IP_SALT` unset the key is
+ephemeral per process — network-scoped limits then degrade to per-instance,
+and nothing persisted can be correlated to a person even in principle. Both
+modes are documented rather than one being quietly assumed.
+
+**Decision 77. Persistence is primary for a human handoff; delivery is
+not.** The handoff row is written before any notification is attempted, and a
+delivery failure updates that row rather than throwing. So the assistant may
+truthfully say a request has been RECORDED, and never that a human has been
+NOTIFIED — a claim about a Slack workspace or an inbox BagDirect does not own
+and cannot verify. Delivery is a generic JSON POST because the owner's
+operational stack is unknown, and one webhook reaches Slack, Zapier, email
+automation and helpdesks without embedding any of them in the core.
+
+**Decision 78. Reconciliation routes through the SAME service as the
+webhook.** A repair calls the same primitives — including the one row-locked
+`transitioned` flag that fires `purchase_completed` — so a repaired order is
+indistinguishable from a webhook one and there is no second, divergent
+order-processing implementation to keep in sync. Idempotence is structural
+rather than defensive: every primitive is a no-op when state already matches,
+so the healthy result of the feature is a run that repairs nothing.
+
+**Decision 79. Refund totals are SET by the sweep and ADDED by the webhook.**
+`refunds/create` describes one new refund event, so accumulating is right.
+Reconciliation sees Shopify's running `totalRefunded`, so accumulating would
+double-count on every sweep. Two verbs for two different facts, and the sweep
+never decreases a total a webhook already recorded.
+
+**Decision 80. Liveness and readiness are separate, and readiness calls
+nobody.** A liveness probe that touched the database would tell the platform
+to restart the application when the DATABASE was down — turning degradation
+into an outage, in a loop. Readiness judges Shopify from configuration
+validity, never connectivity: an uptime poller would otherwise burn a vendor's
+rate limit forever, and a vendor's slow minute would read as BagDirect being
+down. Readiness also never depends on AI, ads, CRO, pricing or customer
+intelligence: those are optional enhancements, and a system that refuses
+traffic because an LLM provider is having a bad afternoon has turned an
+optional feature into an outage.
+
+**Decision 81. Launch readiness is computed, and only mandatory checks can
+block.** `LAUNCH_CHECKLIST.md` is a document a human ticks; the readiness
+service asks the same questions of the running code, which is the only version
+that cannot drift. The mandatory/optional split is applied once, centrally, so
+a caller cannot forget it. WARNING is a first-class state, not a soft BLOCKED:
+it is where everything lives that needs a HUMAN to confirm something no code
+can see — a Shopify tax setting, a backup policy, a real test order — and
+those never self-resolve.
+
+**Decision 82. The domain became configuration with a loud unset state.**
+`example.com` was hard-coded and five surfaces built URLs from it. Launched
+as-is, that publishes canonical URLs, a sitemap and structured data pointing
+at a domain the owner does not own — worse than publishing none, because
+search engines act on it. It is now `NEXT_PUBLIC_SITE_DOMAIN`; unset,
+readiness BLOCKS and robots.txt refuses crawling entirely, while `next build`
+keeps working, because missing owner input must never make the build
+impossible.
+
+**Decision 83. Error tracking is a transport, not an SDK.** Sentry's ingest is
+a documented HTTP endpoint and the capability needed — "an unexpected server
+exception reaches somebody" — is about sixty lines of `fetch`. The SDK's real
+value is browser capture, source maps, tracing and release health, none of
+which this session needs and all of which change the build. What is missing is
+stated explicitly rather than implied, and installing the real SDK later is a
+clean upgrade that does not touch a single call site.
+
+**Decision 84. Expected business outcomes are not errors.** Below MOQ, missing
+artwork, a 409 REPRICED, an unmapped configuration, invalid input, a
+rate-limited caller — none of these are reported to the error tracker. They
+are the system working. Reporting them trains the owner to ignore the alert
+channel, which is indistinguishable from having no alerting at all.
+
+**Decision 85. Artwork gained PRE-upload bindings, because every Session 02
+control was a post-hoc check.** The signed PUT now covers `Content-Length` as
+well as the key and the content type, so a URL issued for a 40 KB logo cannot
+upload 25 MB; because Content-Length is a forbidden header name in `fetch`,
+the browser sets it from the body and the caller cannot forge it. A separate
+per-session ALLOWANCE bounds the total number of objects one anonymous session
+can create, which rate limiting does not: a limiter bounds the rate, not the
+total, and a patient script under every per-minute limit could still fill a
+bucket.

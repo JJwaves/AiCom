@@ -10,7 +10,7 @@ render visibly until replaced.
 | --- | --- |
 | Brand name | `config/business.ts` → `BRAND_NAME`, `DISPLAY_NAME` |
 | Logo (SVG + favicon) | `app/favicon.ico`, header wordmark in `components/layout/Header.tsx` |
-| Domain | `config/business.ts` → `DOMAIN` (drives canonical URLs, sitemap, JSON-LD) |
+| Domain | **`NEXT_PUBLIC_SITE_DOMAIN`** env var (drives canonical URLs, sitemap, robots.txt, JSON-LD, admin deep links). BUILD-TIME — a change needs a redeploy. Unset, launch readiness BLOCKS and robots.txt refuses crawling |
 | Factory location | `config/business.ts` → `FACTORY_LOCATION` (shown on /about) |
 | Shipping origin | `config/business.ts` → `SHIPPING_ORIGIN` |
 | Customer service email / phone | `config/business.ts` (shown on /contact) |
@@ -507,4 +507,72 @@ fine without it.
 - **`config/costs.ts`** — every value still `null`. Missing costs never block a
   sale; they block profit analytics and future price actions.
 - **Production `DATABASE_URL`** + `npm run db:migrate` (migration `0009` is new
+  this session).
+
+
+---
+
+## Production Launch Session 03 — operational configuration
+
+Everything below is owner input. The mechanisms exist; the values do not, and
+this session did not invent any of them.
+
+### Required before real traffic
+
+| Item | Where | Consequence if missing |
+| --- | --- | --- |
+| **Site domain** | `NEXT_PUBLIC_SITE_DOMAIN` | Canonical URLs, sitemap and structured data would point at a placeholder domain. robots.txt refuses crawling until it is set. **BLOCKS launch** |
+| **`read_orders` Shopify scope** | Shopify admin → your custom app → API scopes, then reinstall (this issues a NEW `SHOPIFY_ADMIN_API_TOKEN`) | Lost-webhook reconciliation cannot read Shopify and records a `failed` run |
+| **Platform / WAF rate-limit rules** | Vercel Firewall, or your CDN | Application limits still cost a function invocation per request. This is the only layer that refuses traffic before that |
+| **Production alerts** | Your monitoring provider | Nothing in the repository can guarantee a person reads an error. Suggested rules: `docs/OBSERVABILITY.md` §4 |
+| **Database backups / PITR + a tested restore** | Your Postgres provider | BagDirect does not back up the database and cannot query whether you do |
+| **Pooled connection string** | `DATABASE_URL` | Serverless connection exhaustion; the symptom is intermittent 503s that look like an application bug |
+
+### Strongly recommended
+
+| Item | Where | Consequence if missing |
+| --- | --- | --- |
+| **Escalation delivery** | `HUMAN_HANDOFF_WEBHOOK_URL` (falls back to `QUOTE_WEBHOOK_URL`) | AI escalations are stored at `/admin/handoffs` but nobody is notified — a customer asking for a human waits until someone opens the page |
+| **Error tracking** | `SENTRY_DSN` or `ERROR_WEBHOOK_URL` | Server errors reach the platform log only |
+| **Rate-limit identity key** | `RATE_LIMIT_IP_SALT` | Network-scoped durable limits degrade to per-instance and reset on every deploy |
+| **Google Ads conversion** | `NEXT_PUBLIC_GOOGLE_ADS_ID` **and** `NEXT_PUBLIC_GOOGLE_ADS_PURCHASE_LABEL` | Paid traffic cannot be optimised toward purchases. Both are required — an id alone cannot address a conversion |
+| **GA4** | `NEXT_PUBLIC_GA4_ID` or `NEXT_PUBLIC_GTM_ID` | Orders are still recorded in full by BagDirect; only the Google Analytics copy is missing |
+
+### Owner verification — nobody but a person can close these
+
+These never turn green on their own, and `/admin/launch-readiness` says so
+explicitly rather than quietly counting them as done.
+
+- [ ] **One real (or Shopify test-mode) order** placed end to end: shipping
+      shown, tax shown, payment completes, webhook arrives, order becomes
+      `paid`, exactly one `purchase_completed`, artwork on the right line.
+- [ ] **One refund or cancellation** performed in Shopify and confirmed to
+      reconcile in BagDirect.
+- [ ] **Shopify US shipping profile** verified as covering the products.
+- [ ] **Shopify tax settings** verified.
+- [ ] **`npm run ai:smoke`** run with production credentials, if AI Sales is
+      being enabled. It was NOT run in this session — no credentials were
+      present, and inventing a passing result would be worse than reporting
+      none.
+- [ ] **Policy pages** reviewed. This codebase deliberately does not write
+      legal copy.
+
+### Optional tuning (defaults are fine)
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `ARTWORK_MAX_UPLOADS_PER_SESSION` | 25 | Objects one anonymous session may create |
+| `ARTWORK_UPLOAD_WINDOW_HOURS` | 24 | The allowance window |
+| `RATE_LIMIT_DURABLE` | on in production | The shared cross-instance limiter |
+
+### Still true, still blocking, from earlier sessions
+
+- **Real prices**, then `NEXT_PUBLIC_DEMO_PRICING=false`. Do not flip the flag
+  first.
+- **MOQ confirmation** (`MOQ_CONFIRMED: true`).
+- **`SHOPIFY_MERCHANDISE_MAP`** — still empty; an unmapped configuration
+  cannot be bought.
+- **`config/costs.ts`** — every value still `null`. Missing costs never block a
+  sale; they block profit analytics and future price actions.
+- **Production `DATABASE_URL`** + `npm run db:migrate` (migration `0010` is new
   this session).

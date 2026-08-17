@@ -7,6 +7,10 @@ import { ensureBusiness, linkCustomerBusiness, upsertCustomerByEmail } from "@/l
 import { createQuote, recordArtwork } from "@/lib/data/quote-service";
 import { sessionFromRequest, setSessionCookies } from "@/lib/data/request-session";
 import { linkCustomer, type SessionRow } from "@/lib/data/session-service";
+import { captureException } from "@/lib/observability/error-tracking";
+import { correlationIdFrom } from "@/lib/observability/correlation";
+import { enforceRateLimit } from "@/lib/rate-limit";
+import { rateLimitedResponse } from "@/lib/rate-limit/http";
 
 /**
  * Custom-quote intake.
@@ -18,11 +22,21 @@ import { linkCustomer, type SessionRow } from "@/lib/data/session-service";
  *
  * Artwork files are size/type-checked but NOT persisted here — object
  * storage is a launch task (see BUSINESS_CONFIG_TODO.md).
+ *
+ * Rate limiting (Production Launch Session 03 §15): classified
+ * PUBLIC_EXTERNAL_COST — an accepted request writes rows AND posts to the
+ * owner's inbox, so a loose limit makes the owner's inbox a spam target.
+ * Nobody legitimately submits five quote forms a minute.
  */
 
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
+  const correlationId = correlationIdFrom(req);
+
+  const networkLimit = await enforceRateLimit({ route: "quote", req, scopes: ["network"] });
+  if (!networkLimit.allowed) return rateLimitedResponse(networkLimit);
+
   let fd: FormData;
   try {
     fd = await req.formData();
@@ -82,6 +96,22 @@ export async function POST(req: Request) {
     receivedAt: new Date().toISOString(),
   };
 
+  // Identity is resolved BEFORE delivery so the per-session limit applies to
+  // the outbound webhook rather than only to the persistence that follows it.
+  // A database outage still cannot block a quote: a null session skips the
+  // session scope (the network scope above already applied) and the quote is
+  // delivered and simply not persisted, exactly as before.
+  const sessionCtx = await sessionFromRequest(req).catch(() => null);
+  if (sessionCtx) {
+    const sessionLimit = await enforceRateLimit({
+      route: "quote",
+      req,
+      sessionId: sessionCtx.session.id,
+      scopes: ["session"],
+    });
+    if (!sessionLimit.allowed) return rateLimitedResponse(sessionLimit);
+  }
+
   const webhook = process.env.QUOTE_WEBHOOK_URL;
   if (webhook) {
     try {
@@ -90,9 +120,14 @@ export async function POST(req: Request) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error(String(res.status));
+      if (!res.ok) throw new Error(`quote webhook responded ${res.status}`);
     } catch (err) {
-      console.error("[quote] webhook delivery failed", err);
+      captureException(err, {
+        subsystem: "quote",
+        event: "quote_webhook_delivery_failed",
+        correlationId,
+        code: "QUOTE_DELIVERY_FAILED",
+      });
       return NextResponse.json({ error: "Delivery failed" }, { status: 502 });
     }
   } else {
@@ -102,7 +137,6 @@ export async function POST(req: Request) {
 
   // First-party persistence (additive; delivery above already succeeded —
   // a data-layer failure logs loudly and never turns into a customer error).
-  const sessionCtx = await sessionFromRequest(req);
   if (sessionCtx) {
     await persistQuote(sessionCtx.session, parsed.data, payload, attribution, file instanceof File && file.size > 0 ? file : null);
   }
