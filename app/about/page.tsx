@@ -6,7 +6,7 @@ import { FactoryBand, FinalCTA, TrustBar } from "@/components/landing/sections";
 export const metadata: Metadata = {
   title: "About the Factory",
   description:
-    "Factory-direct manufacturer of custom non-woven takeout bags for US and Canadian food businesses — who we are and how factory-direct ordering works.",
+    "Factory-direct manufacturer of custom printed insulated takeout bags for U.S. food businesses — who we are and how factory-direct ordering works.",
   alternates: { canonical: "/about" },
 };
 
@@ -16,7 +16,7 @@ export default function AboutPage() {
     "@type": "Organization",
     name: BUSINESS.BRAND_NAME,
     url: `https://${BUSINESS.DOMAIN}`,
-    description: "Factory-direct manufacturer of custom non-woven takeout bags.",
+    description: "Factory-direct manufacturer of custom printed insulated takeout bags.",
   };
   return (
     <>
@@ -30,7 +30,7 @@ export default function AboutPage() {
         <div className="mt-6 grid max-w-3xl gap-4 text-ink-2">
           <p>
             Most custom packaging reaches restaurants through two or three intermediaries — an importer, a
-            distributor, sometimes a local rep — each adding margin and a delay. We manufacture non-woven bags
+            distributor, sometimes a local rep — each adding margin and a delay. We manufacture insulated takeout bags
             and sell them directly to the businesses that use them.
           </p>
           <p>

@@ -1,10 +1,24 @@
 /** Core commerce domain types. Provider-agnostic — Shopify maps onto these. */
 
+export type DimensionUnit = "in" | "cm";
+
 export type SizeOption = {
   id: string;
   label: string;
-  /** Inches: width × height × gusset. */
+  /**
+   * width × height × side (gusset), in `unit`. The unit is explicit per size
+   * because the launch product is specified in centimetres by the factory
+   * while the older catalog entries are in inches — a bare number that means
+   * inches on one product and centimetres on another is how a customer ends
+   * up ordering a bag half the size they expected.
+   */
   dimensions: { width: number; height: number; gusset: number };
+  unit: DimensionUnit;
+  /**
+   * Per-unit sell-price delta in cents for choosing this size, applied on top
+   * of the quantity tier. 0 for sizes that carry the tier price.
+   */
+  priceDeltaCents: number;
 };
 
 export type MaterialOption = {
@@ -47,6 +61,9 @@ export type PricingTier = {
   unitPriceCents: number;
 };
 
+/** A fixed construction/spec fact. NOT customer-selectable. */
+export type ProductSpecification = { label: string; value: string };
+
 export type Product = {
   id: string;
   slug: string;
@@ -55,6 +72,20 @@ export type Product = {
   description: string;
   /** Hero product gets top billing everywhere. */
   hero?: boolean;
+  /**
+   * Is this product part of the current launch?
+   *
+   * FALSE means the product is not sellable and not publicly rendered: the
+   * catalog facade (lib/commerce/catalog.ts) hides it, so its page 404s, it
+   * is absent from listings, the sitemap, AI tool results and the Shopify
+   * merchandise requirements. The entry stays in the file — catalog
+   * architecture for future products is not deleted — but a customer can
+   * never reach or buy it.
+   *
+   * A product carrying demo/unconfirmed production data MUST be
+   * launchEnabled: false.
+   */
+  launchEnabled: boolean;
   sizes: SizeOption[];
   materials: MaterialOption[];
   colors: ColorOption[];
@@ -62,12 +93,27 @@ export type Product = {
   printOptions: PrintOption[];
   /** Quantity presets surfaced in the selector. */
   quantityPresets: number[];
+  /**
+   * May a customer type an arbitrary quantity and check out with it?
+   *
+   * FALSE = the presets ARE the orderable quantities. Anything else routes
+   * to the custom-quote flow — enforced in `requiresCustomQuote`, so the
+   * server rejects an off-tier quantity even if the browser sends one.
+   */
+  allowCustomQuantity: boolean;
   minQuantity: number;
   /** Volume tiers, ascending by minQty. Base price before option deltas. */
   pricingTiers: PricingTier[];
   /** "DEMO" pricing renders with a visible notice; "LIVE" is real. */
   pricingStatus: "DEMO" | "LIVE";
   currency: "USD" | "CAD";
+  /**
+   * Fixed construction facts (material stack, layers). Rendered as product
+   * SPECIFICATIONS — never as selectable options.
+   */
+  specifications: ProductSpecification[];
+  /** Short, verifiable selling points rendered as bullets. No unsupported claims. */
+  highlights: string[];
   /** Image slots — paths under /public or full URLs; empty = placeholder slot. */
   images: { src: string | null; alt: string; slot: string }[];
 };

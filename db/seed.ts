@@ -64,7 +64,7 @@ async function seed() {
       id: newId("evt"),
       sessionId,
       name,
-      page: "/products/custom-non-woven-takeout-bags",
+      page: "/products/custom-insulated-takeout-bags",
       propsJson: { demo: true },
       clientEventId: newId("evt"),
       occurredAt: new Date(now.getTime() + i * 1000),

@@ -29,11 +29,11 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   metadataBase: new URL(`https://${BUSINESS.DOMAIN}`),
   title: {
-    default: `Custom Non-Woven Takeout Bags, Factory Direct | ${BUSINESS.DISPLAY_NAME}`,
+    default: `Custom Insulated Takeout Bags, Factory Direct | ${BUSINESS.DISPLAY_NAME}`,
     template: `%s | ${BUSINESS.DISPLAY_NAME}`,
   },
   description:
-    "Custom non-woven takeout bags for restaurants, cafes and food businesses. Add your logo, choose your quantity, see the price, and order online. Factory direct to the US and Canada.",
+    "Custom printed insulated takeout bags for restaurants, catering and food delivery. Upload your logo, choose your quantity, see the price, and order online. Factory direct, shipped within the United States.",
   openGraph: {
     siteName: BUSINESS.DISPLAY_NAME,
     type: "website",

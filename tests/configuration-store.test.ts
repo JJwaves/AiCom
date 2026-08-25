@@ -4,6 +4,7 @@ import {
   applyConfigurationPatch,
   defaultConfiguration,
   describeConfiguration,
+  reconcileConfiguration,
   validateFullConfiguration,
 } from "@/lib/configuration/validation";
 import {
@@ -19,7 +20,14 @@ import {
  * both the visual configurator and the AI tools; these tests pin the rules.
  */
 
-const product = PRODUCTS[0]; // hero product: 4 sizes, 2 materials, 7 colors (1 custom), 3 print options
+/**
+ * The launch product: 2 sizes, 1 fixed material, 2 colors, 1 print option,
+ * 2 orderable quantities. Deliberately narrow — that narrowness is the
+ * thing the reducer and validator now have to enforce.
+ */
+const product = PRODUCTS[0];
+/** A launch-disabled catalog entry, for the wider option space (custom color). */
+const wideProduct = PRODUCTS.find((p) => p.colors.some((c) => c.custom))!;
 
 const run = (state: ConfigurationState, ...actions: ConfigurationAction[]): ConfigurationState =>
   actions.reduce((s, a) => configurationReducer(product, s, a), state);
@@ -32,7 +40,7 @@ describe("defaultConfiguration", () => {
       sizeId: product.sizes[0].id,
       materialId: product.materials[0].id,
       colorId: product.colors[0].id,
-      printOptionId: "one-color",
+      printOptionId: product.printOptions[0].id,
       quantity: product.quantityPresets[1],
       artwork: null,
     });
@@ -43,22 +51,22 @@ describe("applyConfigurationPatch — catalog validation", () => {
   const base = defaultConfiguration(product);
 
   it("applies a valid multi-field patch and reports changed fields", () => {
-    const result = applyConfigurationPatch(product, base, { colorId: "black", quantity: 5000 });
+    const result = applyConfigurationPatch(product, base, { colorId: "white", quantity: 5000 });
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.config.colorId).toBe("black");
+      expect(result.config.colorId).toBe("white");
       expect(result.config.quantity).toBe(5000);
       expect(result.changedFields.sort()).toEqual(["colorId", "quantity"]);
     }
   });
 
   it("preserves untouched fields verbatim (partial patch semantics)", () => {
-    const custom = { ...base, sizeId: "l", printOptionId: "two-color" as const, quantity: 10_000 };
-    const result = applyConfigurationPatch(product, custom, { colorId: "navy" });
+    const custom = { ...base, sizeId: "xl", quantity: 10_000 };
+    const result = applyConfigurationPatch(product, custom, { colorId: "white" });
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.config.sizeId).toBe("l");
-      expect(result.config.printOptionId).toBe("two-color");
+      expect(result.config.sizeId).toBe("xl");
+      expect(result.config.printOptionId).toBe(base.printOptionId);
       expect(result.config.quantity).toBe(10_000);
       expect(result.changedFields).toEqual(["colorId"]);
     }
@@ -97,9 +105,15 @@ describe("applyConfigurationPatch — catalog validation", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("allows the custom color (quoted individually, matching the UI)", () => {
-    const result = applyConfigurationPatch(product, base, { colorId: "custom" });
+  it("allows the custom color on a product that offers one (quoted individually, matching the UI)", () => {
+    const wideBase = defaultConfiguration(wideProduct);
+    const result = applyConfigurationPatch(wideProduct, wideBase, { colorId: "custom" });
     expect(result.ok).toBe(true);
+  });
+
+  it("rejects a color the launch product does not offer, even though another catalog entry has it", () => {
+    expect(wideProduct.colors.some((c) => c.id === "kraft")).toBe(true);
+    expect(applyConfigurationPatch(product, base, { colorId: "kraft" }).ok).toBe(false);
   });
 
   it("collects ALL invalid fields in one rejection", () => {
@@ -118,7 +132,7 @@ describe("validateFullConfiguration — the UI-sync path", () => {
     const artwork = { fileName: "logo.png", fileType: "image/png", fileSizeBytes: 1000 };
     const result = validateFullConfiguration(product, {
       ...defaultConfiguration(product),
-      colorId: "kraft",
+      colorId: "white",
       artwork,
     });
     expect(result.ok).toBe(true);
@@ -137,8 +151,8 @@ describe("validateFullConfiguration — the UI-sync path", () => {
 describe("configurationReducer — user actions", () => {
   it("SET_* actions update config, mark fields dirty, and record the change", () => {
     let state = initialConfigurationState(product);
-    state = run(state, { type: "SET_COLOR", colorId: "black" }, { type: "SET_QUANTITY", quantity: 5000 });
-    expect(state.config.colorId).toBe("black");
+    state = run(state, { type: "SET_COLOR", colorId: "white" }, { type: "SET_QUANTITY", quantity: 5000 });
+    expect(state.config.colorId).toBe("white");
     expect(state.config.quantity).toBe(5000);
     expect(state.dirtyFields.sort()).toEqual(["colorId", "quantity"]);
     expect(state.lastChange).toEqual({ source: "user", fields: ["quantity"] });
@@ -157,7 +171,7 @@ describe("configurationReducer — user actions", () => {
   });
 
   it("SET_ARTWORK tracks artwork dirtiness", () => {
-    const artwork = { fileName: "logo.svg", fileType: "image/svg+xml", fileSizeBytes: 500 };
+    const artwork = { fileName: "logo.pdf", fileType: "application/pdf", fileSizeBytes: 500 };
     const state = run(initialConfigurationState(product), { type: "SET_ARTWORK", artwork });
     expect(state.config.artwork).toEqual(artwork);
     expect(state.dirtyFields).toEqual(["artwork"]);
@@ -174,12 +188,12 @@ describe("configurationReducer — server loads (AI + restore)", () => {
     let state = initialConfigurationState(product);
     state = run(state, {
       type: "LOAD_SERVER_CONFIGURATION",
-      config: serverConfig({ colorId: "black", quantity: 10_000 }),
+      config: serverConfig({ colorId: "white", quantity: 5000 }),
       revision: 3,
       source: "ai",
     });
-    expect(state.config.colorId).toBe("black");
-    expect(state.config.quantity).toBe(10_000);
+    expect(state.config.colorId).toBe("white");
+    expect(state.config.quantity).toBe(5000);
     expect(state.revision).toBe(3);
     expect(state.lastChange).toMatchObject({ source: "ai" });
     expect(state.lastChange?.fields.sort()).toEqual(["colorId", "quantity"]);
@@ -189,14 +203,14 @@ describe("configurationReducer — server loads (AI + restore)", () => {
     let state = initialConfigurationState(product);
     state = run(state, {
       type: "LOAD_SERVER_CONFIGURATION",
-      config: serverConfig({ colorId: "black" }),
+      config: serverConfig({ colorId: "white" }),
       revision: 5,
       source: "ai",
     });
     const before = state;
     state = run(state, {
       type: "LOAD_SERVER_CONFIGURATION",
-      config: serverConfig({ colorId: "red" }),
+      config: serverConfig({ colorId: "black" }),
       revision: 4,
       source: "ai",
     });
@@ -216,17 +230,17 @@ describe("configurationReducer — server loads (AI + restore)", () => {
 
   it("locally dirty fields win over a concurrent AI update (field-level merge)", () => {
     let state = initialConfigurationState(product);
-    // User clicks Navy — not yet synced (dirty).
-    state = run(state, { type: "SET_COLOR", colorId: "navy" });
+    // User clicks White — not yet synced (dirty).
+    state = run(state, { type: "SET_COLOR", colorId: "white" });
     // AI turn (started earlier) lands: black + 10k at revision 2.
     state = run(state, {
       type: "LOAD_SERVER_CONFIGURATION",
-      config: serverConfig({ colorId: "black", quantity: 10_000 }),
+      config: serverConfig({ colorId: "black", quantity: 5000 }),
       revision: 2,
       source: "ai",
     });
-    expect(state.config.colorId).toBe("navy"); // user's in-flight click survives
-    expect(state.config.quantity).toBe(10_000); // AI's quantity applies
+    expect(state.config.colorId).toBe("white"); // user's in-flight click survives
+    expect(state.config.quantity).toBe(5000); // AI's quantity applies
     expect(state.dirtyFields).toContain("colorId"); // will re-assert on next sync
     expect(state.lastChange?.fields).toEqual(["quantity"]);
   });
@@ -237,7 +251,7 @@ describe("configurationReducer — server loads (AI + restore)", () => {
     state = run(state, { type: "SET_ARTWORK", artwork });
     state = run(state, {
       type: "LOAD_SERVER_CONFIGURATION",
-      config: serverConfig({ colorId: "black" }),
+      config: serverConfig({ colorId: "white" }),
       revision: 2,
       source: "ai",
     });
@@ -248,11 +262,11 @@ describe("configurationReducer — server loads (AI + restore)", () => {
     let state = initialConfigurationState(product);
     state = run(state, {
       type: "LOAD_SERVER_CONFIGURATION",
-      config: serverConfig({ sizeId: "l" }),
+      config: serverConfig({ sizeId: "xl" }),
       revision: 1,
       source: "load",
     });
-    expect(state.config.sizeId).toBe("l");
+    expect(state.config.sizeId).toBe("xl");
     expect(state.lastChange?.source).toBe("load");
   });
 });
@@ -260,7 +274,7 @@ describe("configurationReducer — server loads (AI + restore)", () => {
 describe("configurationReducer — sync acknowledgement", () => {
   it("clears only fields whose value still matches what was synced", () => {
     let state = initialConfigurationState(product);
-    state = run(state, { type: "SET_COLOR", colorId: "black" }, { type: "SET_QUANTITY", quantity: 5000 });
+    state = run(state, { type: "SET_COLOR", colorId: "white" }, { type: "SET_QUANTITY", quantity: 5000 });
     const syncedSnapshot = state.config;
     // Mid-flight, the user bumps quantity again.
     state = run(state, { type: "SET_QUANTITY", quantity: 10_000 });
@@ -287,8 +301,8 @@ describe("configurationReducer — reset", () => {
     let state = initialConfigurationState(product);
     state = run(
       state,
-      { type: "SET_COLOR", colorId: "black" },
-      { type: "SET_QUANTITY", quantity: 10_000 },
+      { type: "SET_COLOR", colorId: "white" },
+      { type: "SET_QUANTITY", quantity: 5000 },
       { type: "SYNC_ACKNOWLEDGED", revision: 3, syncedConfig: state.config },
     );
     state = run(state, { type: "SYNC_ACKNOWLEDGED", revision: 3, syncedConfig: state.config });
@@ -309,5 +323,61 @@ describe("describeConfiguration", () => {
     expect(d.hasArtwork).toBe(false);
     expect(d.quantity).toBe(5000);
     expect(d.productTitle).toBe(product.title);
+  });
+});
+
+/**
+ * A persisted configuration outlives the catalog that produced it. Product #1
+ * replaced the seed catalog's sizes, material, colors and print options, so
+ * every row written before it names ids this product no longer offers.
+ */
+describe("reconcileConfiguration — a stored row meets a changed catalog", () => {
+  const stale = {
+    productId: product.id,
+    sizeId: "m",
+    materialId: "standard",
+    colorId: "kraft",
+    printOptionId: "one-color" as const,
+    quantity: 1_000,
+    artwork: null,
+  };
+
+  it("falls back to catalog defaults for every retired option, and reports them", () => {
+    const { config, resetFields } = reconcileConfiguration(product, stale);
+    const defaults = defaultConfiguration(product);
+    expect(config.sizeId).toBe(defaults.sizeId);
+    expect(config.materialId).toBe(defaults.materialId);
+    expect(config.colorId).toBe(defaults.colorId);
+    expect(config.printOptionId).toBe(defaults.printOptionId);
+    expect(resetFields.sort()).toEqual(["colorId", "materialId", "printOptionId", "sizeId"]);
+  });
+
+  it("leaves a still-legal configuration completely untouched", () => {
+    const current = { ...defaultConfiguration(product), sizeId: "xl", colorId: "white", quantity: 10_000 };
+    const { config, resetFields } = reconcileConfiguration(product, current);
+    expect(config).toEqual(current);
+    expect(resetFields).toEqual([]);
+  });
+
+  it("keeps a below-MOQ quantity — that is a legal quote state, not a stale id", () => {
+    const { config, resetFields } = reconcileConfiguration(product, { ...stale, quantity: 300 });
+    expect(config.quantity).toBe(300);
+    expect(resetFields).not.toContain("quantity");
+  });
+
+  it("the reconciled configuration is one the catalog can actually render", () => {
+    const { config } = reconcileConfiguration(product, stale);
+    // The print option resolves, so artwork is required again and the
+    // configurator cannot silently drop the rule.
+    const print = product.printOptions.find((o) => o.id === config.printOptionId);
+    expect(print).toBeDefined();
+    expect(print!.requiresArtwork).toBe(true);
+    expect(validateFullConfiguration(product, config).ok).toBe(true);
+  });
+
+  it("preserves artwork — it belongs to the customer, not to the catalog", () => {
+    const artwork = { artworkId: "art_1", fileName: "logo.png", fileType: "image/png", fileSizeBytes: 10 };
+    const { config } = reconcileConfiguration(product, { ...stale, artwork });
+    expect(config.artwork).toEqual(artwork);
   });
 });

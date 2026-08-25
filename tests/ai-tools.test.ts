@@ -7,6 +7,7 @@ import {
   ToolRegistry,
   type AnyToolDefinition,
 } from "@/lib/ai/tools";
+import { FLAT_US_SHIPPING_CENTS } from "@/config/shipping";
 import { listCatalogProducts } from "@/lib/commerce/catalog";
 import { calculatePrice } from "@/modules/pricing";
 import { applyNeedProfileUpdate, getNeedProfile } from "@/lib/data/customer-need-service";
@@ -163,7 +164,7 @@ describe("sales toolset (Session 04 base + Session 05/06 additions)", () => {
       const data = result.data as { products: Array<{ id: string; pricingStatus: string }>; totalCatalogSize: number };
       expect(data.products.length).toBeGreaterThanOrEqual(1);
       expect(data.totalCatalogSize).toBe(all.length);
-      expect(data.products[0].pricingStatus).toBe("DEMO");
+      expect(data.products[0].pricingStatus).toBe("LIVE"); // Product #1 carries confirmed prices
     }
   });
 
@@ -172,10 +173,24 @@ describe("sales toolset (Session 04 base + Session 05/06 additions)", () => {
     const result = await registry.execute("getProductDetails", { slug: product.slug }, salesCtx());
     expect(result.ok).toBe(true);
     if (result.ok) {
-      const data = result.data as { found: boolean; handles: Array<{ confirmed: boolean }>; pricingTiers: unknown[] };
+      const data = result.data as {
+        found: boolean;
+        handles: Array<{ confirmed: boolean }>;
+        pricingTiers: unknown[];
+        allowCustomQuantity: boolean;
+        specifications: Array<{ label: string; value: string }>;
+        sizes: Array<{ dimensions: { unit: string } }>;
+      };
       expect(data.found).toBe(true);
-      expect(data.handles.some((h) => h.confirmed === false)).toBe(true);
+      // No handle style is factory-confirmed for the launch product, so none
+      // is offered — the model has nothing unconfirmed to promise.
+      expect(data.handles).toEqual([]);
       expect(data.pricingTiers.length).toBeGreaterThan(0);
+      // The model must be able to see that quantities are a closed set, that
+      // the construction is a spec, and what unit the dimensions are in.
+      expect(data.allowCustomQuantity).toBe(false);
+      expect(data.specifications.length).toBeGreaterThan(0);
+      expect(data.sizes.every((sz) => sz.dimensions.unit === "cm")).toBe(true);
     }
     const missing = await registry.execute("getProductDetails", { slug: "does-not-exist" }, salesCtx());
     expect(missing.ok).toBe(true);
@@ -191,9 +206,9 @@ describe("calculatePrice tool — deterministic engine delegation", () => {
     const config = {
       productId: product.id,
       sizeId: product.sizes[0].id,
-      materialId: product.materials[1]?.id ?? product.materials[0].id,
+      materialId: product.materials[0].id,
       colorId: product.colors.find((c) => !c.custom)!.id,
-      printOptionId: "one-color" as const,
+      printOptionId: product.printOptions[0].id,
       quantity: product.quantityPresets.find((q) => q >= product.minQuantity) ?? product.minQuantity,
     };
     const engine = calculatePrice(product, { ...config, artwork: null });
@@ -208,7 +223,7 @@ describe("calculatePrice tool — deterministic engine delegation", () => {
         savingsPct: engine.savingsPct,
         tier: engine.tier,
         currency: engine.currency,
-        pricingStatus: "DEMO",
+        pricingStatus: "LIVE",
       });
     }
   });
@@ -222,7 +237,7 @@ describe("calculatePrice tool — deterministic engine delegation", () => {
         sizeId: product.sizes[0].id,
         materialId: product.materials[0].id,
         colorId: product.colors[0].id,
-        printOptionId: "none",
+        printOptionId: product.printOptions[0].id,
         quantity: product.minQuantity,
       },
       salesCtx(),
@@ -253,7 +268,7 @@ describe("calculatePrice tool — deterministic engine delegation", () => {
       sizeId: product.sizes[0].id,
       materialId: product.materials[0].id,
       colorId: product.colors[0].id,
-      printOptionId: "none" as const,
+      printOptionId: product.printOptions[0].id,
       quantity: product.minQuantity,
     };
     const customColor = product.colors.find((c) => c.custom);
@@ -302,14 +317,25 @@ describe("calculatePrice tool — deterministic engine delegation", () => {
 describe("getShippingEstimate tool", () => {
   const registry = createSalesToolRegistry();
 
-  it("answers honestly with checkout mode for valid codes and invalid for garbage", async () => {
+  it("returns the flat US charge, refuses unserved markets, and rejects garbage", async () => {
     const us = await registry.execute("getShippingEstimate", { postalCode: "94107" }, salesCtx());
     expect(us.ok).toBe(true);
-    if (us.ok) expect((us.data as { mode: string }).mode).toBe("checkout");
+    if (us.ok) {
+      expect(us.data).toMatchObject({ mode: "flat", costCents: FLAT_US_SHIPPING_CENTS });
+    }
+    // Canada is not served during the launch: it is told so, never quoted
+    // the US rate.
     const ca = await registry.execute("getShippingEstimate", { postalCode: "M5V 2T6" }, salesCtx());
-    if (ca.ok) expect((ca.data as { mode: string }).mode).toBe("checkout");
+    if (ca.ok) expect((ca.data as { mode: string }).mode).toBe("unavailable");
     const bad = await registry.execute("getShippingEstimate", { postalCode: "banana" }, salesCtx());
     if (bad.ok) expect((bad.data as { mode: string }).mode).toBe("invalid");
+  });
+
+  it("never returns a delivery date — nothing in the system knows one", async () => {
+    const us = await registry.execute("getShippingEstimate", { postalCode: "94107" }, salesCtx());
+    if (us.ok) {
+      expect(Object.keys(us.data as Record<string, unknown>)).not.toContain("transitDays");
+    }
   });
 });
 

@@ -70,7 +70,14 @@ function validateAndPrice(line: CheckoutRequestLine, product: Product): { ok: tr
   const print = product.printOptions.find((p) => p.id === config.printOptionId);
   if (!print) return { ok: false, reason: `Unknown print option "${config.printOptionId}"` };
   if (print.requiresArtwork && !config.artwork) {
-    return { ok: false, reason: `"${print.label}" requires artwork — upload a logo or choose "No logo"` };
+        // Only name an alternative that this product actually offers.
+    const unprinted = product.printOptions.find((o) => !o.requiresArtwork);
+    return {
+      ok: false,
+      reason: unprinted
+        ? `"${print.label}" requires artwork — upload a logo or choose "${unprinted.label}"`
+        : `"${print.label}" requires artwork — upload your logo or artwork to continue`,
+    };
   }
   // A durable artwork id is required for anything printed (Session 02 §28).
   // A cart saved before durable storage carried only a dead `blob:` URL,
@@ -108,7 +115,7 @@ function validateAndPrice(line: CheckoutRequestLine, product: Product): { ok: tr
     );
   }
 
-  const optionSummary = [`${size.label} (${formatDimensions(size.dimensions)})`, color.label, print.label]
+  const optionSummary = [`${size.label} (${formatDimensions({ ...size.dimensions, unit: size.unit })})`, color.label, print.label]
     .filter(Boolean)
     .join(" · ");
 

@@ -52,6 +52,49 @@ export function defaultConfiguration(product: Product): ProductConfiguration {
   };
 }
 
+/**
+ * Reconcile a PERSISTED configuration against the CURRENT catalog.
+ *
+ * A stored row outlives the catalog that produced it. When a product's
+ * options change — a size retired, a print option replaced, a colour
+ * dropped — a row written under the old catalog still holds ids the product
+ * no longer offers, and reading it back verbatim puts the storefront in a
+ * state it cannot render honestly: the configurator finds no matching
+ * option, so it silently stops enforcing that option's rules (artwork stops
+ * being required, an option delta stops being priced) while Add to cart
+ * still looks available. Checkout would refuse it — but only after the
+ * customer had filled in everything.
+ *
+ * So a stale field falls back to the catalog DEFAULT for that field, and the
+ * caller is told which fields moved. Nothing is invented: the default is the
+ * same value a first-time visitor sees.
+ */
+export function reconcileConfiguration(
+  product: Product,
+  stored: ProductConfiguration,
+): { config: ProductConfiguration; resetFields: PatchableField[] } {
+  const fallback = defaultConfiguration(product);
+  const resetFields: PatchableField[] = [];
+  const config: ProductConfiguration = { ...stored, productId: product.id };
+
+  const reset = <F extends "sizeId" | "materialId" | "colorId" | "printOptionId">(field: F, legal: string[]) => {
+    if (legal.includes(config[field] as string)) return;
+    (config as Record<string, unknown>)[field] = fallback[field];
+    resetFields.push(field);
+  };
+  reset("sizeId", product.sizes.map((s) => s.id));
+  reset("materialId", product.materials.map((m) => m.id));
+  reset("colorId", product.colors.map((c) => c.id));
+  reset("printOptionId", product.printOptions.map((o) => o.id));
+
+  if (!Number.isInteger(config.quantity) || config.quantity <= 0 || config.quantity > MAX_QUANTITY) {
+    config.quantity = fallback.quantity;
+    resetFields.push("quantity");
+  }
+
+  return { config, resetFields };
+}
+
 const optionIds = {
   sizeId: (p: Product) => p.sizes.map((s) => s.id),
   materialId: (p: Product) => p.materials.map((m) => m.id),

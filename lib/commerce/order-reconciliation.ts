@@ -11,7 +11,7 @@ import {
   setOrderRefundTotal,
 } from "@/lib/data/order-service";
 import { markConverted } from "@/lib/data/session-service";
-import { listCatalogProducts } from "@/lib/commerce/catalog";
+import { listAllCatalogProducts } from "@/lib/commerce/catalog";
 import type { ShopifyOrderPayload, ShopifyRefundPayload } from "./shopify-webhook-payload";
 import { isPaidFinancialStatus } from "./shopify-webhook-payload";
 
@@ -194,7 +194,7 @@ async function enrichNeedProfile(orderId: string, sessionId: string, customerId:
   const record = await getOrder(orderId);
   const line = record?.lines[0];
   if (!line) return;
-  const products = await listCatalogProducts();
+  const products = await listAllCatalogProducts();
   const product = products.find((p) => p.id === line.productId);
   const size = product?.sizes.find((s) => s.id === line.configJson.sizeId);
 

@@ -1,6 +1,6 @@
 import { BUSINESS_INTELLIGENCE } from "@/config/business-intelligence";
 import { isDemoPricing } from "@/config/business";
-import { listCatalogProducts } from "@/lib/commerce/catalog";
+import { listAllCatalogProducts } from "@/lib/commerce/catalog";
 import { listInsights, listOpportunities } from "@/lib/data/insight-service";
 import { listConversationsNeedingClassification } from "@/lib/data/intelligence-service";
 import {
@@ -100,7 +100,7 @@ export async function buildBusinessHealthSnapshot(period: Period): Promise<Busin
       loadConversationCorpus(prev),
       loadBusinessFunnel(period),
       loadBusinessFunnel(prev),
-      listCatalogProducts(),
+      listAllCatalogProducts(),
       listInsights(100),
       listOpportunities(100),
       listConversationsNeedingClassification(CLASSIFIER_VERSION, 1000),

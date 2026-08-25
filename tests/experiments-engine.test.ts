@@ -112,7 +112,7 @@ describe("experiment target registry is closed", () => {
   it("matches targets to the routes they render on", () => {
     expect(targetRendersOnPath("homepage.hero", "/")).toBe(true);
     expect(targetRendersOnPath("homepage.hero", "/products/x")).toBe(false);
-    expect(targetRendersOnPath("product.primary_cta", "/products/custom-non-woven-takeout-bags")).toBe(true);
+    expect(targetRendersOnPath("product.primary_cta", "/products/custom-insulated-takeout-bags")).toBe(true);
     expect(targetRendersOnPath("product.primary_cta", "/")).toBe(false);
   });
 });

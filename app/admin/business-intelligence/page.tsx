@@ -17,7 +17,7 @@ import {
 } from "@/modules/business-intelligence";
 import type { Trend } from "@/modules/business-intelligence/trend";
 import { COST_MODEL } from "@/config/costs";
-import { listCatalogProducts } from "@/lib/commerce/catalog";
+import { listAllCatalogProducts } from "@/lib/commerce/catalog";
 import { assessCostReadiness } from "@/modules/pricing";
 import { CostReadinessPanel } from "@/components/admin/cost-readiness";
 import { GenerateReviewButton } from "./generate-review-button";
@@ -145,7 +145,7 @@ export default async function BusinessIntelligencePage({
   const params = await searchParams;
   const period = parsePeriod(params);
   const report: BusinessIntelligenceReport = await buildBusinessIntelligenceReport(period);
-  const costReadiness = assessCostReadiness(COST_MODEL, await listCatalogProducts());
+  const costReadiness = assessCostReadiness(COST_MODEL, await listAllCatalogProducts());
   const s = report.snapshot;
   const revenue = s.commerce.revenue;
   const funnel = s.commerce.funnel;

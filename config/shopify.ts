@@ -1,4 +1,4 @@
-import { PRODUCTS } from "./products";
+import { LAUNCH_PRODUCTS } from "./products";
 import type { Product, ProductConfiguration } from "@/types/commerce";
 
 /**
@@ -29,11 +29,27 @@ import type { Product, ProductConfiguration } from "@/types/commerce";
  *   quantity                            → the line quantity → line quantity
  *
  * `printOption` and `quantity` change the PRICE, not the item, and BagDirect
- * owns price. Folding them into the variant key would demand
- * 4 products × sizes × materials × colors × 3 print × 5 tiers ≈ 1,700 Shopify
- * variants that exist only to encode arithmetic this codebase already does
- * deterministically. They travel as line-item attributes instead (visible on
- * the order, used by fulfilment).
+ * owns price. Folding them into the variant key would demand a variant per
+ * print option per quantity tier — Shopify rows that exist only to encode
+ * arithmetic this codebase already does deterministically. They travel as
+ * line-item attributes instead (visible on the order, used by fulfilment).
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * ONLY LAUNCH-ENABLED CONFIGURATIONS ARE REQUIRED
+ * ─────────────────────────────────────────────────────────────────────────
+ * `requiredMerchandiseKeys()` reads LAUNCH_PRODUCTS, not the whole file. A
+ * launch-disabled product cannot be browsed, priced or checked out, so
+ * demanding Shopify variants for it would be asking the owner to create
+ * merchandise that can never be sold — and would report a launch blocker
+ * that blocks nothing.
+ *
+ * For the Product #1 MVP that is 2 sizes × 1 material × 2 colors = FOUR
+ * variants:
+ *   Large / Black · Large / White · Extra Large / Black · Extra Large / White
+ *
+ * Re-enabling a product in config/products.ts automatically re-adds its
+ * combinations here — the requirement follows the catalog, it is never a
+ * hand-maintained list.
  *
  * ─────────────────────────────────────────────────────────────────────────
  * OWNER INPUT REQUIRED — the map below ships EMPTY on purpose
@@ -66,7 +82,7 @@ export function merchandiseKey(input: {
  *
  * Fill with real ids from the Shopify admin, e.g.
  *
- *   "p-custom-takeout|m|standard|white": "gid://shopify/ProductVariant/44123456789012",
+ *   "p-custom-takeout|l|insulated|black": "gid://shopify/ProductVariant/44123456789012",
  *
  * Rules enforced by `validateMerchandiseMap()` and its tests:
  *   - a key that is not in `requiredMerchandiseKeys()` is an ERROR (typo, or
@@ -114,7 +130,7 @@ function isPurchasableCombination(product: Product, sizeId: string, materialId: 
 }
 
 /** Every merchandise key a customer could actually check out with, in stable order. */
-export function requiredMerchandiseKeys(products: Product[] = PRODUCTS): { key: MerchandiseKey; label: string }[] {
+export function requiredMerchandiseKeys(products: Product[] = LAUNCH_PRODUCTS): { key: MerchandiseKey; label: string }[] {
   const out: { key: MerchandiseKey; label: string }[] = [];
   for (const product of products) {
     for (const size of product.sizes) {
@@ -191,7 +207,7 @@ export type MerchandiseMapValidation = {
  */
 export function validateMerchandiseMap(
   map: Record<MerchandiseKey, string> = SHOPIFY_MERCHANDISE_MAP,
-  products: Product[] = PRODUCTS,
+  products: Product[] = LAUNCH_PRODUCTS,
 ): MerchandiseMapValidation {
   const required = requiredMerchandiseKeys(products);
   const requiredKeys = new Set(required.map((r) => r.key));

@@ -3,7 +3,7 @@ import { PolicyPage } from "@/components/layout/PolicyPage";
 
 export const metadata: Metadata = {
   title: "Return Policy",
-  description: "Return eligibility for standard and custom-printed non-woven bags.",
+  description: "Return eligibility for custom-printed insulated takeout bags.",
   alternates: { canonical: "/return-policy" },
   robots: { index: true },
 };

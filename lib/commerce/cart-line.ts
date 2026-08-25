@@ -71,7 +71,7 @@ export function cartLineOptionSummary(product: Product, config: ProductConfigura
   const size = product.sizes.find((s) => s.id === config.sizeId);
   const color = product.colors.find((c) => c.id === config.colorId);
   const print = product.printOptions.find((p) => p.id === config.printOptionId);
-  return [size ? `${size.label} (${formatDimensions(size.dimensions)})` : "", color?.label, print?.label]
+  return [size ? `${size.label} (${formatDimensions({ ...size.dimensions, unit: size.unit })})` : "", color?.label, print?.label]
     .filter(Boolean)
     .join(" · ");
 }

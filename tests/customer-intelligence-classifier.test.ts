@@ -93,12 +93,12 @@ describe("classifyConversation — labels are validated server-side", () => {
 describe("processCustomerIntelligence — idempotent explicit batches", () => {
   it("classifies pending conversations and persists prompt/model metadata + deterministic support", async () => {
     const session = await makeSession();
-    const { conversation, messages } = await seedConversation(session.id, ["Do you sell insulated bags?"]);
+    const { conversation, messages } = await seedConversation(session.id, ["Do you sell wine gift boxes?"]);
     const fake = new FakeAiProvider([
       output({
         questions: [{ theme: "PRODUCT_AVAILABILITY", messageId: messages[0].id }],
         objections: [],
-        requests: [{ kind: "product", normalized: "insulated bag", messageId: messages[0].id }],
+        requests: [{ kind: "product", normalized: "wine gift box", messageId: messages[0].id }],
       }),
     ]);
     const result = await processCustomerIntelligence({ runtime: new AiRuntime({ provider: fake }) });
@@ -112,7 +112,7 @@ describe("processCustomerIntelligence — idempotent explicit batches", () => {
     expect(row!.promptVersion).toBe("1.0.0");
     // Catalog support decided deterministically — the model never said "unsupported".
     expect(row!.unsupportedRequestsJson).toEqual([
-      { kind: "product", normalized: "insulated bag", messageId: messages[0].id, support: "unsupported" },
+      { kind: "product", normalized: "wine gift box", messageId: messages[0].id, support: "unsupported" },
     ]);
   });
 

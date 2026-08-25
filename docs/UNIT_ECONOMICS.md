@@ -160,20 +160,24 @@ order revenue — adding it would credit money the revenue metric never counted.
 
 ### What is measurable today
 
-`customerCharge` is `{ kind: "not_collected" }`, and that is a **structural
-fact, not an assumption**: `orders` has no shipping column, `createOrder` sets
-`totalCents = subtotalCents`, and the storefront says "shipping calculated at
-checkout" because `config/shipping.ts` has no rate source. So today:
+`customerCharge` is `{ kind: "flat_per_order", centsPerOrder: 10_000 }` since
+the Product #1 production configuration, and that is a **structural fact, not
+an assumption**: checkout really does collect $100 once per order, as a single
+`shippingLine` on the Shopify draft order that is read back and verified. It
+is therefore reported **PARTIAL**, not AVAILABLE — `orders` still records only
+product revenue (`totalCents = subtotalCents`; there is no shipping column), so
+this is a CONFIGURED CONSTANT applied to every order rather than a per-order
+recorded amount. Product revenue and the shipping charge stay semantically
+distinct in the accounting, which is the point: the $100 is never counted as
+product revenue.
 
-```
-shippingSubsidy = actualShippingCost − 0 = actualShippingCost
-```
+The freight COST it offsets (`products.*.shipping`) is still null, so the
+subsidy stays UNAVAILABLE rather than being reported as `−$100`.
 
 The other two bases:
 
-- `flat_per_order` — supported, but since orders record no shipping charge it
-  is a CONFIGURED CONSTANT applied to every order, so shipping economics (and
-  therefore contribution) are reported **PARTIAL**, not AVAILABLE.
+- `not_collected` — checkout collects no separate shipping charge, so the
+  subsidy is the full freight cost. This was the state before Product #1.
 - `unavailable` — the owner does not know. Shipping subsidy and contribution
   profit are **UNAVAILABLE**. Gross profit is unaffected.
 

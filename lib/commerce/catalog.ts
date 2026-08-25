@@ -1,4 +1,4 @@
-import { PRODUCTS, getProductBySlug } from "@/config/products";
+import { LAUNCH_PRODUCTS, PRODUCTS, getProductBySlug } from "@/config/products";
 import type { Product } from "@/types/commerce";
 
 /**
@@ -35,7 +35,29 @@ import type { Product } from "@/types/commerce";
  * they are never sold a mock order.
  */
 
+/**
+ * ─────────────────────────────────────────────────────────────────────────
+ * LAUNCH SCOPE (Production Configuration — Product #1 MVP)
+ * ─────────────────────────────────────────────────────────────────────────
+ * These reads serve LAUNCH-ENABLED products only. A product carrying demo or
+ * unconfirmed production data is `launchEnabled: false` in
+ * config/products.ts, and hiding it here — at the one facade every read goes
+ * through — is what makes it unreachable everywhere at once: listings, the
+ * product page (404), the sitemap, landing pages, AI tool results, the cart,
+ * and checkout (an unknown product id is rejected).
+ *
+ * `listAllCatalogProducts` is the deliberate exception: CONFIGURATION
+ * validation must see every entry that exists in the file, or a cost entry
+ * for a launch-disabled product would look like a cost entry for a product
+ * that does not exist. It is never a customer-facing read.
+ */
+
 export async function listCatalogProducts(): Promise<Product[]> {
+  return LAUNCH_PRODUCTS;
+}
+
+/** Every catalog entry, launch-enabled or not. Configuration validation only. */
+export async function listAllCatalogProducts(): Promise<Product[]> {
   return PRODUCTS;
 }
 
@@ -44,9 +66,9 @@ export async function getCatalogProduct(slug: string): Promise<Product | null> {
 }
 
 export async function getCatalogProductById(id: string): Promise<Product | null> {
-  return PRODUCTS.find((p) => p.id === id) ?? null;
+  return LAUNCH_PRODUCTS.find((p) => p.id === id) ?? null;
 }
 
 export async function getHeroCatalogProduct(): Promise<Product> {
-  return PRODUCTS.find((p) => p.hero) ?? PRODUCTS[0];
+  return LAUNCH_PRODUCTS.find((p) => p.hero) ?? LAUNCH_PRODUCTS[0];
 }

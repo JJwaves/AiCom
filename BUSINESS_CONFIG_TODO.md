@@ -4,6 +4,130 @@ Everything the business owner must provide before launch. Each item lists
 **where it goes** in the codebase. Nothing here is invented — placeholders
 render visibly until replaced.
 
+---
+
+## THE SHORT LIST — what blocks a soft launch, in the order to do it
+
+**Updated by the Product #1 Production Configuration session (2026-08-17).**
+Three items are now CLOSED — the product data, its prices and its MOQ are real
+and owner-confirmed — and the Shopify variant count dropped from **114 to 4**,
+because only launch-enabled configurations require merchandise. What remains is
+infrastructure and store setup: no code, no session and no feature is between
+you and a first sale.
+
+Roughly in dependency order:
+
+| # | What | Where it goes | Why it blocks |
+| --- | --- | --- | --- |
+| 1 | **Production Postgres** (pooled URL) + backups/PITR + a tested restore | `DATABASE_URL` | Nothing runs. The app refuses to start on the embedded DB in production, by design |
+| 2 | **Domain** | `NEXT_PUBLIC_SITE_DOMAIN` (build-time — needs a redeploy) | Canonical URLs, sitemap, robots. Unset, crawling is refused entirely |
+| 3 | **Contact + factory facts**: service email, phone, factory location, shipping origin, **transit time** | `config/business.ts`, `config/shipping.ts` | Customers currently see `[TO BE PROVIDED]` on /contact, /about, /shipping-policy |
+| 4 | ~~Real prices~~ **DONE** — Product #1 carries confirmed prices and `pricingStatus: "LIVE"`. One step left: set `NEXT_PUBLIC_DEMO_PRICING=false` in the production environment | env (build-time) | Until the flag is false the storefront still shows the demo notice over real prices, and withholds the offer from structured data |
+| 5 | ~~Confirmed MOQ~~ **DONE** — 5,000 pieces per design, `MOQ_CONFIRMED: true` | `config/business.ts` | — |
+| 6 | **Shopify store** + Admin API token (`write_draft_orders` + `read_orders`) + webhook secret | env (server-only) | No checkout, no payment, no reconciliation |
+| 7 | **4 Shopify variant GIDs** — Large/Black, Large/White, Extra Large/Black, Extra Large/White | `config/shopify.ts → SHOPIFY_MERCHANDISE_MAP` | 0 of 4 mapped. An unmapped configuration fails checkout closed |
+| 8 | **Private S3-compatible bucket** + 5 `ARTWORK_S3_*` vars + CORS for your origin | env (server-only) | Product #1 always prints custom artwork, so it is unbuyable until uploads work |
+| 9 | **Admin credentials** (long random password) | `ADMIN_USER` / `ADMIN_PASSWORD` | Readiness, handoffs and reconciliation are unreachable |
+| 10 | **Shopify US shipping profile + tax settings + live payment gateway** | Shopify admin | Only a person can verify these; BagDirect cannot see them |
+| 11 | **Product photography** (6 shots — see "Product #1" below) | `config/products.ts` → `images[].src` | Not a blocker; the page renders labelled placeholder slots and looks like a prototype |
+
+**Then, before real traffic** (WARNINGs, not blockers, but do them):
+`RATE_LIMIT_IP_SALT`, platform/WAF rate-limit rules, an error-tracking
+destination (`SENTRY_DSN` or `ERROR_WEBHOOK_URL`) with real alert rules,
+`HUMAN_HANDOFF_WEBHOOK_URL`, `QUOTE_WEBHOOK_URL`, and a legal review of the
+policy pages.
+
+**Deliberately NOT blocking a sale** (documented decisions, not oversights):
+the cost model (`config/costs.ts`) — missing costs block profit analytics, never
+checkout; AI model pricing (`config/ai-pricing.ts`); analytics IDs; Google Ads;
+Meta. Leave AI Sales OFF until `npm run ai:smoke` passes against a real key.
+
+## Product #1 — Custom Insulated Takeout Bag (PRODUCTION RECORD)
+
+The first and, for the soft launch, the ONLY launch-enabled product
+(`config/products.ts` → `launchEnabled: true`). The three seed products remain
+in the file as catalog architecture with `launchEnabled: false`: their pages
+404, they are absent from listings, the sitemap, AI tool results and the
+Shopify merchandise requirements, and they still carry DEMO pricing — which is
+exactly why they must stay unreachable.
+
+| Fact | Value | Status |
+| --- | --- | --- |
+| Positioning | Custom printed insulated bags for restaurants, takeout, catering, bakeries and food delivery | Confirmed |
+| Construction (FIXED — a specification, not an option) | PP laminated outer · non-woven fabric middle · aluminium foil inner | Confirmed |
+| Sizes | Large 26 × 26 × 17 cm · Extra Large 30 × 30 × 20 cm (width × height × side gusset) | Confirmed |
+| Colors | Black · White | Confirmed |
+| Printing | Custom logo/artwork. The customer does NOT choose a print-colour count — production review determines the colour separation | Confirmed |
+| MOQ | 5,000 pieces **per design** | Confirmed |
+| Direct-checkout quantities | 5,000 · 10,000 only | Confirmed |
+| Sell prices (product subtotals) | Large $950 / $1,500 · Extra Large $1,150 / $1,900 | Confirmed |
+| Shipping | Flat **$100 per order**, United States only, charged once per order | Confirmed |
+| Digital proof | Provided for approval **before** production begins; production starts after approval | Confirmed |
+| Production lead time | 15–30 days **after artwork approval** (never from checkout) | Confirmed |
+| Market | United States only. Canada is NOT served during the launch | Confirmed |
+| Product photography | 6 slots, all empty | **[TO BE PROVIDED]** |
+| Transit time after production | — | **[TO BE PROVIDED]** |
+| Supplier cost in USD | — | **[TO BE PROVIDED]** (see below) |
+
+### Quote boundaries — what does NOT go through normal checkout
+
+Each of these routes to `/request-quote`, enforced in the deterministic engine
+(`modules/pricing → requiresCustomQuote`), so a hand-crafted request cannot buy
+one either:
+
+- fewer than 5,000 pieces
+- more than 10,000 pieces, or any quantity that is not exactly 5,000 or 10,000
+- a custom size (the factory supports them; **5,000-piece minimum applies**)
+- any colour other than black or white
+
+### Why $0.19/bag and not $0.185 at Extra Large 10,000
+
+The supplier's own historic XL job sold 10,000 bags for $1,850 ex-shipping —
+$0.185/bag. BagDirect's money model is integer cents per unit end to end (the
+pricing engine, the cart, the order rows and the Shopify `priceOverride`), and
+fractional cents are rejected by cost validation on purpose. Rather than
+introduce a fractional-cent monetary authority for one launch price, the MVP
+sells Extra Large 10,000 at $0.19/bag = **$1,900**. Changing this later is a
+price decision, not a code change.
+
+### Supplier reference costs — NON-AUTHORITATIVE, deliberately not configured
+
+The factory quotes in CNY:
+
+| | Production | Plate fee |
+| --- | --- | --- |
+| Large | ¥0.67 / bag | ¥310 per production colour |
+| Extra Large | ¥0.81 / bag | ¥400 per production colour |
+
+A historic XL job: 10,000 × ¥0.81 + 6 colours × ¥400 = **¥10,500**.
+
+These figures live in a COMMENT in `config/costs.ts` and nowhere else.
+`config/costs.ts` is USD integer cents with **no FX conversion model anywhere
+in the unit-economics architecture**; entering ¥0.81 there would either be read
+as 81 US cents against a 23¢ sell price (a fabricated catastrophic loss) or as
+0.81 of an unnamed currency. Either way the dashboard would show a confident,
+false margin.
+
+**What we need from you to unlock profit analytics:** the same costs
+NORMALISED TO USD, or an explicit FX/accounting policy to implement. Until
+then profit correctly reports "unavailable" — and missing costs never block a
+sale.
+
+### Product photography — exactly what is needed
+
+Owner/supplier-provided assets only. **No AI-generated product photography.**
+Do not misrepresent another supplier's branding as BagDirect's. Set each
+`src` in `config/products.ts` → `images`; the alt text is already written.
+
+| Slot | Shot |
+| --- | --- |
+| `hero-black` | Black custom printed insulated takeout bag — hero |
+| `white` | White insulated restaurant takeout bag |
+| `base-colors` | Black + white standard base-colour example |
+| `size-guide` | Large vs Extra Large size comparison |
+| `xl-print-example` | Extra Large real custom-print example |
+| `artwork-proof` | Artwork / digital-proof example |
+
 ## Identity
 
 | Item | Where |
@@ -416,12 +540,24 @@ You must create, in Shopify, one product per BagDirect product and one variant
 per purchasable **size × material × color** combination, then paste each
 variant's GID into `config/shopify.ts → SHOPIFY_MERCHANDISE_MAP`:
 
+For the Product #1 soft launch that is **four variants**, not 114 — only
+LAUNCH-ENABLED configurations are required:
+
 ```ts
 export const SHOPIFY_MERCHANDISE_MAP: Record<MerchandiseKey, string> = {
-  "p-custom-takeout|m|standard|white": "gid://shopify/ProductVariant/44123456789012",
-  // …one line per required key
+  "p-custom-takeout|l|insulated|black":  "gid://shopify/ProductVariant/…",
+  "p-custom-takeout|l|insulated|white":  "gid://shopify/ProductVariant/…",
+  "p-custom-takeout|xl|insulated|black": "gid://shopify/ProductVariant/…",
+  "p-custom-takeout|xl|insulated|white": "gid://shopify/ProductVariant/…",
 };
 ```
+
+In Shopify that is ONE product with two options (Size: Large / Extra Large,
+Colour: Black / White). **Quantity is not a variant** (it is the line
+quantity), **artwork is not a variant** (it is a line attribute), and
+**printing is not a variant** — folding any of them in would multiply four
+rows into dozens that exist only to encode arithmetic this codebase already
+does.
 
 `requiredMerchandiseKeys()` prints the exact list. `validateMerchandiseMap()`
 tells you what is missing, mistyped or duplicated — it must report
@@ -430,8 +566,10 @@ tells you what is missing, mistyped or duplicated — it must report
 Notes that will save you time:
 - **Custom colors are excluded** — they route to custom quotes and can never
   be checked out, so they need no variant.
-- Each product's own sizes and materials apply (e.g. `p-heavy-duty` has no
-  Small and only the heavy material).
+- **Launch-disabled products need no variants at all.** They cannot be
+  browsed or bought, so `requiredMerchandiseKeys()` excludes them; enabling one
+  later re-adds its combinations automatically.
+- Each product's own sizes and materials apply.
 - **The Shopify variant PRICE does not matter.** BagDirect sends its own price
   as a `priceOverride` on every line, and verifies it came back unchanged. Set
   the variant prices to anything sane; they are never charged.

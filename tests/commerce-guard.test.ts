@@ -205,6 +205,33 @@ describe("readiness reporting never throws and never leaks", () => {
     expect(readiness.error).toBeTruthy();
   });
 
+  /**
+   * PL Session 04 regression. `mode: "misconfigured"` covered three different
+   * problems, and every diagnostic surface assumed it meant "partial". In
+   * production with NOTHING set — the state every launch starts from — the
+   * owner was told to look for a half-set variable that did not exist.
+   */
+  it("distinguishes nothing-configured from partial from invalid", () => {
+    setNodeEnv("production");
+    expect(describeCommerceReadiness().reason).toBe("not_configured");
+
+    process.env.SHOPIFY_STORE_DOMAIN = "bagdirect-test.myshopify.com";
+    expect(describeCommerceReadiness().reason).toBe("partial");
+
+    configureShopify();
+    process.env.SHOPIFY_STORE_DOMAIN = "https://bagdirect-test.myshopify.com/";
+    const invalid = describeCommerceReadiness();
+    expect(invalid.reason).toBe("invalid");
+    expect(invalid.missingEnv).toEqual([]);
+  });
+
+  it("reports the mock/development case as not_configured, not misconfigured", () => {
+    setNodeEnv("development");
+    const readiness = describeCommerceReadiness();
+    expect(readiness.mode).toBe("mock");
+    expect(readiness.reason).toBe("not_configured");
+  });
+
   it("reports shopify when complete", () => {
     setNodeEnv("production");
     configureShopify();

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { COST_MODEL, COST_MODEL_VERSION } from "@/config/costs";
 import { PRODUCTS } from "@/config/products";
+import { FLAT_US_SHIPPING_CENTS } from "@/config/shipping";
 import {
   captureOrderCostSnapshot,
   computeOrderUnitEconomics,
@@ -287,8 +288,15 @@ describe("shipping economics (§10, §51)", () => {
     expect(e.status).toBe("PARTIAL");
   });
 
-  it("today's checkout collects no shipping charge — a structural fact, not a guess", () => {
-    expect(COST_MODEL.shippingPolicy.customerCharge.kind).toBe("not_collected");
+  it("the configured customer shipping charge is the flat per-order rate, not a guess", () => {
+    // Checkout really does collect $100 once per order (the Shopify draft
+    // order carries a single shippingLine), so `not_collected` would now be
+    // false. It is `flat_per_order`, which the model reports as PARTIAL
+    // because BagDirect's order rows still record product revenue only.
+    expect(COST_MODEL.shippingPolicy.customerCharge).toEqual({
+      kind: "flat_per_order",
+      centsPerOrder: FLAT_US_SHIPPING_CENTS,
+    });
   });
 });
 

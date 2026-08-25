@@ -11,16 +11,16 @@ import { COST_MODEL } from "@/config/costs";
 import { PRODUCTS } from "@/config/products";
 import type { ProductConfiguration } from "@/types/commerce";
 
-const product = PRODUCTS[0]; // Custom Non-Woven Takeout Bag
+const product = PRODUCTS[0]; // Custom Insulated Takeout Bag (launch product)
 
 const config: ProductConfiguration = {
   productId: product.id,
-  sizeId: "m",
-  materialId: "standard",
-  colorId: "white",
-  printOptionId: "one-color",
+  sizeId: "l",
+  materialId: "insulated",
+  colorId: "black",
+  printOptionId: "full-custom",
   quantity: 5000,
-  artwork: { fileName: "logo.png", fileType: "image/png", fileSizeBytes: 1024 },
+  artwork: { artworkId: "art_test", fileName: "logo.png", fileType: "image/png", fileSizeBytes: 1024 },
 };
 
 /**
@@ -31,16 +31,14 @@ const FIXTURE: CostModelConfig = {
   version: "test-fixture-1",
   products: {
     [product.id]: {
-      baseManufacturingCentsPerUnit: 10,
-      sizeAdjustmentCentsPerUnit: { s: 0, m: 2, l: 4, xl: 6 },
-      materialAdjustmentCentsPerUnit: { standard: 0, heavy: 3 },
+      baseManufacturingCentsPerUnit: 5,
+      sizeAdjustmentCentsPerUnit: { l: 1, xl: 2 },
+      materialAdjustmentCentsPerUnit: { insulated: 0 },
       printing: {
-        none: { centsPerUnit: 0, setupFeeCents: 0 },
-        "one-color": { centsPerUnit: 2, setupFeeCents: 5000 },
-        "two-color": { centsPerUnit: 4, setupFeeCents: 9000 },
+        "full-custom": { centsPerUnit: 1, setupFeeCents: 1000 },
       },
       packagingCentsPerUnit: 1,
-      shipping: { kind: "per_carton", centsPerCarton: 2000, unitsPerCarton: 300 },
+      shipping: { kind: "per_carton", centsPerCarton: 200, unitsPerCarton: 300 },
       otherVariableCentsPerUnit: 0,
     },
   },
@@ -55,8 +53,8 @@ const FIXTURE: CostModelConfig = {
   },
 };
 
-// Engine sell price for the fixture config: tier 5000 @42¢ + one-color +5¢ = 47¢ → $2,350.00
-const SELL_TOTAL = 47 * 5000;
+// Engine sell price for the fixture config: tier 5,000 @19¢ + Large size delta 0¢ = 19¢ → $950.00
+const SELL_TOTAL = 19 * 5000;
 
 describe("cost model — unconfigured (the real config/costs.ts)", () => {
   it("ships with every input as a [TO BE PROVIDED] placeholder", () => {
@@ -71,7 +69,7 @@ describe("cost model — unconfigured (the real config/costs.ts)", () => {
     const calc = calculatePrice(product, config, COST_MODEL);
     expect(calc.ok).toBe(true);
     if (!calc.ok) return;
-    expect(calc.unitPriceCents).toBe(47);
+    expect(calc.unitPriceCents).toBe(19);
     expect(calc.totalPriceCents).toBe(SELL_TOTAL);
     expect(calc.costStatus).toBe("unconfigured");
     expect(calc.costs).toBeNull();
@@ -105,14 +103,14 @@ describe("cost model — configured fixture math", () => {
     expect(computed.status).toBe("configured");
     if (computed.status !== "configured") return;
     const c = computed.costs;
-    expect(c.manufacturingCents).toBe((10 + 2 + 0) * 5000); // 60000
-    expect(c.printingCents).toBe(2 * 5000); // 10000
-    expect(c.setupCents).toBe(5000);
+    expect(c.manufacturingCents).toBe((5 + 1 + 0) * 5000); // 30000
+    expect(c.printingCents).toBe(1 * 5000); // 5000
+    expect(c.setupCents).toBe(1000);
     expect(c.packagingCents).toBe(1 * 5000); // 5000
-    expect(c.estimatedShippingCents).toBe(Math.ceil(5000 / 300) * 2000); // 17 cartons → 34000
-    expect(c.paymentFeeCents).toBe(Math.round((SELL_TOTAL * 290) / 10_000) + 30); // 6815 + 30 = 6845
+    expect(c.estimatedShippingCents).toBe(Math.ceil(5000 / 300) * 200); // 17 cartons → 3400
+    expect(c.paymentFeeCents).toBe(Math.round((SELL_TOTAL * 290) / 10_000) + 30); // 2755 + 30 = 2785
     expect(c.otherVariableCents).toBe(0);
-    expect(c.totalCostCents).toBe(60000 + 10000 + 5000 + 5000 + 34000 + 6845);
+    expect(c.totalCostCents).toBe(30000 + 5000 + 1000 + 5000 + 3400 + 2785);
     Object.values(c).forEach((v) => expect(Number.isInteger(v)).toBe(true));
   });
 
@@ -120,8 +118,8 @@ describe("cost model — configured fixture math", () => {
     const calc = calculatePrice(product, config, FIXTURE);
     if (!calc.ok) throw new Error("expected priced");
     expect(calc.costStatus).toBe("configured");
-    const productCost = 60000 + 10000 + 5000 + 5000; // manufacturing+printing+setup+packaging
-    const totalCost = productCost + 34000 + 6845;
+    const productCost = 30000 + 5000 + 1000 + 5000; // manufacturing+printing+setup+packaging
+    const totalCost = productCost + 3400 + 2785;
     expect(calc.grossProfitCents).toBe(SELL_TOTAL - productCost);
     expect(calc.contributionProfitCents).toBe(SELL_TOTAL - totalCost);
     expect(calc.grossMarginPct).toBeCloseTo((SELL_TOTAL - productCost) / SELL_TOTAL);
@@ -152,7 +150,7 @@ describe("cost model — configured fixture math", () => {
     const ok = evaluatePriceFloor(SELL_TOTAL, product, config, FIXTURE);
     expect(ok.allowed).toBe(true);
 
-    const tooLow = evaluatePriceFloor(120_000, product, config, FIXTURE); // $1,200 < cost base
+    const tooLow = evaluatePriceFloor(45_000, product, config, FIXTURE); // $450 — under the margin floor
     expect(tooLow.allowed).toBe(false);
     if (!tooLow.allowed) expect(tooLow.violatedRules).toContain("below_minimum_allowed_price");
   });
@@ -193,19 +191,25 @@ describe("cost model — configured fixture math", () => {
 
   it("a partially configured model (one missing size entry) is unconfigured, never guessed", () => {
     const partial: CostModelConfig = structuredClone(FIXTURE);
-    delete partial.products[product.id].sizeAdjustmentCentsPerUnit!.m;
+    delete partial.products[product.id].sizeAdjustmentCentsPerUnit!.l;
     const computed = computeCosts(product, config, SELL_TOTAL, partial);
     expect(computed.status).toBe("unconfigured");
     if (computed.status === "unconfigured") {
-      expect(computed.missingInputs).toEqual([`products.${product.id}.sizeAdjustmentCentsPerUnit.m`]);
+      expect(computed.missingInputs).toEqual([`products.${product.id}.sizeAdjustmentCentsPerUnit.l`]);
     }
   });
 
   it("calculatePrice refuses configurations that need a custom quote", () => {
-    const custom = calculatePrice(product, { ...config, colorId: "custom" }, FIXTURE);
-    expect(custom.ok).toBe(false);
-    if (!custom.ok) expect(custom.reason).toBe("requires_custom_quote");
+    const customDims = calculatePrice(
+      product,
+      { ...config, customDimensions: { width: 40, height: 40, gusset: 25 } },
+      FIXTURE,
+    );
+    expect(customDims.ok).toBe(false);
+    if (!customDims.ok) expect(customDims.reason).toBe("requires_custom_quote");
     const belowMoq = calculatePrice(product, { ...config, quantity: 100 }, FIXTURE);
     expect(belowMoq.ok).toBe(false);
+    const offTier = calculatePrice(product, { ...config, quantity: 12_000 }, FIXTURE);
+    expect(offTier.ok).toBe(false);
   });
 });

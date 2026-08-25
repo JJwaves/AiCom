@@ -897,6 +897,31 @@ readiness BLOCKS and robots.txt refuses crawling entirely, while `next build`
 keeps working, because missing owner input must never make the build
 impossible.
 
+*Amended by Production Launch Session 04:* the decision was implemented in
+`robots.ts` and missed in `sitemap.ts`, which kept building its base URL from
+`BUSINESS.DOMAIN` — the placeholder-returning accessor that exists only so the
+build survives. `GET /sitemap.xml` therefore answered 200 with 21 URLs on
+`example.com`, and a `Disallow: /` in robots.txt stops neither a direct fetch
+nor a manual Search Console submission. `sitemap.ts` now reads `siteUrl()` and
+publishes an EMPTY sitemap when the domain is unknown. The general lesson: a
+"no surface fabricates X" invariant needs a test that enumerates the surfaces,
+because the second surface is the one that gets missed.
+
+**Decision 82b (Session 04). Evidence and assertion are OR-ed, never AND-ed.**
+Two inputs describe whether a displayed price is real: `product.pricingStatus`
+in the catalog (evidence) and `NEXT_PUBLIC_DEMO_PRICING` in the environment
+(an assertion a person types). Three surfaces combined them three different
+ways, and two were unsafe: the configurator required BOTH to be demo before
+warning, and the product JSON-LD dropped `offers` on the FLAG ALONE. So
+setting `NEXT_PUBLIC_DEMO_PRICING=false` before replacing the prices — the
+exact ordering mistake the launch checklist warns about — simultaneously
+removed the "demo pricing" badge and published demo prices to search engines
+as real `AggregateOffer` values. All three now call
+`showsDemoPricing(product)`, which is `isDemoPricing() || pricingStatus ===
+"DEMO"`. When a fact has an evidence source and an assertion source, the
+fail-safe combination is OR: neither may overrule the other into presenting a
+fake number as real.
+
 **Decision 83. Error tracking is a transport, not an SDK.** Sentry's ingest is
 a documented HTTP endpoint and the capability needed — "an unexpected server
 exception reaches somebody" — is about sixty lines of `fetch`. The SDK's real

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { COST_MODEL } from "@/config/costs";
 import { getDb } from "@/db/client";
 import { orderLines, orders } from "@/db/schema";
-import { listCatalogProducts } from "@/lib/commerce/catalog";
+import { listAllCatalogProducts } from "@/lib/commerce/catalog";
 import { captureOrderCostSnapshot, type CapturedOrderCosts } from "@/modules/pricing";
 import { configurationSchema } from "@/lib/validation/checkout";
 import { newId } from "./id";
@@ -82,7 +82,7 @@ async function captureCosts(
   now: Date,
 ): Promise<CapturedOrderCosts | null> {
   try {
-    const products = await listCatalogProducts();
+    const products = await listAllCatalogProducts();
     const byId = new Map(products.map((p) => [p.id, p]));
     return captureOrderCostSnapshot(
       {

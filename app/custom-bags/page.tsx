@@ -5,7 +5,7 @@ import { FinalCTA } from "@/components/landing/sections";
 export const metadata: Metadata = {
   title: "Custom Bag Manufacturing",
   description:
-    "Custom non-woven bag manufacturing beyond the standard catalog: custom dimensions, Pantone-matched colors, handle styles and materials, quoted individually.",
+    "Custom bag manufacturing beyond the standard catalog: custom dimensions (5,000-piece minimum), other base colors, and quantities above 10,000 — all quoted individually.",
   alternates: { canonical: "/custom-bags" },
 };
 
@@ -13,7 +13,7 @@ const CAPABILITIES = [
   { h: "Custom dimensions", b: "Width, height and gusset to your spec — sized to your containers, boxes or bottles. Provide target dimensions in the quote form and we'll confirm tooling feasibility." },
   { h: "Custom colors", b: "Pantone-matched fabric beyond the standard palette. Matched colors are dyed per run, so they're quoted with the quantity." },
   { h: "Handle styles", b: "Loop handles are standard; die-cut and reinforced handles are quoted per design once factory capability for your spec is confirmed." },
-  { h: "Material weights", b: "Standard and heavy-duty non-woven fabric today; other GSM weights are quoted per run." },
+  { h: "Materials and construction", b: "Our launch product is a fixed three-layer insulated construction: PP laminated outer, non-woven middle, aluminium foil inner. Other constructions and GSM weights are quoted per run." },
   { h: "Full-coverage printing", b: "Beyond 1- and 2-color logos: multi-color and large-format prints are reviewed by the artwork team and quoted individually." },
   { h: "Volume programs", b: "Standing reorder schedules and distributor volumes — tell us your annual usage and we'll price a program, not just an order." },
 ];

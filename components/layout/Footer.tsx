@@ -8,7 +8,7 @@ const GROUPS: { heading: string; links: { href: string; label: string }[] }[] = 
     heading: "Shop",
     links: [
       { href: "/products", label: "All products" },
-      { href: "/products/custom-non-woven-takeout-bags", label: "Custom takeout bags" },
+      { href: "/products/custom-insulated-takeout-bags", label: "Custom insulated takeout bags" },
       { href: "/bulk-takeout-bags", label: "Bulk pricing" },
       { href: "/request-quote", label: "Request a quote" },
     ],
@@ -44,7 +44,7 @@ export function Footer() {
               {BUSINESS.DISPLAY_NAME}
             </p>
             <p className="mt-2 max-w-xs text-sm text-ink-3">{BUSINESS.TAGLINE}</p>
-            <p className="label-mono mt-4">Ships to US &amp; Canada</p>
+            <p className="label-mono mt-4">Ships within the U.S. · flat $100 per order</p>
           </div>
           <div className="grid grid-cols-2 gap-8 sm:grid-cols-3">
             {GROUPS.map((g) => (

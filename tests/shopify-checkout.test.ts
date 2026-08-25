@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PRODUCTS } from "@/config/products";
+import { LAUNCH_PRODUCTS, PRODUCTS } from "@/config/products";
 import {
   buildDraftOrderInput,
   buildLineAttributes,
@@ -10,6 +10,7 @@ import {
   verifyDraftOrderPricing,
 } from "@/lib/commerce/shopify";
 import type { Cart, CartLine } from "@/types/commerce";
+import { FLAT_US_SHIPPING_CENTS, FLAT_US_SHIPPING_COPY } from "@/config/shipping";
 import { cartSubtotalCents, createFakeShopifyTransport, TEST_CREDENTIALS, testMerchandiseMap } from "./shopify-helpers";
 
 /**
@@ -21,25 +22,25 @@ import { cartSubtotalCents, createFakeShopifyTransport, TEST_CREDENTIALS, testMe
  * introduces one.
  */
 
-const product = PRODUCTS[0]; // 5,000 → 42¢/unit
+const product = PRODUCTS[0]; // Product #1 — Large × 5,000 → 19¢/unit
 
 function line(overrides: Partial<CartLine> = {}, config: Record<string, unknown> = {}): CartLine {
   return {
     lineId: "L1",
     config: {
       productId: product.id,
-      sizeId: "m",
-      materialId: "standard",
-      colorId: "white",
-      printOptionId: "none",
+      sizeId: "l",
+      materialId: "insulated",
+      colorId: "black",
+      printOptionId: "full-custom",
       quantity: 5000,
       artwork: null,
       ...config,
     },
-    unitPriceCents: 42,
-    totalCents: 42 * 5000,
+    unitPriceCents: 19,
+    totalCents: 19 * 5000,
     title: product.title,
-    optionSummary: "Medium · White · No logo",
+    optionSummary: "Large · Black · Custom logo / artwork printing",
     ...overrides,
   } as CartLine;
 }
@@ -76,7 +77,7 @@ describe("draft-order input", () => {
   it("sends the BagDirect engine price as an explicit priceOverride", () => {
     const input = buildDraftOrderInput(cart(), {}, {}, MAP);
     expect(input.lineItems).toHaveLength(1);
-    expect(input.lineItems[0].priceOverride).toEqual({ amount: "0.42", currencyCode: "USD" });
+    expect(input.lineItems[0].priceOverride).toEqual({ amount: "0.19", currencyCode: "USD" });
     expect(input.lineItems[0].quantity).toBe(5000);
     expect(input.lineItems[0].variantId).toMatch(/^gid:\/\/shopify\/ProductVariant\/\d+$/);
   });
@@ -85,23 +86,48 @@ describe("draft-order input", () => {
     const input = buildDraftOrderInput(
       cart([
         line(),
-        line({ lineId: "L2", unitPriceCents: 55, totalCents: 55 * 1000 }, { colorId: "black", quantity: 1000 }),
+        line({ lineId: "L2", unitPriceCents: 23, totalCents: 23 * 5000 }, { sizeId: "xl", colorId: "white" }),
       ]),
       {},
       {},
       MAP,
     );
     expect(input.lineItems).toHaveLength(2);
-    expect(input.lineItems[1].priceOverride.amount).toBe("0.55");
-    expect(input.lineItems[1].quantity).toBe(1000);
+    expect(input.lineItems[1].priceOverride.amount).toBe("0.23");
+    expect(input.lineItems[1].quantity).toBe(5000);
     // Different colors → different variants.
     expect(input.lineItems[0].variantId).not.toBe(input.lineItems[1].variantId);
   });
 
-  it("sets NO shippingLine, leaving Shopify's shipping profiles to rate the order (§37)", () => {
+  it("sets ONE flat shippingLine on the ORDER — the customer charge, once", () => {
     const input = buildDraftOrderInput(cart(), {}, {}, MAP);
-    expect(input).not.toHaveProperty("shippingLine");
-    expect(JSON.stringify(input)).not.toMatch(/shipping/i);
+    expect(input.shippingLine).toEqual({
+      title: FLAT_US_SHIPPING_COPY,
+      priceWithCurrency: { amount: "100.00", currencyCode: "USD" },
+    });
+  });
+
+  it("charges shipping ONCE for a multi-configuration order, never once per line", () => {
+    const single = buildDraftOrderInput(cart(), {}, {}, MAP);
+    const multi = buildDraftOrderInput(
+      cart([line(), line({ lineId: "L2", unitPriceCents: 23, totalCents: 23 * 5000 }, { sizeId: "xl", colorId: "white" })]),
+      {},
+      {},
+      MAP,
+    );
+    expect(multi.lineItems).toHaveLength(2);
+    // The shipping charge is a property of the order, so it cannot scale
+    // with the line count even by accident.
+    expect(multi.shippingLine).toEqual(single.shippingLine);
+    for (const item of multi.lineItems) {
+      expect(JSON.stringify(item)).not.toContain("100.00");
+    }
+  });
+
+  it("never puts the shipping charge inside a line price", () => {
+    const input = buildDraftOrderInput(cart(), {}, {}, MAP);
+    expect(input.lineItems[0].priceOverride.amount).toBe("0.19");
+    expect(Number(input.lineItems[0].priceOverride.amount) * 5000).toBe(950);
   });
 
   it("throws UNMAPPED_CONFIGURATION rather than substituting a variant", () => {
@@ -133,18 +159,17 @@ describe("line-item attributes — what travels to Shopify (§11)", () => {
   const attrsFor = (config: Record<string, unknown> = {}) =>
     Object.fromEntries(buildLineAttributes(line({}, config), product).map((a) => [a.key, a.value]));
 
-  it("carries the customer-visible configuration", () => {
+  it("carries the customer-visible configuration, with the dimension unit", () => {
     const attrs = attrsFor();
-    expect(attrs.Size).toContain("Medium");
-    expect(attrs.Material).toBe("Standard");
-    expect(attrs.Color).toBe("White");
-    expect(attrs.Printing).toBe("No logo");
+    expect(attrs.Size).toBe("Large (26×26×17 cm)");
+    expect(attrs.Material).toBe("Insulated (PP laminated / non-woven / aluminium foil)");
+    expect(attrs.Color).toBe("Black");
+    expect(attrs.Printing).toBe("Custom logo / artwork printing");
     expect(attrs.Quantity).toBe("5000");
   });
 
   it("carries the artwork reference as a durable id, not a signed URL (§31)", () => {
     const attrs = attrsFor({
-      printOptionId: "one-color",
       artwork: { artworkId: "art_abc", fileName: "logo.png", fileType: "image/png", fileSizeBytes: 100 },
     });
     expect(attrs["_bd_artwork_id"]).toBe("art_abc");
@@ -173,15 +198,27 @@ describe("line-item attributes — what travels to Shopify (§11)", () => {
 
 describe("price verification (§12) — the customer never pays a number BagDirect did not compute", () => {
   const draftFor = (c: Cart) => ({
-    currencyCode: c.currency,
-    subtotalPriceSet: { shopMoney: { amount: (cartSubtotalCents(c) / 100).toFixed(2), currencyCode: c.currency } },
+    currencyCode: c.currency as string,
+    subtotalPriceSet: { shopMoney: { amount: (cartSubtotalCents(c) / 100).toFixed(2), currencyCode: c.currency as string } },
+    totalShippingPriceSet: {
+      shopMoney: { amount: (FLAT_US_SHIPPING_CENTS / 100).toFixed(2), currencyCode: c.currency as string },
+    },
     lineItems: {
       nodes: c.lines.map((l) => ({
         quantity: l.config.quantity,
-        originalUnitPriceSet: { shopMoney: { amount: (l.unitPriceCents / 100).toFixed(2), currencyCode: c.currency } },
-        originalTotalSet: { shopMoney: { amount: (l.totalCents / 100).toFixed(2), currencyCode: c.currency } },
+        originalUnitPriceSet: { shopMoney: { amount: (l.unitPriceCents / 100).toFixed(2), currencyCode: c.currency as string } },
+        originalTotalSet: { shopMoney: { amount: (l.totalCents / 100).toFixed(2), currencyCode: c.currency as string } },
       })),
     },
+  });
+
+  it("fails when the shipping charge is not exactly one flat rate", () => {
+    const doubled = draftFor(cart());
+    doubled.totalShippingPriceSet.shopMoney.amount = "200.00";
+    const result = verifyDraftOrderPricing(cart(), doubled);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.problems.join(" ")).toMatch(/shipping/);
   });
 
   it("passes on an exact match", () => {
@@ -190,7 +227,7 @@ describe("price verification (§12) — the customer never pays a number BagDire
 
   it("fails on a unit-price difference of one cent", () => {
     const draft = draftFor(cart());
-    draft.lineItems.nodes[0].originalUnitPriceSet.shopMoney.amount = "0.43";
+    draft.lineItems.nodes[0].originalUnitPriceSet.shopMoney.amount = "0.20";
     const result = verifyDraftOrderPricing(cart(), draft);
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("unreachable");
@@ -308,8 +345,12 @@ describe("catalog authority stays with BagDirect (§7, §8)", () => {
     const { transport, calls } = createFakeShopifyTransport();
     const provider = createShopifyProvider(TEST_CREDENTIALS, { transport, merchandiseMap: MAP });
     const products = await provider.listProducts();
-    expect(products).toEqual(PRODUCTS);
+    // LAUNCH-enabled only: a launch-disabled catalog entry is not sellable,
+    // so the commerce provider must not offer it either.
+    expect(products).toEqual(LAUNCH_PRODUCTS);
     expect(products.length).toBeGreaterThan(0);
+    expect(products.every((p) => p.launchEnabled)).toBe(true);
+    expect(PRODUCTS.length).toBeGreaterThan(products.length);
     // A catalog read makes NO Shopify call, so Shopify being down cannot
     // empty the storefront — and there is nothing to "fall back" from.
     expect(calls).toHaveLength(0);

@@ -15,9 +15,9 @@ import {
 } from "@/components/landing/sections";
 
 export const metadata: Metadata = {
-  title: "Custom Non-Woven Takeout Bags, Factory Direct",
+  title: "Custom Insulated Takeout Bags, Factory Direct",
   description:
-    "Custom non-woven takeout bags for restaurants, cafes and food businesses. Add your logo, choose your quantity, see the price, and order online. Ships to the US and Canada.",
+    "Custom printed insulated takeout bags for restaurants, catering and food delivery. Two sizes, black or white, 5,000-piece minimum, digital proof before production. Ships within the United States.",
   alternates: { canonical: "/" },
 };
 
@@ -34,18 +34,18 @@ export default async function HomePage() {
         <div className="grid items-center gap-10 lg:grid-cols-[1.05fr_1fr]">
           <div data-experiment={heroCopy ? "homepage.hero" : undefined}>
             <h1 className="text-4xl leading-[1.05] sm:text-5xl" style={{ fontWeight: 600 }}>
-              {heroCopy?.headline ?? "Custom takeout bags, direct from the factory."}
+              {heroCopy?.headline ?? "Custom insulated takeout bags, direct from the factory."}
             </h1>
             <p className="mt-4 max-w-lg text-lg text-ink-2">
               {heroCopy?.subheadline ??
-                "Custom non-woven bags for restaurants, cafes and food businesses. Add your logo, choose your quantity, and order online."}
+                "Custom printed insulated bags for restaurants, catering and food delivery. Upload your logo, choose your quantity, and order online."}
             </p>
             <div className="mt-7 flex flex-wrap gap-3">
-              <Link href="/products/custom-non-woven-takeout-bags" className="btn btn--primary">
-                {heroCopy?.ctaLabel ?? "Shop takeout bags"}
+              <Link href="/products/custom-insulated-takeout-bags" className="btn btn--primary">
+                {heroCopy?.ctaLabel ?? "Shop insulated takeout bags"}
               </Link>
               <Link href="/bulk-takeout-bags" className="btn btn--secondary">
-                See volume pricing
+                See pricing
               </Link>
             </div>
           </div>
@@ -63,8 +63,8 @@ export default async function HomePage() {
           Built for food businesses
         </h2>
         <p className="mt-2 max-w-lg text-ink-3">
-          Four formats cover most takeout counters. Every one configures the same way: size, color, printing,
-          quantity — price on screen the whole time.
+          Insulated bags for restaurants, takeout, catering, bakeries and food delivery. Configure size, color and
+          quantity, upload your artwork — the price is on screen the whole time.
         </p>
         <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {products.map((p) => (
@@ -79,7 +79,7 @@ export default async function HomePage() {
           How ordering works
         </h2>
         <p className="mt-2 max-w-lg text-ink-3">
-          Four steps, no sales calls required. Your artwork gets a proof before anything prints.
+          Four steps, no sales calls required. A digital proof comes to you for approval before anything prints.
         </p>
         <div className="mt-8">
           <HowItWorks />
@@ -93,27 +93,27 @@ export default async function HomePage() {
       <section className="mx-auto max-w-6xl space-y-16 px-4 py-16 sm:px-6">
         <UseCaseSection
           title="For restaurants: every takeout order carries your brand"
-          body="Delivery drivers, takeout counters, catering drop-offs — your bag travels further than your dining room. Durable non-woven fabric holds containers upright and gets reused, so the logo keeps circulating."
+          body="Delivery drivers, takeout counters, catering drop-offs — your bag travels further than your dining room. A PP laminated outer layer, non-woven middle layer and aluminium foil lining hold temperature on the way, and the printed logo keeps circulating."
           bullets={[
-            "Wide gussets sized for takeout containers",
-            "1- and 2-color logo printing with proof approval",
-            "Volume pricing that drops at 1,000 / 2,500 / 5,000+ units",
+            "Large 26 × 26 × 17 cm and Extra Large 30 × 30 × 20 cm",
+            "Custom logo printing with a digital proof before production",
+            "5,000 or 10,000 pieces per design, priced on the page",
           ]}
           cta="Customize your bags"
           href="/restaurant-takeout-bags"
         />
         <UseCaseSection
           reverse
-          title="For coffee shops & cafes: small orders, big brand surface"
-          body="Pastry boxes, drink carriers, weekend pastry runs. The cafe carryout format is sized for smaller orders and prints beautifully with a single-color logo."
+          title="For catering, bakeries and delivery: arrives the way it left"
+          body="Catering drop-offs, bakery boxes and third-party delivery all spend time in transit. The foil lining is there for that trip, and your artwork is on the outside of it."
           bullets={[
-            "Compact sizes that fit drink carriers and pastry boxes",
-            "Kraft, white, black and custom colors",
-            "Reusable — your customers carry it back in",
+            "Insulated construction for hot and cold orders",
+            "Black or white base, your artwork printed on it",
+            "Flat $100 U.S. shipping, charged once per order",
           ]}
           cta="Create your bag"
           href="/coffee-shop-bags"
-          illustrationColor="oklch(75% 0.06 70)"
+          illustrationColor="oklch(97% 0 0)"
         />
       </section>
 

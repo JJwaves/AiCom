@@ -12,7 +12,13 @@ import type { ToolDefinition } from "./types";
  * dumps), keeping prompts small.
  */
 
-const dimensionsSchema = z.object({ width: z.number(), height: z.number(), gusset: z.number() });
+const dimensionsSchema = z.object({
+  width: z.number(),
+  height: z.number(),
+  gusset: z.number(),
+  /** Never assume: Product #1 is specified in centimetres. */
+  unit: z.enum(["in", "cm"]),
+});
 
 const productSummarySchema = z.object({
   id: z.string(),
@@ -85,9 +91,18 @@ const productDetailsOutput = z.object({
   description: z.string(),
   minQuantity: z.number().int(),
   quantityPresets: z.array(z.number().int()),
+  /**
+   * FALSE = `quantityPresets` are the ONLY quantities that can be ordered
+   * online. Anything else is a quote path — never state a price for it.
+   */
+  allowCustomQuantity: z.boolean(),
   currency: z.enum(["USD", "CAD"]),
   pricingStatus: z.enum(["DEMO", "LIVE"]),
-  sizes: z.array(z.object({ id: z.string(), label: z.string(), dimensionsInches: dimensionsSchema })),
+  /** Fixed construction facts. NOT selectable — never offer them as choices. */
+  specifications: z.array(z.object({ label: z.string(), value: z.string() })),
+  sizes: z.array(
+    z.object({ id: z.string(), label: z.string(), dimensions: dimensionsSchema, priceDeltaCents: z.number().int() }),
+  ),
   materials: z.array(
     z.object({ id: z.string(), label: z.string(), gsm: z.number().nullable(), priceDeltaCents: z.number().int() }),
   ),
@@ -115,9 +130,11 @@ export const getProductDetailsTool: ToolDefinition<
 > = {
   name: "getProductDetails",
   description:
-    "Full public details for one product (by productId or slug): sizes, materials, colors, handles " +
-    "(only confirmed:true handles may be promised — others require a custom quote), print options, volume tiers. " +
-    "Prices are per-unit cents; pricingStatus DEMO means demo pricing that must be labeled as such.",
+    "Full public details for one product (by productId or slug): sizes (with their unit and per-unit price delta), " +
+    "materials, colors, handles (only confirmed:true handles may be promised — others require a custom quote), " +
+    "print options, quantity tiers and fixed specifications. `specifications` are construction facts, not choices. " +
+    "`allowCustomQuantity: false` means quantityPresets are the only orderable quantities — anything else is a " +
+    "quote. Prices are per-unit cents; pricingStatus DEMO means demo pricing that must be labeled as such.",
   permission: "READ",
   inputSchema: z
     .object({
@@ -144,9 +161,16 @@ export const getProductDetailsTool: ToolDefinition<
       description: product.description,
       minQuantity: product.minQuantity,
       quantityPresets: product.quantityPresets,
+      allowCustomQuantity: product.allowCustomQuantity,
       currency: product.currency,
       pricingStatus: product.pricingStatus,
-      sizes: product.sizes.map((s) => ({ id: s.id, label: s.label, dimensionsInches: s.dimensions })),
+      specifications: product.specifications,
+      sizes: product.sizes.map((s) => ({
+        id: s.id,
+        label: s.label,
+        dimensions: { ...s.dimensions, unit: s.unit },
+        priceDeltaCents: s.priceDeltaCents,
+      })),
       materials: product.materials.map((m) => ({ id: m.id, label: m.label, gsm: m.gsm, priceDeltaCents: m.priceDeltaCents })),
       colors: product.colors.map((c) => ({ id: c.id, label: c.label, custom: c.custom === true })),
       handles: product.handles.map((h) => ({ id: h.id, label: h.label, confirmed: h.confirmed })),

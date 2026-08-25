@@ -90,10 +90,10 @@ describe("missing cost configuration never blocks commerce (§46, §47)", () => 
   const product = PRODUCTS[0];
   const config = {
     productId: product.id,
-    sizeId: "m",
-    materialId: "standard",
-    colorId: "white",
-    printOptionId: "one-color" as const,
+    sizeId: "l",
+    materialId: "insulated",
+    colorId: "black",
+    printOptionId: "full-custom" as const,
     quantity: 5_000,
     artwork: { fileName: "logo.png", fileType: "image/png", fileSizeBytes: 1024 },
   };
@@ -102,18 +102,19 @@ describe("missing cost configuration never blocks commerce (§46, §47)", () => 
     const calc = calculatePrice(product, config, COST_MODEL);
     expect(calc.ok).toBe(true);
     if (!calc.ok) return;
-    expect(calc.unitPriceCents).toBe(47); // 5,000 tier @42¢ + one-color 5¢
-    expect(calc.totalPriceCents).toBe(235_000);
+    expect(calc.unitPriceCents).toBe(19); // 5,000 tier @19¢, Large size delta 0¢
+    expect(calc.totalPriceCents).toBe(95_000);
     expect(calc.costStatus).toBe("unconfigured");
     expect(calc.grossProfitCents).toBeNull();
   });
 
-  it("leaves storefront sell prices exactly as configured — 13.5 changes no price", () => {
-    expect(PRODUCTS[0].pricingTiers.map((t) => t.unitPriceCents)).toEqual([62, 54, 47, 42, 37, 33]);
+  it("prices come ONLY from the catalog — the cost model changes no sell price", () => {
+    // Product #1's confirmed launch tiers, and the untouched seed catalog.
+    expect(PRODUCTS[0].pricingTiers.map((t) => t.unitPriceCents)).toEqual([19, 15]);
+    expect(PRODUCTS[0].minQuantity).toBe(5_000);
     expect(PRODUCTS[1].pricingTiers.map((t) => t.unitPriceCents)).toEqual([78, 69, 61, 55, 49]);
     expect(PRODUCTS[2].pricingTiers.map((t) => t.unitPriceCents)).toEqual([55, 48, 42, 37, 33]);
     expect(PRODUCTS[3].pricingTiers.map((t) => t.unitPriceCents)).toEqual([92, 83, 74, 66]);
-    expect(PRODUCTS.every((p) => p.minQuantity === 500)).toBe(true);
   });
 
   it("no commerce path consults cost readiness", () => {

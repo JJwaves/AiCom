@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { validateArtworkFile, ARTWORK_MAX_BYTES } from "@/lib/validation/artwork";
 import { quoteSchema } from "@/lib/validation/quote";
-import { detectMarket, estimateShipping } from "@/config/shipping";
+import { detectMarket, estimateShipping, FLAT_US_SHIPPING_CENTS } from "@/config/shipping";
 
 describe("validateArtworkFile", () => {
   it("accepts a PNG", () => {
@@ -55,8 +55,14 @@ describe("shipping market detection", () => {
   it("rejects garbage", () => {
     expect(detectMarket("hello")).toBeNull();
   });
-  it("returns checkout mode (no invented prices) when no rate source is set", () => {
+  it("returns the configured flat U.S. charge — a real number, not an invented estimate", () => {
     const est = estimateShipping("10001");
-    expect(est.mode).toBe("checkout");
+    expect(est).toMatchObject({ mode: "flat", costCents: FLAT_US_SHIPPING_CENTS });
+  });
+
+  it("refuses to quote a market we do not ship to", () => {
+    // Canada is a valid postal format and a market we do not serve during
+    // the launch; it is told so rather than quoted the US rate.
+    expect(estimateShipping("M5V 2T6")).toMatchObject({ mode: "unavailable" });
   });
 });

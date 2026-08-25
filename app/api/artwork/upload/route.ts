@@ -162,7 +162,7 @@ export async function POST(req: Request) {
       {
         ok: false,
         code: configuration ? "STORAGE_NOT_CONFIGURED" : "STORAGE_ERROR",
-        error: "Logo uploads aren't available right now. Choose “No logo” to continue, or contact us to send artwork.",
+        error: "Logo uploads aren't available right now. Request a custom quote and we'll take your artwork by email.",
       },
       { status: 503 },
     );

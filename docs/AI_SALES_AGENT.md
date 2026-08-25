@@ -2,7 +2,7 @@
 
 The customer-facing **AI Packaging Expert** (Session 05) — the first real
 agent on the Session 04 runtime. It helps restaurants/cafes choose custom
-non-woven takeout bags: understands needs, answers supported product
+insulated takeout bags: understands needs, answers supported product
 questions, recommends products, explains engine-computed pricing, and
 escalates to a human when a request can't be safely handled.
 

@@ -12,6 +12,7 @@ import {
   applyConfigurationPatch,
   defaultConfiguration,
   describeConfiguration,
+  reconcileConfiguration,
   validateFullConfiguration,
   type ConfigurationDescription,
   type ConfigurationPatch,
@@ -99,13 +100,15 @@ export async function resolveCurrentConfiguration(
     if (!product) return { status: "unknown_product" };
     const row = await getActiveConfiguration(sessionId, productId);
     if (!row) return toCurrent(product, defaultConfiguration(product), 0, "none");
-    return toCurrent(product, row.configJson, row.version, row.source);
+    // A row written under an older catalog may name options this product no
+    // longer offers — reconcile before anyone renders or prices it.
+    return toCurrent(product, reconcileConfiguration(product, row.configJson).config, row.version, row.source);
   }
   const row = await getLatestActiveConfiguration(sessionId);
   if (!row) return null;
   const product = await getCatalogProductById(row.productId);
   if (!product) return null; // catalog changed under the row — treat as no current configuration
-  return toCurrent(product, row.configJson, row.version, row.source);
+  return toCurrent(product, reconcileConfiguration(product, row.configJson).config, row.version, row.source);
 }
 
 export type ApplyConfigurationResult =
@@ -132,7 +135,9 @@ export async function applyConfigurationPatchForSession(opts: {
   if (!product) return { status: "unknown_product" };
 
   const row = await getActiveConfiguration(opts.sessionId, opts.productId);
-  const base = row?.configJson ?? defaultConfiguration(product);
+  // Same reconciliation as the read path: a patch must never preserve an
+  // option the catalog has since retired in the fields it does not touch.
+  const base = row ? reconcileConfiguration(product, row.configJson).config : defaultConfiguration(product);
   const baseRevision = row?.version ?? 0;
 
   // A stale expectation fails BEFORE validation so the agent reconciles

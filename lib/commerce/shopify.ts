@@ -1,4 +1,5 @@
-import { PRODUCTS, getProductBySlug } from "@/config/products";
+import { LAUNCH_PRODUCTS, getProductBySlug } from "@/config/products";
+import { FLAT_US_SHIPPING_CENTS, FLAT_US_SHIPPING_COPY } from "@/config/shipping";
 import { resolveMerchandise, SHOPIFY_MERCHANDISE_MAP, type MerchandiseKey } from "@/config/shopify";
 import type { Cart, CartLine, CheckoutResult, Product } from "@/types/commerce";
 import type { ShopifyCredentials } from "./config";
@@ -73,6 +74,12 @@ const DRAFT_ORDER_CREATE = /* GraphQL */ `
             currencyCode
           }
         }
+        totalShippingPriceSet {
+          shopMoney {
+            amount
+            currencyCode
+          }
+        }
         lineItems(first: 50) {
           nodes {
             quantity
@@ -121,6 +128,7 @@ type DraftOrderCreateResponse = {
       invoiceUrl: string | null;
       currencyCode: string;
       subtotalPriceSet: { shopMoney: Money };
+      totalShippingPriceSet: { shopMoney: Money };
       lineItems: { nodes: { quantity: number; originalUnitPriceSet: { shopMoney: Money }; originalTotalSet: { shopMoney: Money } }[] };
     } | null;
     userErrors: { field: string[] | null; message: string }[];
@@ -180,7 +188,12 @@ export function buildLineAttributes(line: CartLine, product: Product): { key: st
   const print = product.printOptions.find((p) => p.id === line.config.printOptionId);
 
   const attributes: { key: string; value: string }[] = [
-    { key: "Size", value: size ? `${size.label} (${size.dimensions.width}×${size.dimensions.height}×${size.dimensions.gusset} in)` : line.config.sizeId },
+    {
+      key: "Size",
+      value: size
+        ? `${size.label} (${size.dimensions.width}×${size.dimensions.height}×${size.dimensions.gusset} ${size.unit})`
+        : line.config.sizeId,
+    },
     { key: "Material", value: material?.label ?? line.config.materialId },
     { key: "Color", value: color?.label ?? line.config.colorId },
     { key: "Printing", value: print?.label ?? line.config.printOptionId },
@@ -248,6 +261,7 @@ export function verifyDraftOrderPricing(
   draft: {
     currencyCode: string;
     subtotalPriceSet: { shopMoney: Money };
+    totalShippingPriceSet: { shopMoney: Money };
     lineItems: { nodes: { quantity: number; originalUnitPriceSet: { shopMoney: Money }; originalTotalSet: { shopMoney: Money } }[] };
   },
 ): PriceVerificationResult {
@@ -293,6 +307,16 @@ export function verifyDraftOrderPricing(
     );
   }
 
+  // Shipping is ONE flat charge per ORDER. Verifying the order-level total
+  // (not a per-line figure) is what catches the failure that matters: a
+  // shipping charge that scaled with the number of configurations.
+  const actualShipping = decimalStringToCents(draft.totalShippingPriceSet.shopMoney.amount);
+  if (actualShipping === null || actualShipping !== FLAT_US_SHIPPING_CENTS) {
+    problems.push(
+      `shipping: Shopify ${draft.totalShippingPriceSet.shopMoney.amount} vs BagDirect ${centsToDecimalString(FLAT_US_SHIPPING_CENTS)} (flat, once per order)`,
+    );
+  }
+
   return problems.length === 0 ? { ok: true } : { ok: false, problems };
 }
 
@@ -307,8 +331,15 @@ export type DraftOrderLineInput = {
   customAttributes: { key: string; value: string }[];
 };
 
+/** ONE per order — never per line. See buildDraftOrderInput. */
+export type DraftOrderShippingLineInput = {
+  title: string;
+  priceWithCurrency: { amount: string; currencyCode: string };
+};
+
 export type DraftOrderInput = {
   lineItems: DraftOrderLineInput[];
+  shippingLine: DraftOrderShippingLineInput;
   customAttributes: { key: string; value: string }[];
   tags: string[];
   presentmentCurrencyCode: string;
@@ -323,11 +354,19 @@ export type DraftOrderInput = {
  * client: `priceOverride` is a straight restatement of that authoritative
  * quote in Shopify's wire format.
  *
- * No `shippingLine` is set, deliberately: that leaves Shopify's shipping
- * profiles to rate the order at checkout from the customer's real address
- * (§37). Likewise no tax fields — Shopify's tax configuration applies (§38).
- * Both are Shopify's job in this architecture, and neither is claimed to be
- * verified until it is tested in a real store.
+ * SHIPPING: exactly ONE `shippingLine` is set, carrying the MVP flat U.S.
+ * charge (config/shipping.ts → FLAT_US_SHIPPING_CENTS). It is attached to
+ * the ORDER, not to a line item, which is what makes a six-configuration
+ * B2B order pay $100 rather than $600 — the structure enforces "once per
+ * order", not a comment. The customer sees it on the Shopify checkout before
+ * paying, and it is read back and verified below like every other amount.
+ *
+ * It is a CUSTOMER CHARGE, not a freight cost and not tax: it never enters
+ * BagDirect's product revenue and never enters supplier cost.
+ *
+ * TAX is still Shopify's: no tax fields are set, Shopify's tax configuration
+ * applies (§38), and that is not claimed to be verified until it is tested in
+ * a real store.
  */
 export function buildDraftOrderInput(
   cart: Cart,
@@ -337,7 +376,7 @@ export function buildDraftOrderInput(
   merchandiseMap: Record<MerchandiseKey, string> = SHOPIFY_MERCHANDISE_MAP,
 ): DraftOrderInput {
   const lineItems = cart.lines.map((line) => {
-    const product = PRODUCTS.find((p) => p.id === line.config.productId);
+    const product = LAUNCH_PRODUCTS.find((p) => p.id === line.config.productId);
     if (!product) {
       throw new ShopifyCheckoutError("UNKNOWN_PRODUCT", `cart line references unknown product "${line.config.productId}"`);
     }
@@ -375,6 +414,10 @@ export function buildDraftOrderInput(
 
   return {
     lineItems,
+    shippingLine: {
+      title: FLAT_US_SHIPPING_COPY,
+      priceWithCurrency: { amount: centsToDecimalString(FLAT_US_SHIPPING_CENTS), currencyCode: cart.currency },
+    },
     customAttributes,
     tags: ["bagdirect"],
     presentmentCurrencyCode: cart.currency,
@@ -421,7 +464,7 @@ export function createShopifyProvider(
      * the storefront's catalog does not depend on Shopify being up.
      */
     async listProducts(): Promise<Product[]> {
-      return PRODUCTS;
+      return LAUNCH_PRODUCTS;
     },
 
     async getProduct(slug: string): Promise<Product | null> {

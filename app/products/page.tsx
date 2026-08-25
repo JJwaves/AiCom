@@ -3,9 +3,9 @@ import { listCatalogProducts } from "@/lib/commerce/catalog";
 import { ProductCard } from "@/components/landing/sections";
 
 export const metadata: Metadata = {
-  title: "All Products — Custom Non-Woven Bags",
+  title: "All Products — Custom Insulated Takeout Bags",
   description:
-    "Custom non-woven takeout, carryout and catering bags with logo printing and volume pricing. Configure and order online; ships to the US and Canada.",
+    "Custom printed insulated takeout bags for restaurants, catering and food delivery. Configure size, color and quantity, upload your logo, and order online. Ships within the United States.",
   alternates: { canonical: "/products" },
 };
 

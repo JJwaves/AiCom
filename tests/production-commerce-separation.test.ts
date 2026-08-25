@@ -313,15 +313,16 @@ describe("the deterministic pricing engine remains the price authority", () => {
     expect(source).toContain("verifyDraftOrderPricing");
   });
 
-  it("storefront tier prices are byte-identical to before this session", () => {
+  it("storefront tier prices are exactly Product #1's confirmed launch prices", () => {
     const hero = PRODUCTS.find((p) => p.id === "p-custom-takeout");
     expect(hero?.pricingTiers).toEqual([
-      { minQty: 500, unitPriceCents: 62 },
-      { minQty: 1000, unitPriceCents: 54 },
-      { minQty: 2500, unitPriceCents: 47 },
-      { minQty: 5000, unitPriceCents: 42 },
-      { minQty: 10000, unitPriceCents: 37 },
-      { minQty: 25000, unitPriceCents: 33 },
+      { minQty: 5000, unitPriceCents: 19 },
+      { minQty: 10000, unitPriceCents: 15 },
+    ]);
+    // Extra Large is the same table plus a flat per-unit size delta.
+    expect(hero?.sizes.map((s) => [s.id, s.priceDeltaCents])).toEqual([
+      ["l", 0],
+      ["xl", 4],
     ]);
   });
 

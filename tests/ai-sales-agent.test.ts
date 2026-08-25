@@ -139,7 +139,7 @@ describe("tools & structured signals", () => {
       NO_EXTRACTION,
     ]);
     expect(result.recommendedProductId).toBe("p-custom-takeout");
-    expect(result.recommendedProductPath).toBe("/products/custom-non-woven-takeout-bags");
+    expect(result.recommendedProductPath).toBe("/products/custom-insulated-takeout-bags");
     const names = (await sessionEvents(session.id)).map((e) => e.name);
     expect(names).toContain("ai_product_recommended");
   });
@@ -401,12 +401,12 @@ describe("shared configuration flow (Session 06)", () => {
   it("updateConfiguration turn: configurator state changes, result carries the validated update, snapshot persisted", async () => {
     const p = await product();
     const session = await makeSession();
-    const { result } = await turn(session.id, "Make it 5,000 black bags", [
+    const { result } = await turn(session.id, "Make it 5,000 white bags", [
       {
         kind: "toolCalls",
-        calls: [{ name: "updateConfiguration", input: { productId: p.id, patch: { colorId: "black", quantity: 5000 } } }],
+        calls: [{ name: "updateConfiguration", input: { productId: p.id, patch: { colorId: "white", quantity: 5000 } } }],
       },
-      reply("Done — 5,000 black bags. Your configurator shows the updated price."),
+      reply("Done — 5,000 white bags. Your configurator shows the updated price."),
       NO_EXTRACTION,
     ]);
 
@@ -417,11 +417,11 @@ describe("shared configuration flow (Session 06)", () => {
       revision: 1,
       requiresCustomQuote: false,
     });
-    expect(result.configurationUpdate?.config).toMatchObject({ colorId: "black", quantity: 5000 });
+    expect(result.configurationUpdate?.config).toMatchObject({ colorId: "white", quantity: 5000 });
     expect(result.configurationUpdate?.changedFields.sort()).toEqual(["colorId", "quantity"]);
     expect(result.configurationUpdate?.changeSummary).toEqual(
       expect.arrayContaining([
-        { field: "Color", value: "Black" },
+        { field: "Color", value: "White" },
         { field: "Quantity", value: "5,000" },
       ]),
     );
@@ -435,7 +435,7 @@ describe("shared configuration flow (Session 06)", () => {
     expect(row?.configJson.quantity).toBe(5000);
     const rows = await listMessages(result.conversationId);
     const assistant = rows.find((m) => m.role === "assistant");
-    expect(assistant?.configSnapshotJson).toMatchObject({ productId: p.id, colorId: "black", quantity: 5000 });
+    expect(assistant?.configSnapshotJson).toMatchObject({ productId: p.id, colorId: "white", quantity: 5000 });
 
     const names = (await sessionEvents(session.id)).map((e) => e.name);
     expect(names).toContain("ai_configuration_updated");
@@ -452,7 +452,7 @@ describe("shared configuration flow (Session 06)", () => {
       config: { ...defaultConfiguration(p), sizeId: "l", colorId: "black", quantity: 5000 },
     });
 
-    const { fake } = await turn(session.id, "Can I add my logo?", [reply("You already have 1-color printing selected."), NO_EXTRACTION]);
+    const { fake } = await turn(session.id, "Can I add my logo?", [reply("Custom logo printing is already selected — upload your artwork in the configurator."), NO_EXTRACTION]);
     const system = fake.requests[0].request.system ?? "";
     expect(system).toContain("Current configuration (live, revision 1)");
     expect(system).toContain("color Black");

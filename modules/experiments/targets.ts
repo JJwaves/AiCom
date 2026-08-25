@@ -98,12 +98,12 @@ export const EXPERIMENT_TARGETS: Record<string, ExperimentTargetSpec> = {
     renderedBy: "app/page.tsx",
     protectedFields: ["ctaHref", "pricingPanel", "structuredData", "metadata"],
     describeControl: () => ({
-      summary: "The homepage hero renders its built-in headline, sub-headline and “Shop takeout bags” button.",
+      summary: "The homepage hero renders its built-in headline, sub-headline and “Shop insulated takeout bags” button.",
       config: {
-        headline: "Custom takeout bags, direct from the factory.",
+        headline: "Custom insulated takeout bags, direct from the factory.",
         subheadline:
-          "Custom non-woven bags for restaurants, cafes and food businesses. Add your logo, choose your quantity, and order online.",
-        ctaLabel: "Shop takeout bags",
+          "Custom printed insulated bags for restaurants, catering and food delivery. Upload your logo, choose your quantity, and order online.",
+        ctaLabel: "Shop insulated takeout bags",
       },
     }),
   },

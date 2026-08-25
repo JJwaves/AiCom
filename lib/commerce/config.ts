@@ -143,23 +143,55 @@ export function resolveCommerceConfiguration(): CommerceConfiguration {
 }
 
 /**
+ * Why commerce is not usable, when it is not. `mode: "misconfigured"` alone
+ * cannot be reported to an owner, because it collapses three different
+ * problems with three different fixes (PL Session 04):
+ *
+ *   not_configured  production with NOTHING set — set both variables
+ *   partial         one of the two set — set the other, or unset the one
+ *   invalid         both set, but a value is unusable (store domain shape,
+ *                   unsupported API version) — correct the value
+ *
+ * Reported separately so a diagnostic surface can name the ACTUAL problem
+ * instead of guessing "partially configured" for all three.
+ */
+export type CommerceReadinessReason = "configured" | "not_configured" | "partial" | "invalid";
+
+/**
  * Non-throwing readiness view for admin/diagnostic surfaces. Reports WHICH
  * variables are missing — never their values.
  */
 export function describeCommerceReadiness(): {
   mode: "shopify" | "mock" | "misconfigured";
+  reason: CommerceReadinessReason;
   nodeEnv: string;
   missingEnv: string[];
   error: string | null;
 } {
   const missingEnv = REQUIRED_SHOPIFY_ENV.filter((name) => readEnv(name) === null);
+  const nodeEnv = process.env.NODE_ENV ?? "development";
   try {
     const config = resolveCommerceConfiguration();
-    return { mode: config.mode, nodeEnv: process.env.NODE_ENV ?? "development", missingEnv, error: null };
+    return {
+      mode: config.mode,
+      reason: config.mode === "shopify" ? "configured" : "not_configured",
+      nodeEnv,
+      missingEnv,
+      error: null,
+    };
   } catch (err) {
+    // Which of the three failures happened is decided by the SAME env reading
+    // that resolveCommerceConfiguration() used, not by parsing its message.
+    const reason: CommerceReadinessReason =
+      missingEnv.length === REQUIRED_SHOPIFY_ENV.length
+        ? "not_configured"
+        : missingEnv.length > 0
+          ? "partial"
+          : "invalid";
     return {
       mode: "misconfigured",
-      nodeEnv: process.env.NODE_ENV ?? "development",
+      reason,
+      nodeEnv,
       missingEnv,
       error: err instanceof Error ? err.message : String(err),
     };

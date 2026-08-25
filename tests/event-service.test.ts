@@ -10,7 +10,7 @@ const validEvent = (overrides: Record<string, unknown> = {}) => ({
   name: "product_viewed" as const,
   clientEventId: newId("evt"),
   occurredAt: new Date().toISOString(),
-  page: "/products/custom-non-woven-takeout-bags",
+  page: "/products/custom-insulated-takeout-bags",
   productId: "p-1",
   props: { value: 210, currency: "USD" },
   ...overrides,

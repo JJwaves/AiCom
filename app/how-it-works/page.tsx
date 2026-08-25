@@ -16,7 +16,7 @@ const DETAILS = [
   },
   {
     title: "2 · Add your logo",
-    body: "Upload artwork (PNG, JPG, PDF, SVG, AI, EPS — up to 25 MB) right in the configurator, with a notes field for placement and ink instructions. No logo yet? Order unprinted, or note that you need artwork help.",
+    body: "Upload artwork (PNG, JPG, PDF, AI or EPS — up to 25 MB; SVG is not accepted) right in the configurator, with a notes field for placement and ink instructions. No artwork yet? Use the quote form and tell us — our artwork team will help.",
   },
   {
     title: "3 · Approve your design",
@@ -24,7 +24,7 @@ const DETAILS = [
   },
   {
     title: "4 · We manufacture & ship",
-    body: "The factory produces your order and ships it to your business address in the US or Canada. You'll get a confirmation with tracking when it leaves the dock.",
+    body: "The factory produces your order and ships it to your U.S. business address. Production typically takes 15–30 days after you approve your digital proof, and you'll get tracking when it leaves the dock.",
   },
 ];
 

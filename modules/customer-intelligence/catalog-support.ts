@@ -43,12 +43,21 @@ function phraseMatches(phrase: string, terms: string[]): boolean {
   });
 }
 
-/** Terms that describe the product family the catalog actually sells. */
+/**
+ * Terms that describe the product family the catalog actually sells.
+ *
+ * The seeded terms are generic bag words; everything product-specific is
+ * DERIVED from the live catalog (titles + slug words), so enabling or
+ * disabling a product changes what counts as a gap without editing a list.
+ * That is what stops "insulated bag" being reported as an unmet product gap
+ * now that an insulated bag is exactly what we sell.
+ */
 function catalogProductTerms(products: Product[]): string[] {
-  const terms = new Set<string>(["non-woven", "non woven", "nonwoven", "takeout bag", "take-out bag", "carryout bag", "carry-out bag", "tote"]);
+  const terms = new Set<string>(["takeout bag", "take-out bag", "carryout bag", "carry-out bag", "tote"]);
   for (const p of products) {
     terms.add(norm(p.title));
     for (const word of p.slug.split("-")) if (word.length > 3) terms.add(word);
+    for (const spec of p.specifications) terms.add(norm(spec.value));
   }
   return [...terms];
 }
@@ -110,7 +119,7 @@ export function checkRequestSupport(
 
 /**
  * Below-MOQ is decided ONLY from real numbers: a stated/configured quantity
- * against the product's actual minQuantity (500 across today's catalog).
+ * against the product's actual minQuantity — 5,000 for the launch product.
  */
 export function isBelowMoq(products: Product[], quantity: number, productId?: string | null): boolean {
   if (!Number.isFinite(quantity) || quantity <= 0) return false;

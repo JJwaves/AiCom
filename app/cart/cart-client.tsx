@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { PROOF_POLICY } from "@/config/business";
+import { FLAT_US_SHIPPING_CENTS, FLAT_US_SHIPPING_COPY } from "@/config/shipping";
 import { useCart } from "@/lib/cart/cart-context";
 import { submitCartCheckout } from "@/lib/cart/checkout-client";
 import { quoteConfiguration } from "@/modules/pricing";
@@ -87,8 +89,8 @@ export function CartClient({ products }: { products: Product[] }) {
           Your cart is empty
         </h1>
         <p className="mt-2 text-ink-3">Configure a bag and it lands here.</p>
-        <Link href="/products/custom-non-woven-takeout-bags" className="btn btn--primary mt-6">
-          Shop takeout bags
+        <Link href="/products/custom-insulated-takeout-bags" className="btn btn--primary mt-6">
+          Shop insulated takeout bags
         </Link>
       </section>
     );
@@ -151,13 +153,30 @@ export function CartClient({ products }: { products: Product[] }) {
       </ul>
 
       <div className="graphite-panel mt-8 p-5">
-        <div className="flex items-end justify-between">
-          <div>
-            <p className="label-mono !text-graphite-muted">Subtotal</p>
-            <p className="mt-1 text-xs text-graphite-muted">Shipping and any tax calculated at checkout.</p>
+        {/* Product subtotal, shipping and tax are shown as three distinct
+            things. Shipping is ONE flat charge for the whole order, however
+            many configurations are in it — it is not multiplied per line,
+            and it is not tax and not duty. */}
+        <dl className="space-y-2 font-mono text-sm">
+          <div className="flex items-center justify-between text-graphite-muted">
+            <dt>Product subtotal</dt>
+            <dd>{formatMoney(subtotalCents, cart.currency)}</dd>
           </div>
-          <p className="font-mono text-3xl font-semibold text-graphite-ink">{formatMoney(subtotalCents, cart.currency)}</p>
-        </div>
+          <div className="flex items-center justify-between text-graphite-muted">
+            <dt>Shipping — flat rate, one per order</dt>
+            <dd>{formatMoney(FLAT_US_SHIPPING_CENTS, cart.currency)}</dd>
+          </div>
+          <div className="flex items-end justify-between border-t border-graphite-muted/25 pt-2">
+            <dt className="label-mono !text-graphite-muted">Total before tax</dt>
+            <dd className="font-mono text-3xl font-semibold text-graphite-ink">
+              {formatMoney(subtotalCents + FLAT_US_SHIPPING_CENTS, cart.currency)}
+            </dd>
+          </div>
+        </dl>
+        <p className="mt-2 text-xs text-graphite-muted">
+          {FLAT_US_SHIPPING_COPY}, for the whole order. Any sales tax is calculated at checkout. We ship within the
+          United States only.
+        </p>
         <button type="button" className="btn btn--primary mt-5 w-full !py-4" onClick={checkout} disabled={busy}>
           {busy ? "Opening checkout…" : "Checkout"}
         </button>
@@ -167,7 +186,7 @@ export function CartClient({ products }: { products: Product[] }) {
           </p>
         )}
         <p className="mt-3 text-center text-xs text-graphite-muted">
-          Guest checkout — no account needed. Printed orders get an artwork proof before production.
+          Guest checkout — no account needed. {PROOF_POLICY.detail} {PROOF_POLICY.leadTime}
         </p>
       </div>
     </section>

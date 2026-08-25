@@ -4,7 +4,8 @@ import { notFound } from "next/navigation";
 import Script from "next/script";
 import { getCatalogProduct, listCatalogProducts } from "@/lib/commerce/catalog";
 import { resolveProductPrimaryCta, resolveProductShippingMessage } from "@/lib/experiments/server";
-import { BUSINESS, isDemoPricing } from "@/config/business";
+import { BUSINESS, PROOF_POLICY, showsDemoPricing } from "@/config/business";
+import { FLAT_US_SHIPPING_COPY } from "@/config/shipping";
 import { baseUnitPriceCents, startingUnitPriceCents } from "@/modules/pricing";
 import { ProductConfigurator } from "@/components/product/ProductConfigurator";
 import { HowItWorks } from "@/components/landing/sections";
@@ -20,10 +21,10 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   const product = await getCatalogProduct(slug);
   if (!product) return {};
   return {
-    title: `${product.title} — Volume Pricing & Custom Printing`,
-    description: `${product.positioning} Configure size, color and logo printing online; volume pricing from ${
+    title: `${product.title} — Pricing & Custom Printing`,
+    description: `${product.positioning} Configure size, color and quantity online and upload your logo; from $${
       (startingUnitPriceCents(product) / 100).toFixed(2)
-    } per bag. Ships to the US and Canada.`,
+    } per bag. ${FLAT_US_SHIPPING_COPY}. Ships within the United States.`,
     alternates: { canonical: `/products/${product.slug}` },
   };
 }
@@ -51,7 +52,7 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
     name: product.title,
     description: product.description,
     brand: { "@type": "Brand", name: BUSINESS.BRAND_NAME },
-    ...(isDemoPricing()
+    ...(showsDemoPricing(product)
       ? {}
       : {
           offers: {
@@ -99,6 +100,38 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
           product={product}
           experiments={{ shippingMessage: shippingMessage.override, primaryCta: primaryCta.override }}
         />
+      </section>
+
+      {/* How customization works — three steps, no promise of an automated
+          proof: proof preparation is a human production step. */}
+      <section className="mx-auto max-w-6xl border-t border-rule px-4 py-12 sm:px-6">
+        <h2 className="text-xl" style={{ fontWeight: 600 }}>
+          How customization works
+        </h2>
+        <ol className="mt-6 grid gap-4 sm:grid-cols-3">
+          {[
+            { n: 1, h: "Configure", b: "Choose size, color and quantity." },
+            { n: 2, h: "Upload artwork", b: "Upload your restaurant logo or bag design." },
+            {
+              n: 3,
+              h: "Approve your proof",
+              b: `We'll prepare a digital proof for approval before production. ${PROOF_POLICY.productionStart}`,
+            },
+          ].map((step) => (
+            <li key={step.n} className="surface p-5">
+              <p className="label-mono">Step {step.n}</p>
+              <h3 className="mt-1 text-base" style={{ fontWeight: 600 }}>
+                {step.h}
+              </h3>
+              <p className="mt-1 text-sm text-ink-3">{step.b}</p>
+            </li>
+          ))}
+        </ol>
+        <p className="mt-6 text-sm text-ink-2">{PROOF_POLICY.leadTime}</p>
+        <p className="mt-1 text-sm text-ink-3">
+          {FLAT_US_SHIPPING_COPY}, charged once per order and shown separately from the product subtotal. Any sales tax
+          is calculated at checkout.
+        </p>
       </section>
 
       <section className="mx-auto max-w-6xl border-t border-rule px-4 py-12 sm:px-6">

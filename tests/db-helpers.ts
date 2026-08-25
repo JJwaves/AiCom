@@ -1,6 +1,8 @@
 import { sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
-import { ensureSession, type SessionRow } from "@/lib/data/session-service";
+import { createPendingArtwork, markArtworkUploaded } from "@/lib/data/artwork-service";
+import { ensureSession, SESSION_COOKIE, type SessionRow } from "@/lib/data/session-service";
+import type { ArtworkRef } from "@/types/commerce";
 
 /** Wipe every table — deterministic isolation regardless of worker reuse. */
 export async function resetDb(): Promise<void> {
@@ -25,4 +27,34 @@ export async function resetDb(): Promise<void> {
 export async function makeSession(): Promise<SessionRow> {
   const { session } = await ensureSession({ userAgent: "vitest" });
   return session;
+}
+
+/**
+ * A durable, server-verified artwork owned by a real session — exactly what
+ * the upload flow produces.
+ *
+ * The launch product prints custom artwork on every order, so almost every
+ * commerce test needs one: a printed line without a durable `artworkId` is
+ * refused at checkout by design.
+ */
+export async function uploadedArtwork(session?: SessionRow): Promise<{
+  session: SessionRow;
+  cookie: string;
+  artwork: ArtworkRef & { artworkId: string };
+}> {
+  const owner = session ?? (await makeSession());
+  const row = await createPendingArtwork({
+    sessionId: owner.id,
+    fileName: "logo.png",
+    fileType: "image/png",
+    sizeBytes: 2048,
+    storageKey: `artwork/test/${owner.id}.png`,
+    storageProvider: "fake",
+  });
+  await markArtworkUploaded({ id: row.id, sizeBytes: 2048, fileType: "image/png" });
+  return {
+    session: owner,
+    cookie: `${SESSION_COOKIE}=${owner.id}`,
+    artwork: { artworkId: row.id, fileName: "logo.png", fileType: "image/png", fileSizeBytes: 2048 },
+  };
 }

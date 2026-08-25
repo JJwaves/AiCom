@@ -1,5 +1,5 @@
 /**
- * Hand-built SVG non-woven tote (Tier-B enrichment — no stock photos).
+ * Hand-built SVG bag illustration (Tier-B enrichment — no stock photos).
  * Renders in the configured bag color with an optional logo placeholder
  * on the print face. Colors come in as CSS color strings from config.
  */
@@ -9,7 +9,7 @@ export function BagIllustration({
   showLogo = false,
   logoColors = 1,
   className,
-  title = "Illustration of a non-woven takeout bag",
+  title = "Illustration of an insulated takeout bag",
 }: {
   bodyColor?: string;
   showLogo?: boolean;

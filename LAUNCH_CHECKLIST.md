@@ -9,6 +9,129 @@ take real traffic until they pass.
 > person to look at Shopify, a database provider, or a monitoring dashboard.
 > `GET /api/health/ready?verbose=1` returns the same verdicts as JSON.
 
+---
+
+## STATUS AS OF 2026-08-17 — Product #1 production configuration: **partially unblocked, still NO-GO**
+
+The Product #1 Production Configuration session replaced the demo catalog with
+the first real launch product. **Three of Session 04's ten blockers are now
+closed by data that did not exist before**, and the Shopify variant
+requirement collapsed from 114 to 4 because only launch-enabled configurations
+need merchandise.
+
+| | Session 04 | Now |
+| --- | --- | --- |
+| Readiness | 1 READY · 18 WARNING · **10 BLOCKED** | 7 READY · 19 WARNING · **4 BLOCKED** |
+| Shopify variants required | 114 (0 mapped) | **4** (0 mapped) |
+| Products with real prices | 0 of 4 | **1 of 1 launch-enabled** (`pricingStatus: "LIVE"`) |
+| MOQ | unconfirmed placeholder 500 | **5,000 per design, confirmed** |
+| Launch-enabled products | 4 (all DEMO) | **1** (3 disabled and unreachable) |
+
+**Closed by this session** — product data, prices and MOQ:
+
+- [x] Product #1 defined: Custom Insulated Takeout Bag · Large 26×26×17 cm and
+      Extra Large 30×30×20 cm · black/white · custom artwork printing · MOQ
+      5,000/design · 5,000 and 10,000 direct-order quantities.
+- [x] Real sell prices installed and marked LIVE: Large $950 / $1,500 ·
+      Extra Large $1,150 / $1,900 (product subtotals).
+- [x] Flat **$100 per ORDER** U.S. shipping, charged once per order as a single
+      Shopify `shippingLine`, shown separately from the product subtotal, and
+      verified on read-back.
+- [x] Digital-proof and 15–30-day-after-approval lead-time copy on the product
+      page, cart, shipping policy and FAQ.
+- [x] Every demo product `launchEnabled: false` — pages 404, absent from
+      listings, sitemap, AI tool results and the Shopify requirement.
+- [x] US-only market; Canada copy removed from customer-facing pages.
+
+**Still BLOCKED — all owner infrastructure or store setup:**
+
+1. **4 Shopify variant GIDs** (Large/Black, Large/White, XL/Black, XL/White)
+2. **Artwork storage** — Product #1 always prints custom artwork, so it is
+   unbuyable until `ARTWORK_S3_*` exists
+3. **`NEXT_PUBLIC_SITE_DOMAIN`**
+4. **3 customer-facing `[TO BE PROVIDED]` values** — customer service email,
+   customer service phone, and **transit time** (production time is now real;
+   transit is not, because no carrier is contracted)
+
+Plus, unchanged and still required before real traffic: production
+`DATABASE_URL` with backups, Shopify credentials + webhook secret, admin
+credentials, Shopify shipping/tax/payment verification, and
+`NEXT_PUBLIC_DEMO_PRICING=false` in the production environment (the catalog
+says LIVE; the flag is the owner's second signal, and until both agree the
+storefront keeps the demo notice and withholds the offer from structured data).
+
+**Not blocking, but visible:** all six Product #1 photography slots are empty
+and render labelled placeholders. Owner/supplier assets only — no AI-generated
+product shots. The exact list is in BUSINESS_CONFIG_TODO → "Product #1".
+
+**Still unavailable, deliberately:** profit analytics. The supplier quotes in
+CNY and this codebase has no FX model, so `config/costs.ts` stays null and
+margin/POAS keep reporting "unavailable" rather than a fabricated number.
+Missing costs never block a sale.
+
+---
+
+## STATUS AS OF 2026-08-17 — Production Launch Session 04: **NO-GO** (superseded above)
+
+Session 04 attempted to configure and validate a real production environment.
+**No production environment exists yet, and no owner values were supplied**,
+so nothing in the Commerce, Artwork, Analytics, Monitoring or Operations
+sections below could be closed. Verdict: **NO-GO — production blockers
+remain.**
+
+Measured on a real `next build` + `next start` with `NODE_ENV=production`
+(not a dev server, not a test fixture):
+
+| | |
+| --- | --- |
+| `/api/health/live` | 200 `{"status":"ok"}` |
+| `/api/health/ready` | **503 `not_ready`** |
+| Readiness counts | 1 READY · 18 WARNING · **10 BLOCKED** (all 10 mandatory) |
+| Shopify merchandise map | 0 of **114** required variants mapped |
+| Products with real prices | **0 of 4** (all `pricingStatus: "DEMO"`) |
+
+**The ten blockers — every one is owner data or owner infrastructure, none is
+an engineering gap:**
+
+1. Shopify not configured (`SHOPIFY_STORE_DOMAIN`, `SHOPIFY_ADMIN_API_TOKEN`)
+2. 114 of 114 Shopify variants unmapped
+3. No `DATABASE_URL` — no production Postgres exists
+4. 4 of 4 products still on demo prices
+5. MOQ still the unconfirmed placeholder of 500
+6. No artwork storage — every printed product is unbuyable
+7. No admin credentials
+8. No `NEXT_PUBLIC_SITE_DOMAIN`
+9. 4 customer-facing `[TO BE PROVIDED]` values (verified rendering on
+   `/contact`, `/about` and `/shipping-policy` in production HTML)
+10. Database unreachable
+
+**What WAS verified to work, on the production build** (fail-closed
+behaviour — the safety properties, not the sale):
+
+- `POST /api/checkout` → **503**, log `COMMERCE_NOT_CONFIGURED`. **No `MOCK-*`
+  order was minted.** This is the single most important guard and it holds.
+- Unsigned Shopify webhook → 503, writes nothing.
+- Artwork upload with storage unset → 503 `UNAVAILABLE`; never pretends to
+  succeed.
+- Admin with credentials unset → **404** on `/admin/*` and `/api/admin/*`;
+  with credentials set → 401 unauthenticated, 401 wrong password, 200 correct.
+- `robots.txt` refuses crawling entirely while the domain is unset.
+- `/api/health/ready?verbose=1` leaks no secret value (only variable NAMES).
+- No third-party analytics script loads (none is configured).
+- Homepage, product page and configurator: no horizontal overflow at 375px.
+
+**Three production bugs were found and fixed** (see CLAUDE.md §Session 04):
+the readiness page called an unconfigured Shopify "partially configured";
+`sitemap.xml` published 21 URLs on `example.com`; and
+`NEXT_PUBLIC_DEMO_PRICING=false` over a still-DEMO catalog hid the demo-price
+warning *and* published demo prices to search engines as real
+`AggregateOffer` values.
+
+**Do not tick anything below from this session.** Every unticked ⛔ is still
+unticked.
+
+---
+
 ## Infrastructure
 - [ ] ⛔ `NEXT_PUBLIC_SITE_DOMAIN` set to the live domain (BUILD-TIME — requires a redeploy). Unset, robots.txt refuses crawling entirely rather than advertising a sitemap at a placeholder domain
 - [ ] ⛔ Domain connected and DNS resolving
@@ -164,12 +287,31 @@ Architecture: `docs/ARTWORK_STORAGE.md`.
 - [ ] Decide retention for abandoned uploads (`listAbandonedArtwork()` identifies them; automated cleanup is DEFERRED)
 - [ ] Note: **quote artwork is still metadata-only** — the quote form does not use durable storage yet (Session 02 §30)
 
+## Product #1 — Custom Insulated Takeout Bag
+
+- [x] Exactly one product is `launchEnabled: true`; every demo entry is disabled and 404s
+- [x] Sizes, colours, construction, MOQ, quantity tiers and prices are owner-confirmed
+- [x] `pricingStatus: "LIVE"` on the launch product
+- [ ] ⛔ `NEXT_PUBLIC_DEMO_PRICING=false` in the production environment (build-time). Both signals must agree before a price is treated as live
+- [ ] ⛔ Four Shopify variants created and mapped (see Commerce below)
+- [ ] Six product photographs installed (owner/supplier assets only)
+- [ ] Confirm with the factory that the digital-proof turnaround stated on the site matches reality before the first order
+
+### Shipping — flat $100 per order (US only)
+
+- [x] The charge is attached to the ORDER as a single Shopify `shippingLine`, never per line
+- [x] It is read back from the draft order and verified; a doubled charge aborts the checkout
+- [x] It is shown separately from the product subtotal on the product page, in the cart and at checkout
+- [x] It is recorded as a CUSTOMER CHARGE (`shippingPolicy.customerCharge`), never as supplier freight cost
+- [ ] ⛔ Confirm in the Shopify admin that no ADDITIONAL shipping rate is applied on top of the draft order's shipping line — the customer must be charged $100 once, not $100 plus a profile rate
+- [ ] Decide what happens when real freight exceeds $100 (this is a commercial decision, not a code change)
+
 ## Content
 - [ ] ⛔ Policies reviewed by owner + legal (`reviewed` flag set on each PolicyPage)
 - [ ] ⛔ Privacy policy reviewed
 - [ ] ⛔ Returns policy reviewed (custom-product terms)
 - [ ] Factory information verified on /about
-- [ ] Real product images installed (all `images[].src` slots in `config/products.ts`)
+- [ ] Real product images installed — Product #1 needs six owner/supplier shots (`hero-black`, `white`, `base-colors`, `size-guide`, `xl-print-example`, `artwork-proof`); see BUSINESS_CONFIG_TODO → "Product #1". **No AI-generated product photography**
 - [ ] Factory photos installed (FactoryBand slots)
 - [ ] ⛔ Fake/demo content removed — search the repo for "demo", "placeholder", "[TO BE PROVIDED]", "REPLACE_ME". `/admin/launch-readiness` scans customer-facing business configuration for `[TO BE PROVIDED]` and BLOCKS on any that a customer would see
 

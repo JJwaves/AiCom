@@ -41,13 +41,20 @@ describe("controlled taxonomies", () => {
 });
 
 describe("checkRequestSupport — the catalog is the authority", () => {
-  it("flags insulated bags as unsupported (a real product gap)", () => {
+  it("no longer flags insulated bags as a gap — the launch product IS an insulated bag", () => {
+    // The verdict follows the live catalog, not a hand-maintained list: the
+    // moment the insulated bag became the product we sell, asking for one
+    // stopped being an unmet product gap.
     const decision = checkRequestSupport(PRODUCTS, { kind: "product", normalized: "insulated bag" });
-    expect(decision.verdict).toBe("unsupported");
+    expect(decision.verdict).toBe("supported");
+  });
+
+  it("flags a product family we genuinely do not make as unsupported", () => {
+    expect(checkRequestSupport(PRODUCTS, { kind: "product", normalized: "wine gift box" }).verdict).toBe("unsupported");
   });
 
   it("recognizes the catalog's own product family as supported", () => {
-    expect(checkRequestSupport(PRODUCTS, { kind: "product", normalized: "non-woven takeout bag" }).verdict).toBe("supported");
+    expect(checkRequestSupport(PRODUCTS, { kind: "product", normalized: "takeout bag" }).verdict).toBe("supported");
     expect(checkRequestSupport(PRODUCTS, { kind: "product", normalized: "catering bag" }).verdict).toBe("supported");
   });
 
@@ -76,8 +83,10 @@ describe("checkRequestSupport — the catalog is the authority", () => {
 
 describe("below-MOQ and volume groups derive from real catalog numbers", () => {
   it("uses the product's actual minQuantity", () => {
+    // Product #1's real MOQ is 5,000; 500 is the seed catalog's.
     expect(isBelowMoq(PRODUCTS, 300, "p-custom-takeout")).toBe(true);
-    expect(isBelowMoq(PRODUCTS, 500, "p-custom-takeout")).toBe(false);
+    expect(isBelowMoq(PRODUCTS, 4_999, "p-custom-takeout")).toBe(true);
+    expect(isBelowMoq(PRODUCTS, 5_000, "p-custom-takeout")).toBe(false);
     expect(isBelowMoq(PRODUCTS, 499)).toBe(true);
     expect(isBelowMoq(PRODUCTS, 0)).toBe(false);
   });

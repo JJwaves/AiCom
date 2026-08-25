@@ -44,7 +44,9 @@ export function ProductCard({ product }: { product: Product }) {
         </p>
         <span className="text-sm font-medium text-accent group-hover:underline">Configure →</span>
       </div>
-      <p className="mt-1 font-mono text-[11px] text-ink-3">MOQ {formatQty(product.minQuantity)} · volume priced</p>
+      <p className="mt-1 font-mono text-[11px] text-ink-3">
+        MOQ {formatQty(product.minQuantity)} · {product.allowCustomQuantity ? "volume priced" : "digital proof included"}
+      </p>
     </Link>
   );
 }
@@ -52,10 +54,18 @@ export function ProductCard({ product }: { product: Product }) {
 /* ---------------- How it works ---------------- */
 
 const STEPS = [
-  { n: "01", title: "Choose your bag", body: "Select size, material, color and quantity." },
-  { n: "02", title: "Add your logo", body: "Upload your artwork during ordering." },
-  { n: "03", title: "Approve your design", body: "You get an artwork proof before production begins." },
-  { n: "04", title: "We manufacture & ship", body: "The factory produces your order and ships it to your business." },
+  { n: "01", title: "Configure", body: "Choose size, color and quantity." },
+  { n: "02", title: "Upload artwork", body: "Upload your restaurant logo or bag design." },
+  {
+    n: "03",
+    title: "Approve your proof",
+    body: "We prepare a digital proof for your approval. Production starts after artwork approval.",
+  },
+  {
+    n: "04",
+    title: "We manufacture & ship",
+    body: "Production typically takes 15–30 days after proof approval, then it ships to your business.",
+  },
 ];
 
 export function HowItWorks({ compact = false }: { compact?: boolean }) {
@@ -184,9 +194,9 @@ export function FAQAccordion({ items }: { items: { q: string; a: string }[] }) {
 
 export function FinalCTA({
   heading = "Put your logo on the bag.",
-  sub = "Configure a bag, see the price, order online. A proof comes to your inbox before anything prints.",
-  cta = "Shop takeout bags",
-  href = "/products/custom-non-woven-takeout-bags",
+  sub = "Configure a bag, see the price, order online. A digital proof comes to you for approval before anything prints.",
+  cta = "Shop insulated takeout bags",
+  href = "/products/custom-insulated-takeout-bags",
 }: {
   heading?: string;
   sub?: string;

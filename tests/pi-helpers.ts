@@ -15,10 +15,10 @@ export const HERO = PRODUCTS[0];
 
 export const config = (over: Partial<ProductConfiguration> = {}): ProductConfiguration => ({
   productId: HERO.id,
-  sizeId: "m",
-  materialId: "standard",
-  colorId: "white",
-  printOptionId: "one-color",
+  sizeId: "l",
+  materialId: "insulated",
+  colorId: "black",
+  printOptionId: "full-custom",
   quantity: 5000,
   ...over,
 });
@@ -41,7 +41,7 @@ export async function seedPricingSession(
   if (opts.quantity !== undefined) {
     await recordServerEvent({ sessionId, name: "quantity_selected", productId, props: { quantity: opts.quantity } });
   }
-  await recordServerEvent({ sessionId, name: "price_viewed", productId, props: { unitPrice: 0.42, value: 2100, currency: "USD" } });
+  await recordServerEvent({ sessionId, name: "price_viewed", productId, props: { unitPrice: 0.19, value: 950, currency: "USD" } });
   if (opts.cart) {
     await recordServerEvent({ sessionId, name: "add_to_cart", productId, props: { quantity: opts.quantity ?? 5000 } });
   }

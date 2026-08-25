@@ -1,3 +1,4 @@
+import { FLAT_US_SHIPPING_CENTS } from "@/config/shipping";
 import type { CostModelConfig, ProductCostConfig } from "@/modules/pricing/cost-model";
 
 /**
@@ -30,7 +31,29 @@ import type { CostModelConfig, ProductCostConfig } from "@/modules/pricing/cost-
  * BUMP THIS ON EVERY CHANGE to any value in this file. Format:
  * `YYYY-MM-DD.<session>.<n>`.
  */
-export const COST_MODEL_VERSION = "2026-08-16.s13_5.1";
+export const COST_MODEL_VERSION = "2026-08-16.product1.1";
+
+/**
+ * SUPPLIER REFERENCE FIGURES — NON-AUTHORITATIVE, DELIBERATELY NOT WIRED IN
+ * ─────────────────────────────────────────────────────────────────────────
+ * The factory quotes Product #1 in CNY:
+ *
+ *   Large        ¥0.67 / bag   ·  plate fee ¥310 per production colour
+ *   Extra Large  ¥0.81 / bag   ·  plate fee ¥400 per production colour
+ *   (historic XL job: 10,000 × ¥0.81 + 6 colours × ¥400 = ¥10,500)
+ *
+ * They are recorded here as a COMMENT and nowhere else. Putting them in the
+ * fields below would be an accounting error, not a shortcut: every value in
+ * this model is USD integer cents, BagDirect's revenue is USD, and there is
+ * deliberately NO FX conversion anywhere in the unit-economics architecture.
+ * A ¥0.81 read as 81 US cents against a 23¢ sell price invents a catastrophic
+ * loss; read as 0.81 of anything it silently invents a currency. Either way
+ * the dashboard would show a confident, false margin.
+ *
+ * The costs stay null until the owner supplies NORMALISED USD costs, or an
+ * explicit FX/accounting policy is implemented. Until then profit analytics
+ * correctly report "unavailable" — see docs/UNIT_ECONOMICS.md.
+ */
 
 /** Placeholder block — every input [TO BE PROVIDED]. */
 const COSTS_TO_BE_PROVIDED: ProductCostConfig = {
@@ -51,8 +74,10 @@ const COSTS_TO_BE_PROVIDED: ProductCostConfig = {
 export const COST_MODEL: CostModelConfig = {
   version: COST_MODEL_VERSION,
 
-  // One entry per purchasable product (ids from config/products.ts).
+  // One entry per CATALOG product (ids from config/products.ts), including
+  // launch-disabled ones — cost validation runs against the whole file.
   products: {
+    // Product #1 (launch). NULL ON PURPOSE — see the CNY note above.
     "p-custom-takeout": COSTS_TO_BE_PROVIDED,
     "p-heavy-duty": COSTS_TO_BE_PROVIDED,
     "p-cafe-carryout": COSTS_TO_BE_PROVIDED,
@@ -75,21 +100,27 @@ export const COST_MODEL: CostModelConfig = {
   },
 
   /**
-   * What the customer is charged for shipping — NOT what shipping costs.
+   * What the customer is CHARGED for shipping — NOT what shipping costs.
    *
-   * `not_collected` is a STRUCTURAL FACT here, not an assumption: checkout
-   * collects no separate shipping charge (`orders` has no shipping column
-   * and `createOrder` sets totalCents = subtotalCents), and the storefront
-   * says "shipping calculated at checkout" because no rate source is
-   * configured (config/shipping.ts). The shipping subsidy BagDirect bears
-   * is therefore the FULL freight cost:
-   *   subsidy = max(actual freight − 0, 0) = actual freight.
+   * The MVP collects a flat $100 per order: it rides the Shopify draft order
+   * as a single `shippingLine`, so the customer sees and pays it before
+   * payment. That is a real collected charge, so `not_collected` is no
+   * longer true and saying so would understate revenue and overstate the
+   * subsidy.
    *
-   * When real shipping charging exists, this must change together with the
-   * order model — see docs/UNIT_ECONOMICS.md → "Shipping economics".
+   * It is `flat_per_order`, which the model reports as PARTIAL on purpose:
+   * BagDirect's `orders` table still records only product revenue
+   * (totalCents = subtotalCents; there is no shipping column), so this is a
+   * CONFIGURED CONSTANT applied to every order rather than a per-order
+   * recorded amount. Product revenue and the shipping charge therefore stay
+   * semantically distinct in the accounting, which is exactly what we want
+   * — the $100 is never counted as product revenue.
+   *
+   * The freight COST it offsets (`products.*.shipping`) is still null, so
+   * the subsidy remains unavailable rather than being reported as "-$100".
    */
   shippingPolicy: {
-    customerCharge: { kind: "not_collected" },
+    customerCharge: { kind: "flat_per_order", centsPerOrder: FLAT_US_SHIPPING_CENTS },
   },
 
   /**

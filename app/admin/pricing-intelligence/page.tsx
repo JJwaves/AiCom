@@ -17,7 +17,7 @@ import {
 } from "@/modules/pricing-intelligence";
 import type { Trend } from "@/modules/business-intelligence/trend";
 import { COST_MODEL } from "@/config/costs";
-import { listCatalogProducts } from "@/lib/commerce/catalog";
+import { listAllCatalogProducts } from "@/lib/commerce/catalog";
 import { assessCostReadiness } from "@/modules/pricing";
 import { CostReadinessPanel } from "@/components/admin/cost-readiness";
 import { GeneratePricingReviewButton } from "./pricing-controls";
@@ -128,7 +128,7 @@ export default async function PricingIntelligencePage({
   const params = await searchParams;
   const period = parsePeriod(params);
   const report: PricingIntelligenceReport = await buildPricingIntelligenceReport(period);
-  const costReadiness = assessCostReadiness(COST_MODEL, await listCatalogProducts());
+  const costReadiness = assessCostReadiness(COST_MODEL, await listAllCatalogProducts());
   const s = report.snapshot;
   const c = s.funnel.conversations;
   const agentEnabled = isFlagEnabled("AI_PRICING_AGENT");

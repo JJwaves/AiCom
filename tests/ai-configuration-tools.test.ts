@@ -121,7 +121,7 @@ describe("updateConfiguration — the AI commit path", () => {
     const { session, ctx } = await sessionCtx();
     const result = await registry.execute(
       "updateConfiguration",
-      { productId: product.id, patch: { colorId: "black", sizeId: "l", quantity: 5000 } },
+      { productId: product.id, patch: { colorId: "white", sizeId: "xl", quantity: 5000 } },
       ctx,
     );
     expect(result.ok).toBe(true);
@@ -129,20 +129,20 @@ describe("updateConfiguration — the AI commit path", () => {
       const data = result.data as { status: string; configuration: { revision: number; color: { id: string } } };
       expect(data.status).toBe("applied");
       expect(data.configuration.revision).toBe(1);
-      expect(data.configuration.color.id).toBe("black");
+      expect(data.configuration.color.id).toBe("white");
     }
     const row = await getActiveConfiguration(session.id, product.id);
     expect(row?.source).toBe("ai");
-    expect(row?.configJson.colorId).toBe("black");
+    expect(row?.configJson.colorId).toBe("white");
     expect(row?.configJson.quantity).toBe(5000);
     // Untouched fields came from the SAME defaults the UI uses.
     expect(row?.configJson.materialId).toBe(product.materials[0].id);
-    expect(row?.configJson.printOptionId).toBe("one-color");
+    expect(row?.configJson.printOptionId).toBe("full-custom");
   });
 
   it("patches only requested fields — manual choices survive (partial-patch preservation)", async () => {
     const { session, ctx } = await sessionCtx();
-    await seedConfiguration(session.id, { sizeId: "l", colorId: "kraft", quantity: 2500, printOptionId: "two-color" });
+    await seedConfiguration(session.id, { sizeId: "xl", colorId: "white", quantity: 5000 });
     const result = await registry.execute(
       "updateConfiguration",
       { productId: product.id, patch: { quantity: 10_000 }, expectedRevision: 1 },
@@ -151,7 +151,7 @@ describe("updateConfiguration — the AI commit path", () => {
     expect(result.ok).toBe(true);
     if (result.ok) expect((result.data as { status: string }).status).toBe("applied");
     const row = await getActiveConfiguration(session.id, product.id);
-    expect(row?.configJson).toMatchObject({ sizeId: "l", colorId: "kraft", printOptionId: "two-color", quantity: 10_000 });
+    expect(row?.configJson).toMatchObject({ sizeId: "xl", colorId: "white", printOptionId: "full-custom", quantity: 10_000 });
     expect(row?.version).toBe(2);
   });
 
@@ -159,7 +159,7 @@ describe("updateConfiguration — the AI commit path", () => {
     const { session, ctx } = await sessionCtx();
     const artwork = { fileName: "logo.png", fileType: "image/png", fileSizeBytes: 999 };
     await seedConfiguration(session.id, { artwork });
-    await registry.execute("updateConfiguration", { productId: product.id, patch: { colorId: "black" } }, ctx);
+    await registry.execute("updateConfiguration", { productId: product.id, patch: { colorId: "white" } }, ctx);
     const row = await getActiveConfiguration(session.id, product.id);
     expect(row?.configJson.artwork).toEqual(artwork);
     // The patch schema structurally has no artwork input:
@@ -194,7 +194,7 @@ describe("updateConfiguration — the AI commit path", () => {
 
   it("rejects stale revisions and returns the CURRENT configuration for reconciliation", async () => {
     const { session, ctx } = await sessionCtx();
-    await seedConfiguration(session.id, { quantity: 2500 });
+    await seedConfiguration(session.id, { quantity: 5000 });
     // The customer manually changes quantity → revision 2.
     await seedConfiguration(session.id, { quantity: 7500 });
     const result = await registry.execute(
@@ -249,7 +249,7 @@ describe("updateConfiguration — the AI commit path", () => {
 
   it("writes ai_configuration_updated on success and ai_configuration_rejected on invalid options", async () => {
     const { session, conversation, ctx } = await sessionCtx();
-    await registry.execute("updateConfiguration", { productId: product.id, patch: { colorId: "black" } }, ctx);
+    await registry.execute("updateConfiguration", { productId: product.id, patch: { colorId: "white" } }, ctx);
     await registry.execute("updateConfiguration", { productId: product.id, patch: { colorId: "purple" } }, ctx);
     const db = await getDb();
     const rows = await db.select().from(events).where(eq(events.sessionId, session.id));
@@ -266,12 +266,12 @@ describe("updateConfiguration — the AI commit path", () => {
     await applyNeedProfileUpdate(session.id, { quantity: 3000 }, "USER_STATED");
     await registry.execute(
       "updateConfiguration",
-      { productId: product.id, patch: { colorId: "black", quantity: 5000 } },
+      { productId: product.id, patch: { colorId: "white", quantity: 5000 } },
       ctx,
     );
     const profile = await getNeedProfile(session.id);
     // Color was unset → CONFIGURATOR lands; quantity stays USER_STATED.
-    expect(profile?.colorPreference).toBe("black");
+    expect(profile?.colorPreference).toBe("white");
     expect(profile?.fieldSourcesJson.colorPreference).toMatchObject({ source: "CONFIGURATOR" });
     expect(profile?.quantity).toBe(3000);
     expect(profile?.fieldSourcesJson.quantity).toMatchObject({ source: "USER_STATED" });
@@ -280,7 +280,7 @@ describe("updateConfiguration — the AI commit path", () => {
   it("fails safely without a session context", async () => {
     const result = await registry.execute(
       "updateConfiguration",
-      { productId: product.id, patch: { colorId: "black" } },
+      { productId: product.id, patch: { colorId: "white" } },
       createToolContext({ agentType: "sales" }),
     );
     expect(result).toMatchObject({ ok: false, error: { kind: "execution_failed" } });

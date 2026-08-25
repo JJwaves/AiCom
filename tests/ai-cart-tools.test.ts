@@ -11,7 +11,7 @@ import { createSalesToolRegistry, createToolContext, type CartSnapshot } from "@
 import { syncConfigurationForSession } from "@/lib/configuration/server";
 import { defaultConfiguration } from "@/lib/configuration/validation";
 import { findActiveConversation, listMessages, startConversation } from "@/lib/data/conversation-service";
-import { makeSession, resetDb } from "./db-helpers";
+import { makeSession, resetDb, uploadedArtwork } from "./db-helpers";
 import type { SessionRow } from "@/lib/data/session-service";
 
 /**
@@ -25,7 +25,7 @@ import type { SessionRow } from "@/lib/data/session-service";
  * tools do not exist, purchase events never fire from AI actions.
  */
 
-const product = PRODUCTS[0]; // 10,000 → 37¢/unit with no options
+const product = PRODUCTS[0]; // Product #1 — Large × 10,000 → 15¢/unit = $1,500
 
 const touched = new Set<string>();
 function setEnv(key: string, value: string): void {
@@ -52,11 +52,14 @@ async function seedConfiguration(
   session: SessionRow,
   overrides: Partial<ReturnType<typeof defaultConfiguration>> = {},
 ) {
+  /* The launch product always prints custom artwork, so a seeded
+     configuration carries a durable artwork id unless a test explicitly
+     wants the blocked path. */
   const config = {
     ...defaultConfiguration(product),
     colorId: "black",
-    printOptionId: "none" as const,
     quantity: 10_000,
+    artwork: "artwork" in overrides ? overrides.artwork : (await uploadedArtwork(session)).artwork,
     ...overrides,
   };
   const result = await syncConfigurationForSession({ sessionId: session.id, productId: product.id, config });
@@ -70,11 +73,11 @@ const SNAPSHOT: CartSnapshot = {
       lineId: "L1",
       productId: product.id,
       sizeId: "l",
-      materialId: "standard",
+      materialId: "insulated",
       colorId: "black",
-      printOptionId: "none",
+      printOptionId: "full-custom",
       quantity: 10_000,
-      hasArtwork: false,
+      hasArtwork: true,
     },
   ],
 };
@@ -95,7 +98,7 @@ describe("addConfiguredProductToCart tool", () => {
 
     const result = await registry.execute(
       "addConfiguredProductToCart",
-      { productId: product.id, expectedRevision: 1, expectedTotalCents: 370_000 },
+      { productId: product.id, expectedRevision: 1, expectedTotalCents: 150_000 },
       ctx,
     );
     expect(result.ok).toBe(true);
@@ -106,9 +109,9 @@ describe("addConfiguredProductToCart tool", () => {
       price: { pricingStatus: string };
     };
     expect(data.status).toBe("added");
-    expect(data.line.unitPriceCents).toBe(37);
-    expect(data.line.totalCents).toBe(370_000);
-    expect(data.price.pricingStatus).toBe("DEMO");
+    expect(data.line.unitPriceCents).toBe(15);
+    expect(data.line.totalCents).toBe(150_000);
+    expect(data.price.pricingStatus).toBe("LIVE");
     expect(JSON.stringify(data)).not.toMatch(/cost|margin|floor/i);
 
     const names = (await sessionEvents(session.id)).map((e) => e.name);
@@ -132,7 +135,7 @@ describe("addConfiguredProductToCart tool", () => {
     expect(result.data).toMatchObject({
       status: "price_changed",
       previousTotalCents: 1,
-      currentPrice: { totalCents: 370_000 },
+      currentPrice: { totalCents: 150_000 },
     });
   });
 
@@ -144,7 +147,7 @@ describe("addConfiguredProductToCart tool", () => {
 
     const result = await registry.execute(
       "addConfiguredProductToCart",
-      { productId: product.id, expectedRevision: 1, expectedTotalCents: 370_000 },
+      { productId: product.id, expectedRevision: 1, expectedTotalCents: 150_000 },
       ctx,
     );
     expect(result.ok).toBe(true);
@@ -157,7 +160,7 @@ describe("addConfiguredProductToCart tool", () => {
 
   it("artwork and custom-quote rules match the manual configurator; unknown products are structured", async () => {
     const session = await makeSession();
-    await seedConfiguration(session, { printOptionId: "one-color" });
+    await seedConfiguration(session, { artwork: null });
     const ctx = createToolContext({ agentType: "sales", sessionId: session.id });
 
     const artwork = await registry.execute(
@@ -167,7 +170,7 @@ describe("addConfiguredProductToCart tool", () => {
     );
     expect(artwork.ok && (artwork.data as { status: string }).status).toBe("artwork_required");
 
-    await seedConfiguration(session, { printOptionId: "none", quantity: 300 });
+    await seedConfiguration(session, { quantity: 300 });
     const quoteOnly = await registry.execute(
       "addConfiguredProductToCart",
       { productId: product.id, expectedRevision: 2, expectedTotalCents: 100 },
@@ -196,7 +199,7 @@ describe("addConfiguredProductToCart tool", () => {
     ]) {
       const result = await registry.execute(
         "addConfiguredProductToCart",
-        { productId: product.id, expectedRevision: 1, expectedTotalCents: 370_000, ...injected },
+        { productId: product.id, expectedRevision: 1, expectedTotalCents: 150_000, ...injected },
         ctx,
       );
       expect(result).toMatchObject({ ok: false, error: { kind: "invalid_input" } });
@@ -209,7 +212,7 @@ describe("addConfiguredProductToCart tool", () => {
     const ctx = createToolContext({ agentType: "pricing", sessionId: session.id }); // READ only
     const result = await registry.execute(
       "addConfiguredProductToCart",
-      { productId: product.id, expectedRevision: 1, expectedTotalCents: 370_000 },
+      { productId: product.id, expectedRevision: 1, expectedTotalCents: 150_000 },
       ctx,
     );
     expect(result).toMatchObject({ ok: false, error: { kind: "permission_denied" } });
@@ -235,7 +238,7 @@ describe("suggestAddToCart / getCartSummary / startCheckout tools", () => {
       status: "proposed",
       label: "Add 10,000 to cart",
       basedOnRevision: 1,
-      price: { totalCents: 370_000, pricingStatus: "DEMO" },
+      price: { totalCents: 150_000, pricingStatus: "LIVE" },
     });
     const names = (await sessionEvents(session.id)).map((e) => e.name);
     expect(names).toContain("ai_add_to_cart_proposed");
@@ -244,7 +247,7 @@ describe("suggestAddToCart / getCartSummary / startCheckout tools", () => {
 
   it("suggestAddToCart surfaces artwork blockers instead of proposing", async () => {
     const session = await makeSession();
-    await seedConfiguration(session, { printOptionId: "one-color" });
+    await seedConfiguration(session, { artwork: null });
     const ctx = createToolContext({ agentType: "sales", sessionId: session.id });
     const result = await registry.execute("suggestAddToCart", { productId: product.id, label: "Add to cart" }, ctx);
     expect(result.ok && (result.data as { status: string }).status).toBe("artwork_required");
@@ -259,7 +262,7 @@ describe("suggestAddToCart / getCartSummary / startCheckout tools", () => {
     expect(result.data).toMatchObject({
       available: true,
       lineCount: 1,
-      subtotalCents: 370_000,
+      subtotalCents: 150_000,
       currency: "USD",
       checkoutReady: true,
     });
@@ -270,7 +273,7 @@ describe("suggestAddToCart / getCartSummary / startCheckout tools", () => {
     const session = await makeSession();
     const flawed: CartSnapshot = {
       lines: [
-        { ...SNAPSHOT.lines[0], printOptionId: "one-color", hasArtwork: false },
+        { ...SNAPSHOT.lines[0], hasArtwork: false },
         { ...SNAPSHOT.lines[0], lineId: "L2", productId: "p-gone" },
       ],
     };
@@ -296,7 +299,7 @@ describe("suggestAddToCart / getCartSummary / startCheckout tools", () => {
     );
     expect(ready.ok).toBe(true);
     if (ready.ok) {
-      expect(ready.data).toMatchObject({ status: "ready", lineCount: 1, subtotalCents: 370_000, currency: "USD" });
+      expect(ready.data).toMatchObject({ status: "ready", lineCount: 1, subtotalCents: 150_000, currency: "USD" });
     }
 
     const empty = await registry.execute(
@@ -312,7 +315,7 @@ describe("suggestAddToCart / getCartSummary / startCheckout tools", () => {
       createToolContext({
         agentType: "sales",
         sessionId: session.id,
-        cartSnapshot: { lines: [{ ...SNAPSHOT.lines[0], printOptionId: "one-color", hasArtwork: false }] },
+        cartSnapshot: { lines: [{ ...SNAPSHOT.lines[0], hasArtwork: false }] },
       }),
     );
     expect(blocked.ok && (blocked.data as { status: string }).status).toBe("blocked");
@@ -354,7 +357,7 @@ describe("sales agent — §44/§35 conversational commerce flow", () => {
         calls: [
           {
             name: "addConfiguredProductToCart",
-            input: { productId: product.id, expectedRevision: 1, expectedTotalCents: 370_000 },
+            input: { productId: product.id, expectedRevision: 1, expectedTotalCents: 150_000 },
           },
         ],
       },
@@ -363,9 +366,9 @@ describe("sales agent — §44/§35 conversational commerce flow", () => {
     ]);
     expect(add.result.cartAdd).toMatchObject({
       productId: product.id,
-      line: { unitPriceCents: 37, totalCents: 370_000, title: product.title },
+      line: { unitPriceCents: 15, totalCents: 150_000, title: product.title },
       revision: 1,
-      pricingStatus: "DEMO",
+      pricingStatus: "LIVE",
     });
     expect(add.result.checkoutAction).toBeUndefined();
 
@@ -382,9 +385,9 @@ describe("sales agent — §44/§35 conversational commerce flow", () => {
     expect(checkout.result.checkoutAction).toEqual({
       type: "CONTINUE_TO_CHECKOUT",
       lineCount: 1,
-      subtotalCents: 370_000,
+      subtotalCents: 150_000,
       currency: "USD",
-      pricingStatus: "DEMO",
+      pricingStatus: "LIVE",
     });
 
     // Purchase is NEVER derived from AI actions — only the authoritative
@@ -422,7 +425,7 @@ describe("sales agent — §44/§35 conversational commerce flow", () => {
       productId: product.id,
       label: "Add 10,000 to cart",
       basedOnRevision: 1,
-      price: { totalCents: 370_000 },
+      price: { totalCents: 150_000 },
     });
   });
 
@@ -440,7 +443,7 @@ describe("sales agent — §44/§35 conversational commerce flow", () => {
           { name: "markOrderPaid", input: { orderId: "x" } },
           { name: "applyDiscount", input: { pct: 90 } },
           // Structural: a price input fails validation loudly.
-          { name: "addConfiguredProductToCart", input: { productId: product.id, expectedRevision: 1, expectedTotalCents: 370_000, unitPriceCents: 1 } },
+          { name: "addConfiguredProductToCart", input: { productId: product.id, expectedRevision: 1, expectedTotalCents: 150_000, unitPriceCents: 1 } },
         ],
       },
       reply("I can't do that — the current validated total is $3,700.00."),
@@ -461,7 +464,7 @@ describe("sales agent — §44/§35 conversational commerce flow", () => {
     const withCart = await turn(session.id, "Did you add it?", [reply("Yes — one line, $3,700.00."), NO_EXTRACTION], SNAPSHOT);
     const system = withCart.fake.requests[0].request.system ?? "";
     expect(system).toContain("Cart (1 line");
-    expect(system).toContain("$3700.00");
+    expect(system).toContain("$1500.00");
     expect(system).toContain(product.title);
 
     const emptyCart = await turn(session.id, "What's in my cart?", [reply("Nothing yet."), NO_EXTRACTION], { lines: [] });
@@ -489,7 +492,7 @@ describe("chat route — S07 wire", () => {
         {
           kind: "toolCalls",
           calls: [
-            { name: "addConfiguredProductToCart", input: { productId: product.id, expectedRevision: 1, expectedTotalCents: 370_000 } },
+            { name: "addConfiguredProductToCart", input: { productId: product.id, expectedRevision: 1, expectedTotalCents: 150_000 } },
             { name: "startCheckout", input: {} },
           ],
         },
@@ -500,8 +503,8 @@ describe("chat route — S07 wire", () => {
     const res = await chatPost(post({ message: "Add it and take me to checkout.", cart: { lines: SNAPSHOT.lines } }, session));
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.cartAdd).toMatchObject({ productId: product.id, line: { totalCents: 370_000 } });
-    expect(body.checkoutAction).toMatchObject({ type: "CONTINUE_TO_CHECKOUT", subtotalCents: 370_000 });
+    expect(body.cartAdd).toMatchObject({ productId: product.id, line: { totalCents: 150_000 } });
+    expect(body.checkoutAction).toMatchObject({ type: "CONTINUE_TO_CHECKOUT", subtotalCents: 150_000 });
   });
 
   it("STRICT cart snapshot: client-sent prices or unknown keys are a loud 422; bounded at 50 lines", async () => {

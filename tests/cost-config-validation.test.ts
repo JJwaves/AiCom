@@ -156,8 +156,8 @@ describe("invalid configuration fails safely and is never normalised (§39)", ()
 
   it("rejects a missing printing option that the product actually offers", () => {
     const m = valid();
-    delete m.products[PRODUCTS[0].id].printing!["two-color"];
-    expect(errorsAt(m, "printing.two-color")[0].message).toMatch(/no cost is configured/i);
+    delete m.products[PRODUCTS[0].id].printing!["full-custom"];
+    expect(errorsAt(m, "printing.full-custom")[0].message).toMatch(/no cost is configured/i);
   });
 
   it("rejects a missing size the product actually offers", () => {

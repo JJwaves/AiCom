@@ -65,7 +65,8 @@ describe("quantity bands come from the real pricing tiers", () => {
   it("places a quantity in exactly one band, and none for an unknown product", () => {
     const bands = bandsForCatalog(PRODUCTS);
     expect(bandForQuantity(bands, HERO.id, 5000)!.tierMinQty).toBe(5000);
-    expect(bandForQuantity(bands, HERO.id, 4999)!.tierMinQty).toBe(2500);
+    expect(bandForQuantity(bands, HERO.id, 10_000)!.tierMinQty).toBe(10_000);
+    expect(bandForQuantity(bands, HERO.id, 4999)!.belowMoq).toBe(true);
     expect(bandForQuantity(bands, HERO.id, 200)!.belowMoq).toBe(true);
     expect(bandForQuantity(bands, "p-does-not-exist", 5000)).toBeNull();
   });
@@ -209,9 +210,9 @@ describe("requested, configured and purchased demand stay separate", () => {
     const a = await makeSession();
     await seedRequestedQuantity(a.id, 300, "USER_STATED");
     const b = await makeSession();
-    await seedRequestedQuantity(b.id, 800, "AI_INFERRED");
+    await seedRequestedQuantity(b.id, 7_000, "AI_INFERRED");
     const c = await makeSession();
-    await seedConfiguredQuantity(c.id, 1000);
+    await seedConfiguredQuantity(c.id, 10_000);
     const d = await makeSession();
     await seedOrder(d.id, { quantity: 5000 });
 
@@ -222,17 +223,17 @@ describe("requested, configured and purchased demand stay separate", () => {
     expect(requestedBelow.inferred).toBe(0);
     expect(demand.requested.belowMoqStated).toBe(1);
 
-    const requested800 = demand.requested.rows.find((r) => r.bucketKey === "q_500")!;
-    expect(requested800.inferred).toBe(1);
-    expect(requested800.stated).toBe(0);
-    // Configured 1,000 and purchased 5,000 land in their own lanes only.
-    expect(requested800.count).toBe(1);
-    expect(demand.configured.rows.find((r) => r.bucketKey === "q_1000")!.count).toBe(1);
+    const requested7000 = demand.requested.rows.find((r) => r.bucketKey === "q_5000")!;
+    expect(requested7000.inferred).toBe(1);
+    expect(requested7000.stated).toBe(0);
+    // Configured 10,000 and purchased 5,000 land in their own lanes only.
+    expect(requested7000.count).toBe(1);
+    expect(demand.configured.rows.find((r) => r.bucketKey === "q_10000")!.count).toBe(1);
     expect(demand.configured.rows.find((r) => r.bucketKey === "q_5000")!.count).toBe(0);
     expect(demand.purchased.rows.find((r) => r.bucketKey === "q_5000")!.count).toBe(1);
     expect(demand.purchased.units).toBe(5000);
 
-    expect(demand.dominant).toEqual({ requested: "below_moq", configured: "q_1000", purchased: "q_5000" });
+    expect(demand.dominant).toEqual({ requested: "below_moq", configured: "q_10000", purchased: "q_5000" });
   });
 
   it("excludes CONFIGURATOR/ORDER_DATA provenance from the requested lane (no double counting)", async () => {
@@ -262,18 +263,18 @@ describe("tier performance", () => {
         {
           productId: HERO.id,
           quantity: 5000,
-          unitPriceCents: 47,
-          totalCents: 235_000,
+          unitPriceCents: 19,
+          totalCents: 95_000,
           title: "Bag",
           config: config({ quantity: 5000 }),
         },
         {
           productId: HERO.id,
-          quantity: 1000,
-          unitPriceCents: 59,
-          totalCents: 59_000,
+          quantity: 10_000,
+          unitPriceCents: 15,
+          totalCents: 150_000,
           title: "Bag",
-          config: config({ quantity: 1000 }),
+          config: config({ quantity: 10_000 }),
         },
       ],
     });
@@ -281,12 +282,12 @@ describe("tier performance", () => {
     const p = period();
     const tiers = await loadTierPerformance(p, await listCatalogProducts(), await loadConversationCorpus(p));
     const band5000 = tiers.rows.find((r) => r.bandKey === `${HERO.id}:5000`)!;
-    const band1000 = tiers.rows.find((r) => r.bandKey === `${HERO.id}:1000`)!;
+    const band10000 = tiers.rows.find((r) => r.bandKey === `${HERO.id}:10000`)!;
     expect(band5000.purchasedLines).toBe(1);
     expect(band5000.unitsPurchased).toBe(5000);
-    expect(band5000.revenueCents).toBe(235_000);
-    expect(band1000.purchasedLines).toBe(1);
-    expect(band1000.unitsPurchased).toBe(1000);
+    expect(band5000.revenueCents).toBe(95_000);
+    expect(band10000.purchasedLines).toBe(1);
+    expect(band10000.unitsPurchased).toBe(10_000);
     // The two lines land in DIFFERENT bands; neither is counted twice.
     expect(tiers.rows.reduce((n, r) => n + r.purchasedLines, 0)).toBe(2);
   });
@@ -332,7 +333,7 @@ describe("tier performance", () => {
 describe("price realization", () => {
   it("matches an engine-priced order against today's catalog with no variance", async () => {
     const s = await makeSession();
-    await seedOrder(s.id, { quantity: 5000, unitPriceCents: 47 });
+    await seedOrder(s.id, { quantity: 5000, unitPriceCents: 19 });
     const realization = await loadPriceRealization(period(), await listCatalogProducts());
     expect(realization.linesChecked).toBe(1);
     expect(realization.linesMatchingCurrentCatalog).toBe(1);
@@ -342,7 +343,7 @@ describe("price realization", () => {
 
   it("explains a difference as a catalog price change, never as leakage", async () => {
     const s = await makeSession();
-    await seedOrder(s.id, { quantity: 5000, unitPriceCents: 52 });
+    await seedOrder(s.id, { quantity: 5000, unitPriceCents: 24 });
     const realization = await loadPriceRealization(period(), await listCatalogProducts());
     expect(realization.variances).toHaveLength(1);
     expect(realization.variances[0].explanation).toBe("catalog_price_changed");
@@ -377,7 +378,7 @@ describe("MOQ intelligence", () => {
       opportunities: await listOpportunities(10),
     });
 
-    expect(moq.moq).toBe(500);
+    expect(moq.moq).toBe(5_000);
     expect(moq.requestedBelowMoqStated).toBe(1);
     expect(moq.moqObjectionConversations).toBe(1);
     expect(moq.moqQuestionConversations).toBe(0);

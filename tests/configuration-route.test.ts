@@ -64,11 +64,11 @@ describe("POST /api/configuration — full-config sync (the configurator's debou
   it("writes CONFIGURATOR need-profile evidence through the rank gate", async () => {
     const session = await makeSession();
     await applyNeedProfileUpdate(session.id, { quantity: 3000 }, "USER_STATED");
-    const config = { ...defaultConfiguration(product), colorId: "navy", quantity: 5000 };
+    const config = { ...defaultConfiguration(product), colorId: "white", quantity: 5000 };
     const res = await post({ productId: product.id, config }, `bd_sid=${session.id}`);
     expect(res.status).toBe(200);
     const profile = await getNeedProfile(session.id);
-    expect(profile?.colorPreference).toBe("navy");
+    expect(profile?.colorPreference).toBe("white");
     expect(profile?.fieldSourcesJson.colorPreference).toMatchObject({ source: "CONFIGURATOR" });
     // USER_STATED quantity survives the configurator write.
     expect(profile?.quantity).toBe(3000);
@@ -103,12 +103,12 @@ describe("POST /api/configuration — full-config sync (the configurator's debou
 
 describe("POST /api/configuration — patch apply (tapped AI suggestion)", () => {
   it("applies a valid patch on top of the CURRENT configuration", async () => {
-    const seeded = await post({ productId: product.id, config: { ...defaultConfiguration(product), colorId: "kraft" } });
+    const seeded = await post({ productId: product.id, config: { ...defaultConfiguration(product), colorId: "white" } });
     const cookie = sidCookie(seeded);
     const res = await post({ productId: product.id, patch: { quantity: 10_000 } }, cookie);
     expect(res.status).toBe(200);
     const data = (await res.json()) as { configuration: { config: { colorId: string; quantity: number }; revision: number } };
-    expect(data.configuration.config.colorId).toBe("kraft"); // preserved
+    expect(data.configuration.config.colorId).toBe("white"); // preserved
     expect(data.configuration.config.quantity).toBe(10_000);
     expect(data.configuration.revision).toBe(2);
   });

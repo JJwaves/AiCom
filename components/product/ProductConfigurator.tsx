@@ -3,14 +3,14 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { isDemoPricing } from "@/config/business";
-import { estimateShipping } from "@/config/shipping";
+import { PROOF_POLICY, showsDemoPricing } from "@/config/business";
+import { estimateShipping, FLAT_US_SHIPPING_CENTS, FLAT_US_SHIPPING_COPY } from "@/config/shipping";
 import { quoteConfiguration, requiresCustomQuote } from "@/modules/pricing";
 import { track } from "@/lib/analytics/track";
 import { useCart } from "@/lib/cart/cart-context";
 import { ConfigurationProvider, useConfiguration } from "@/lib/configuration/context";
 import type { TrackedField } from "@/lib/configuration/store";
-import { formatDimensions, formatMoney, formatPct, formatQty, formatUnitPrice } from "@/lib/format";
+import { describeDimensions, formatDimensions, formatMoney, formatPct, formatQty, formatUnitPrice } from "@/lib/format";
 import type { CtaCopyVariant, ShippingMessageVariant } from "@/modules/experiments/variants";
 import type { Product } from "@/types/commerce";
 import { ArtworkUploader } from "./ArtworkUploader";
@@ -86,6 +86,15 @@ function ConfiguratorView({ product, experiments }: { product: Product; experime
 
   const quote = useMemo(() => quoteConfiguration(product, config), [product, config]);
   const needsQuote = requiresCustomQuote(product, config);
+  /* MVP launch products publish a closed set of orderable quantities; the
+   * arbitrary-quantity input is not rendered for them at all, so a customer
+   * cannot type a number nobody priced. The engine enforces the same rule
+   * server-side (requiresCustomQuote). */
+  const fixedQuantities = !product.allowCustomQuantity;
+  const largestOrderableQty = product.quantityPresets[product.quantityPresets.length - 1];
+  /* One printing option means nothing to choose — it is stated, not selected.
+   * Same for a single fixed material/construction. */
+  const singlePrintOption = product.printOptions.length === 1;
   const selectedPrint = product.printOptions.find((p) => p.id === printId);
   const selectedSize = product.sizes.find((s) => s.id === sizeId);
   const selectedColor = product.colors.find((c) => c.id === colorId);
@@ -172,7 +181,7 @@ function ConfiguratorView({ product, experiments }: { product: Product; experime
     // Persist the exact state the cart line is about to snapshot (non-blocking).
     void flushSync();
     const optionSummary = [
-      selectedSize ? `${selectedSize.label} (${formatDimensions(selectedSize.dimensions)})` : "",
+      selectedSize ? `${selectedSize.label} (${formatDimensions({ ...selectedSize.dimensions, unit: selectedSize.unit })})` : "",
       selectedColor?.label,
       selectedPrint?.label,
     ]
@@ -225,7 +234,7 @@ function ConfiguratorView({ product, experiments }: { product: Product; experime
         </div>
         {selectedSize && (
           <p className="label-mono mt-3 text-center">
-            {selectedSize.label} · {formatDimensions(selectedSize.dimensions)}
+            {selectedSize.label} · {formatDimensions({ ...selectedSize.dimensions, unit: selectedSize.unit })}
           </p>
         )}
         <div className="mt-4 grid grid-cols-2 gap-3">
@@ -250,17 +259,32 @@ function ConfiguratorView({ product, experiments }: { product: Product; experime
         </h1>
         <p className="mt-2 text-ink-2">{product.positioning}</p>
         <p className="mt-3 font-mono text-sm text-ink">
-          Starting at{" "}
+          From{" "}
           <span className="text-lg font-semibold">
             {formatUnitPrice(product.pricingTiers[product.pricingTiers.length - 1].unitPriceCents, product.currency)}
             /bag
           </span>{" "}
-          <span className="text-ink-3">at {formatQty(product.pricingTiers[product.pricingTiers.length - 1].minQty)}+ units</span>
+          <span className="text-ink-3">
+            at {formatQty(product.pricingTiers[product.pricingTiers.length - 1].minQty)}
+            {fixedQuantities ? " pieces" : "+ units"}
+          </span>
         </p>
-        {isDemoPricing() && product.pricingStatus === "DEMO" && (
+        {showsDemoPricing(product) && (
           <p className="mt-2 inline-block rounded-[6px] bg-error-soft px-2 py-1 font-mono text-[11px] uppercase tracking-wide text-error">
             Demo pricing — replace before launch
           </p>
+        )}
+
+        {/* Fixed construction — a SPECIFICATION, never a selectable option. */}
+        {product.specifications.length > 0 && (
+          <dl className="mt-6 grid gap-x-6 gap-y-1 rounded-[10px] border border-rule p-4 text-sm sm:grid-cols-2">
+            {product.specifications.map((spec) => (
+              <div key={spec.label} className="flex justify-between gap-3 sm:block">
+                <dt className="label-mono">{spec.label}</dt>
+                <dd className="text-right text-ink-2 sm:text-left">{spec.value}</dd>
+              </div>
+            ))}
+          </dl>
         )}
 
         {/* 1 · Size */}
@@ -279,14 +303,20 @@ function ConfiguratorView({ product, experiments }: { product: Product; experime
                 }}
               >
                 <span>{s.label}</span>
-                <span className="font-mono text-xs text-ink-3">{formatDimensions(s.dimensions)}</span>
+                <span className="font-mono text-xs text-ink-3">{formatDimensions({ ...s.dimensions, unit: s.unit })}</span>
               </button>
             ))}
           </div>
+          {selectedSize && (
+            <p className="mt-2 font-mono text-xs text-ink-3">
+              {describeDimensions({ ...selectedSize.dimensions, unit: selectedSize.unit })}
+            </p>
+          )}
           <p className="mt-2 text-xs text-ink-3">
-            Need exact dimensions?{" "}
-            <Link href={`/request-quote?product=${product.slug}`} className="text-accent underline">
-              Request custom sizing
+            Need a custom size? The factory can make one — it is quoted individually, minimum{" "}
+            {formatQty(product.minQuantity)} pieces.{" "}
+            <Link href={`/request-quote?product=${product.slug}&size=custom`} className="text-accent underline">
+              Request a custom size quote
             </Link>
           </p>
         </fieldset>
@@ -348,7 +378,16 @@ function ConfiguratorView({ product, experiments }: { product: Product; experime
           )}
         </fieldset>
 
-        {/* 4 · Printing */}
+        {/* 4 · Printing. With one option there is nothing to choose: the
+            customer uploads artwork and production review decides the colour
+            separation, so no print-colour-count selector is shown. */}
+        {singlePrintOption ? (
+          <div className="mt-6 rounded-[10px] border border-rule p-4">
+            <p className="label-mono">Printing</p>
+            <p className="mt-1 text-sm font-medium text-ink">{product.printOptions[0].label}</p>
+            <p className="mt-1 text-sm text-ink-3">{product.printOptions[0].description}</p>
+          </div>
+        ) : (
         <fieldset className={`mt-6 ${aiRing("printOptionId")}`}>
           <legend className="label-mono mb-2">Printing{aiMark("printOptionId")}</legend>
           <div className="grid gap-2">
@@ -374,6 +413,7 @@ function ConfiguratorView({ product, experiments }: { product: Product; experime
             ))}
           </div>
         </fieldset>
+        )}
 
         {/* 5 · Artwork */}
         {selectedPrint?.requiresArtwork && (
@@ -399,30 +439,48 @@ function ConfiguratorView({ product, experiments }: { product: Product; experime
                 {formatQty(q)}
               </button>
             ))}
-            <label className="chip cursor-text" data-selected={Boolean(customQty)}>
-              <span className="text-xs text-ink-3">Custom:</span>
-              <input
-                type="number"
-                inputMode="numeric"
-                min={0}
-                step={100}
-                value={customQty}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setCustomQty(v);
-                  const n = Number(v);
-                  if (Number.isFinite(n) && n > 0) {
-                    markStarted();
-                    setQuantity(n);
-                    track({ name: "select_quantity", params: { product_id: product.id, quantity: n } });
-                  }
-                }}
-                className="w-24 bg-transparent font-mono text-sm text-ink outline-none"
-                aria-label="Custom quantity"
-                placeholder={`${formatQty(product.minQuantity)}+`}
-              />
-            </label>
+            {!fixedQuantities && (
+              <label className="chip cursor-text" data-selected={Boolean(customQty)}>
+                <span className="text-xs text-ink-3">Custom:</span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={0}
+                  step={100}
+                  value={customQty}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setCustomQty(v);
+                    const n = Number(v);
+                    if (Number.isFinite(n) && n > 0) {
+                      markStarted();
+                      setQuantity(n);
+                      track({ name: "select_quantity", params: { product_id: product.id, quantity: n } });
+                    }
+                  }}
+                  className="w-24 bg-transparent font-mono text-sm text-ink outline-none"
+                  aria-label="Custom quantity"
+                  placeholder={`${formatQty(product.minQuantity)}+`}
+                />
+              </label>
+            )}
           </div>
+          <p className="mt-2 text-xs text-ink-3">
+            Minimum order {formatQty(product.minQuantity)} pieces per design.
+            {fixedQuantities && (
+              <>
+                {" "}
+                Need more than {formatQty(largestOrderableQty)}?{" "}
+                <Link
+                  href={`/request-quote?product=${product.slug}&qty=${largestOrderableQty}`}
+                  className="text-accent underline"
+                >
+                  Request a custom quote
+                </Link>
+                .
+              </>
+            )}
+          </p>
           {quantity < product.minQuantity && (
             <p className="mt-2 text-xs text-error" role="alert">
               Minimum order is {formatQty(product.minQuantity)} bags. Smaller runs may be possible —{" "}
@@ -436,13 +494,18 @@ function ConfiguratorView({ product, experiments }: { product: Product; experime
 
         {/* Tier table */}
         <details className="mt-4 rounded-[10px] border border-rule p-3" open>
-          <summary className="label-mono cursor-pointer select-none">Volume pricing</summary>
+          <summary className="label-mono cursor-pointer select-none">{fixedQuantities ? "Price by quantity" : "Volume pricing"}</summary>
           <div className="mt-3">
             <TierPricingTable
               tiers={product.pricingTiers}
               currency={product.currency}
               activeMinQty={quote?.tier.minQty}
               onPick={setQty}
+              /* The table must price what the customer actually selected —
+                 Extra Large costs 4¢/bag more at every tier. */
+              unitDeltaCents={selectedSize?.priceDeltaCents ?? 0}
+              exactQuantities={fixedQuantities}
+              caption={selectedSize ? `${selectedSize.label} · ${formatDimensions({ ...selectedSize.dimensions, unit: selectedSize.unit })}` : undefined}
             />
           </div>
         </details>
@@ -466,7 +529,7 @@ function ConfiguratorView({ product, experiments }: { product: Product; experime
                 </p>
               </div>
               <div className="text-right">
-                <p className="label-mono !text-graphite-muted">Total</p>
+                <p className="label-mono !text-graphite-muted">Product subtotal</p>
                 <p className="font-mono text-3xl font-semibold" style={{ color: "oklch(70% 0.14 256)" }}>
                   {formatMoney(quote.totalCents, quote.currency)}
                 </p>
@@ -481,23 +544,52 @@ function ConfiguratorView({ product, experiments }: { product: Product; experime
               and we&apos;ll price it within one business day.
             </p>
           )}
+
+          {/* Product subtotal, shipping and the pre-tax total, kept visibly
+              separate. The $100 is a shipping CHARGE, not tax and not duty,
+              and it is charged once per order — adding a second
+              configuration does not add a second $100. */}
+          {quote && !needsQuote && (
+            <dl className="mt-4 space-y-1.5 border-t border-graphite-muted/25 pt-3 font-mono text-sm">
+              <div className="flex justify-between text-graphite-muted">
+                <dt>Product subtotal</dt>
+                <dd>{formatMoney(quote.totalCents, quote.currency)}</dd>
+              </div>
+              <div className="flex justify-between text-graphite-muted">
+                <dt>Shipping (flat, per order)</dt>
+                <dd>{formatMoney(FLAT_US_SHIPPING_CENTS, quote.currency)}</dd>
+              </div>
+              <div className="flex justify-between font-semibold text-graphite-ink">
+                <dt>Total before tax</dt>
+                <dd>{formatMoney(quote.totalCents + FLAT_US_SHIPPING_CENTS, quote.currency)}</dd>
+              </div>
+              <p className="pt-1 text-[11px] font-normal text-graphite-muted">
+                {FLAT_US_SHIPPING_COPY}. Any sales tax is calculated by our checkout at payment.
+              </p>
+            </dl>
+          )}
         </div>
 
         {/* 8 · Production + shipping */}
         <div className="mt-4 grid gap-3 text-sm">
-          <p className="text-ink-3">
-            <span className="label-mono mr-2">Production</span>
-            Estimated production time is confirmed with your artwork proof.
-          </p>
+          <div className="rounded-[10px] border border-rule p-4">
+            <p className="label-mono">{PROOF_POLICY.headline}</p>
+            <p className="mt-1 text-ink-2">{PROOF_POLICY.detail}</p>
+            <p className="mt-1 text-ink-2">{PROOF_POLICY.productionStart}</p>
+            <p className="mt-2 text-ink-3">{PROOF_POLICY.leadTime}</p>
+          </div>
           <div>
             <label htmlFor="postal" className="label-mono mb-1 block">
-              Shipping estimate
+              Shipping — {FLAT_US_SHIPPING_COPY}
             </label>
+            <p className="mb-2 text-xs text-ink-3">
+              Check that we ship to your ZIP code. We ship within the United States only right now.
+            </p>
             <div className="flex gap-2">
               <input
                 id="postal"
                 className="input max-w-44"
-                placeholder="ZIP / postal code"
+                placeholder="ZIP code"
                 value={postal}
                 autoComplete="postal-code"
                 onChange={(e) => setPostal(e.target.value)}
@@ -507,7 +599,7 @@ function ConfiguratorView({ product, experiments }: { product: Product; experime
                 className="btn btn--secondary text-sm"
                 onClick={() => {
                   const est = estimateShipping(postal);
-                  if (est.mode === "invalid") {
+                  if (est.mode === "invalid" || est.mode === "unavailable") {
                     setShippingMsg({ text: est.message, tone: "error" });
                   } else {
                     setShippingMsg({ text: est.message, tone: "ok" });
@@ -554,7 +646,11 @@ function ConfiguratorView({ product, experiments }: { product: Product; experime
           )}
           {missingArtwork && (
             <p className="mt-2 text-xs text-error" role="alert">
-              Upload your logo above (or switch printing to “No logo”) to continue.
+              {/* Only offer the escape hatch that actually exists: this
+                  product has one print option and it always needs artwork. */}
+              {product.printOptions.some((o) => !o.requiresArtwork)
+                ? "Upload your logo above (or switch printing to “No logo”) to continue."
+                : "Upload your logo or artwork above to continue — every bag is custom printed."}
             </p>
           )}
           <p className="mt-3 text-center text-sm text-ink-3">
@@ -578,7 +674,9 @@ function ConfiguratorView({ product, experiments }: { product: Product; experime
                   <p className="truncate font-mono text-sm font-semibold text-ink">
                     {formatUnitPrice(quote.unitPriceCents, quote.currency)}/bag · {formatMoney(quote.totalCents, quote.currency)}
                   </p>
-                  <p className="font-mono text-[11px] text-ink-3">{formatQty(quantity)} bags</p>
+                  <p className="font-mono text-[11px] text-ink-3">
+                    {formatQty(quantity)} bags · +{formatMoney(FLAT_US_SHIPPING_CENTS, quote.currency)} shipping
+                  </p>
                 </>
               ) : (
                 <p className="text-xs text-ink-3">Finish configuring to see your price</p>

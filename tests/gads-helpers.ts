@@ -32,7 +32,7 @@ export function day(over: Partial<GoogleAdsCampaignDay> = {}): GoogleAdsCampaign
   };
 }
 
-const touch = (params: Touch["params"], landing = "/products/custom-non-woven-takeout-bags"): Touch => ({
+const touch = (params: Touch["params"], landing = "/products/custom-insulated-takeout-bags"): Touch => ({
   params,
   landing_page: landing,
   referrer: "",

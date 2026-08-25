@@ -21,6 +21,30 @@ export function formatPct(fraction: number): string {
   return `${Math.round(fraction * 100)}%`;
 }
 
-export function formatDimensions(d: { width: number; height: number; gusset: number }): string {
+/**
+ * width × height × side gusset, in the size's own unit.
+ *
+ * The unit is never assumed: Product #1 is specified in centimetres and the
+ * older catalog entries in inches, so a bare `26 × 26 × 17` would read as
+ * inches on one product and centimetres on another.
+ */
+export function formatDimensions(d: {
+  width: number;
+  height: number;
+  gusset: number;
+  unit?: "in" | "cm";
+}): string {
+  if (d.unit === "cm") return `${d.width} × ${d.height} × ${d.gusset} cm`;
   return `${d.width}"W × ${d.height}"H × ${d.gusset}"G`;
+}
+
+/** Spelled-out dimensions, for places with room to be unambiguous. */
+export function describeDimensions(d: {
+  width: number;
+  height: number;
+  gusset: number;
+  unit?: "in" | "cm";
+}): string {
+  const u = d.unit === "cm" ? "cm" : "in";
+  return `Width ${d.width} ${u} · Height ${d.height} ${u} · Side gusset ${d.gusset} ${u}`;
 }

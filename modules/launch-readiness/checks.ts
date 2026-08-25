@@ -1,6 +1,6 @@
 import { BUSINESS, isDemoPricing } from "@/config/business";
 import { isFlagEnabled } from "@/config/flags";
-import { PRODUCTS } from "@/config/products";
+import { LAUNCH_PRODUCTS, PRODUCTS } from "@/config/products";
 import { validateMerchandiseMap } from "@/config/shopify";
 import { siteDomainConfigured } from "@/config/site";
 import { getModelPricing } from "@/config/ai-pricing";
@@ -38,15 +38,30 @@ export function commerceChecks(): ReadinessCheck[] {
   const commerce = describeCommerceReadiness();
 
   if (commerce.mode === "misconfigured") {
+    // Three different problems with three different fixes. Reporting all of
+    // them as "partially configured" sent the owner looking for a half-set
+    // variable that does not exist — in production with NOTHING configured,
+    // this is the branch that runs, because resolveCommerceConfiguration()
+    // throws rather than returning mock (PL Session 04).
+    const summary =
+      commerce.reason === "not_configured"
+        ? "Shopify is not configured. Nothing can be sold — checkout answers 503."
+        : commerce.reason === "partial"
+          ? "Shopify is only half configured, so no checkout can be created and nothing can be sold."
+          : "Shopify is configured with a value this codebase refuses to use, so no checkout can be created and nothing can be sold.";
+    const action =
+      commerce.missingEnv.length > 0
+        ? `Set the missing variables (${commerce.missingEnv.join(", ")}) and redeploy.`
+        : "Correct the invalid Shopify configuration — see the server log for which value was refused (docs/SHOPIFY_PRODUCTION.md).";
     checks.push({
       id: "commerce.credentials",
       category: "COMMERCE",
       title: "Shopify checkout",
       state: "BLOCKED",
-      summary: "Shopify is partially configured, so no checkout can be created and nothing can be sold.",
-      action: `Set the missing variables (${commerce.missingEnv.join(", ") || "see the server log"}) and redeploy.`,
+      summary,
+      action,
       mandatory: true,
-      code: "COMMERCE_MISCONFIGURED",
+      code: commerce.reason === "not_configured" ? "COMMERCE_NOT_CONFIGURED" : "COMMERCE_MISCONFIGURED",
     });
   } else if (commerce.mode === "mock") {
     checks.push({
@@ -199,11 +214,39 @@ export function databaseChecks(): ReadinessCheck[] {
 /* ------------------------------------------------------------------ */
 
 export function productChecks(): ReadinessCheck[] {
-  const demoProducts = PRODUCTS.filter((p) => p.pricingStatus !== "LIVE");
-  const missingImages = PRODUCTS.filter((p) => p.images.every((img) => !img.src));
+  /*
+   * Scoped to LAUNCH-ENABLED products throughout. A launch-disabled product
+   * cannot be browsed or bought (lib/commerce/catalog.ts), so its demo
+   * pricing and missing photography block nothing — reporting them as
+   * blockers would bury the ones that do block, and clearing them would mean
+   * inventing data for products nobody is launching.
+   */
+  const demoProducts = LAUNCH_PRODUCTS.filter((p) => p.pricingStatus !== "LIVE");
+  const missingImages = LAUNCH_PRODUCTS.filter((p) => p.images.every((img) => !img.src));
   const demoNotice = isDemoPricing();
+  const disabled = PRODUCTS.length - LAUNCH_PRODUCTS.length;
 
   return [
+    {
+      id: "product.launch_scope",
+      category: "PRODUCT",
+      title: "Launch product scope",
+      state: LAUNCH_PRODUCTS.length > 0 ? "READY" : "BLOCKED",
+      summary:
+        LAUNCH_PRODUCTS.length === 0
+          ? "No product is launch-enabled, so the storefront has nothing to sell."
+          : `${LAUNCH_PRODUCTS.length} product${LAUNCH_PRODUCTS.length === 1 ? " is" : "s are"} launch-enabled (${LAUNCH_PRODUCTS.map((p) => p.title).join(", ")}). ${
+              disabled > 0
+                ? `${disabled} catalog entr${disabled === 1 ? "y is" : "ies are"} launch-disabled and unreachable by customers.`
+                : "Every catalog entry is launch-enabled."
+            }`,
+      action:
+        LAUNCH_PRODUCTS.length > 0
+          ? null
+          : "Set launchEnabled: true on the product you intend to sell in config/products.ts.",
+      mandatory: true,
+      code: "LAUNCH_PRODUCT_SCOPE",
+    },
     {
       id: "product.pricing_live",
       category: "PRODUCT",
@@ -211,10 +254,10 @@ export function productChecks(): ReadinessCheck[] {
       state: demoProducts.length === 0 && !demoNotice ? "READY" : "BLOCKED",
       summary:
         demoProducts.length > 0
-          ? `${demoProducts.length} of ${PRODUCTS.length} products still carry demo pricing. Selling at demo prices charges the customer a number nobody chose.`
+          ? `${demoProducts.length} of ${LAUNCH_PRODUCTS.length} launch products still carry demo pricing. Selling at demo prices charges the customer a number nobody chose.`
           : demoNotice
-            ? "Prices are marked LIVE but the storefront still shows the demo-pricing notice."
-            : "All products carry live prices.",
+            ? "Launch prices are marked LIVE in the catalog, but NEXT_PUBLIC_DEMO_PRICING is not \"false\", so the storefront still shows the demo-pricing notice over real prices and withholds the product offer from structured data."
+            : "Every launch product carries live, owner-confirmed prices.",
       action:
         demoProducts.length > 0
           ? 'Set real tier prices in config/products.ts and change pricingStatus to "LIVE", then set NEXT_PUBLIC_DEMO_PRICING=false and redeploy.'
@@ -243,9 +286,16 @@ export function productChecks(): ReadinessCheck[] {
       state: missingImages.length === 0 ? "READY" : "WARNING",
       summary:
         missingImages.length === 0
-          ? "Every product has at least one real image."
-          : `${missingImages.length} of ${PRODUCTS.length} products have no real photography and render an illustration placeholder. It sells, but it looks like a prototype.`,
-      action: missingImages.length === 0 ? null : "Add real product photography to config/products.ts.",
+          ? "Every launch product has at least one real image."
+          : `${missingImages.length} of ${LAUNCH_PRODUCTS.length} launch products have no real photography and render labelled placeholder slots. It sells, but it looks like a prototype. Needed for ${LAUNCH_PRODUCTS.filter(
+              (p) => p.images.every((img) => !img.src),
+            )
+              .map((p) => `${p.title}: ${p.images.map((img) => img.slot).join(", ")}`)
+              .join(" · ")}`,
+      action:
+        missingImages.length === 0
+          ? null
+          : "Add owner/supplier-provided photography (never AI-generated product shots) and set each image `src` in config/products.ts.",
       mandatory: false,
       code: "PRODUCT_IMAGES",
     },
@@ -258,7 +308,7 @@ export function productChecks(): ReadinessCheck[] {
 
 export function artworkChecks(): ReadinessCheck[] {
   const storage = describeArtworkStorageReadiness();
-  const printedProductsExist = PRODUCTS.some((p) => p.printOptions.some((o) => o.requiresArtwork));
+  const printedProductsExist = LAUNCH_PRODUCTS.some((p) => p.printOptions.some((o) => o.requiresArtwork));
 
   return [
     {

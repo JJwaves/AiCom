@@ -113,7 +113,7 @@ export function QuoteForm({ defaultProduct, defaultQty }: { defaultProduct?: str
         {field("contactName", "Contact name", { autoComplete: "name" })}
         {field("email", "Email", { type: "email", autoComplete: "email" })}
         {field("phone", "Phone (optional)", { type: "tel", autoComplete: "tel" })}
-        {field("productType", "Product type", { defaultValue: defaultProduct ?? "Custom non-woven takeout bag" })}
+        {field("productType", "Product type", { defaultValue: defaultProduct ?? "Custom Insulated Takeout Bag" })}
         {field("dimensions", "Dimensions (optional)", { placeholder: 'e.g. 12"W × 10"H × 8"G' })}
         {field("quantity", "Quantity", { defaultValue: defaultQty ?? "", inputMode: "numeric", placeholder: "e.g. 5,000" })}
         {field("printing", "Printing requirements (optional)", { placeholder: "e.g. 2-color logo, both sides" })}
@@ -129,7 +129,7 @@ export function QuoteForm({ defaultProduct, defaultQty }: { defaultProduct?: str
           id="artwork"
           name="artwork"
           type="file"
-          accept=".png,.jpg,.jpeg,.pdf,.svg,.ai,.eps"
+          accept=".png,.jpg,.jpeg,.pdf,.ai,.eps"
           className="input cursor-pointer file:mr-3 file:cursor-pointer file:rounded-[6px] file:border-0 file:bg-accent-soft file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-ink"
           aria-invalid={errors.artwork ? "true" : undefined}
           onChange={(e) => setArtworkName(e.target.files?.[0]?.name ?? null)}

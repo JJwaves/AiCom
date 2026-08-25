@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PRODUCTS } from "@/config/products";
+import { LAUNCH_PRODUCTS, PRODUCTS } from "@/config/products";
 import {
   merchandiseKey,
   requiredMerchandiseKeys,
@@ -50,21 +50,41 @@ describe("merchandise keys", () => {
 describe("the required key set comes from the real catalog", () => {
   const required = requiredMerchandiseKeys();
 
-  it("covers every product in the catalog", () => {
-    for (const product of PRODUCTS) {
+  it("covers every LAUNCH-ENABLED product, and only those", () => {
+    for (const product of LAUNCH_PRODUCTS) {
       expect(required.some((r) => r.key.startsWith(`${product.id}|`))).toBe(true);
+    }
+    // A launch-disabled product cannot be bought, so demanding a Shopify
+    // variant for it would report a blocker that blocks nothing.
+    for (const product of PRODUCTS.filter((p) => !p.launchEnabled)) {
+      expect(required.some((r) => r.key.startsWith(`${product.id}|`))).toBe(false);
     }
   });
 
+  it("is exactly the four Product #1 merchandise combinations (2 sizes × 2 colors)", () => {
+    expect(required.map((r) => r.key).sort()).toEqual(
+      [
+        "p-custom-takeout|l|insulated|black",
+        "p-custom-takeout|l|insulated|white",
+        "p-custom-takeout|xl|insulated|black",
+        "p-custom-takeout|xl|insulated|white",
+      ].sort(),
+    );
+  });
+
   it("only lists a product's OWN sizes and materials", () => {
-    // p-heavy-duty drops the small size and offers only the heavy material.
-    const heavy = required.filter((r) => r.key.startsWith("p-heavy-duty|"));
-    expect(heavy.length).toBeGreaterThan(0);
-    for (const { key } of heavy) {
+    const launch = required.filter((r) => r.key.startsWith("p-custom-takeout|"));
+    expect(launch.length).toBeGreaterThan(0);
+    for (const { key } of launch) {
       const [, sizeId, materialId] = key.split("|");
-      expect(["m", "l", "xl"]).toContain(sizeId);
-      expect(materialId).toBe("heavy");
+      expect(["l", "xl"]).toContain(sizeId);
+      expect(materialId).toBe("insulated");
     }
+  });
+
+  it("neither quantity nor print option multiplies the requirement", () => {
+    // 2 sizes × 1 material × 2 colors — NOT × 2 quantities, NOT × print.
+    expect(required).toHaveLength(4);
   });
 
   it("EXCLUDES custom colors — they are quote-only and can never reach checkout", () => {
@@ -85,7 +105,7 @@ describe("resolution is exact-match only — no fallback of any kind", () => {
 
   it("resolves a mapped configuration", () => {
     const result = resolveMerchandise(
-      { productId: "p-custom-takeout", sizeId: "m", materialId: "standard", colorId: "white" },
+      { productId: "p-custom-takeout", sizeId: "l", materialId: "insulated", colorId: "white" },
       map,
     );
     expect(result.ok).toBe(true);
@@ -94,7 +114,7 @@ describe("resolution is exact-match only — no fallback of any kind", () => {
   });
 
   it("fails on an unknown product rather than picking another product's variant", () => {
-    const result = resolveMerchandise({ productId: "p-nope", sizeId: "m", materialId: "standard", colorId: "white" }, map);
+    const result = resolveMerchandise({ productId: "p-nope", sizeId: "l", materialId: "insulated", colorId: "white" }, map);
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("unreachable");
     expect(result.reason).toBe("unmapped_configuration");
@@ -102,7 +122,7 @@ describe("resolution is exact-match only — no fallback of any kind", () => {
 
   it("fails on an unknown size rather than falling back to a mapped size", () => {
     const result = resolveMerchandise(
-      { productId: "p-custom-takeout", sizeId: "xxl", materialId: "standard", colorId: "white" },
+      { productId: "p-custom-takeout", sizeId: "xxl", materialId: "insulated", colorId: "white" },
       map,
     );
     expect(result.ok).toBe(false);
@@ -110,7 +130,7 @@ describe("resolution is exact-match only — no fallback of any kind", () => {
 
   it("fails on an unknown material", () => {
     const result = resolveMerchandise(
-      { productId: "p-custom-takeout", sizeId: "m", materialId: "titanium", colorId: "white" },
+      { productId: "p-custom-takeout", sizeId: "l", materialId: "titanium", colorId: "white" },
       map,
     );
     expect(result.ok).toBe(false);
@@ -118,7 +138,7 @@ describe("resolution is exact-match only — no fallback of any kind", () => {
 
   it("fails on an unknown color", () => {
     const result = resolveMerchandise(
-      { productId: "p-custom-takeout", sizeId: "m", materialId: "standard", colorId: "chartreuse" },
+      { productId: "p-custom-takeout", sizeId: "l", materialId: "insulated", colorId: "chartreuse" },
       map,
     );
     expect(result.ok).toBe(false);
@@ -126,9 +146,9 @@ describe("resolution is exact-match only — no fallback of any kind", () => {
 
   it("fails on a MISSING mapping even though the configuration is valid", () => {
     const partial = { ...map };
-    delete partial["p-custom-takeout|m|standard|white"];
+    delete partial["p-custom-takeout|l|insulated|white"];
     const result = resolveMerchandise(
-      { productId: "p-custom-takeout", sizeId: "m", materialId: "standard", colorId: "white" },
+      { productId: "p-custom-takeout", sizeId: "l", materialId: "insulated", colorId: "white" },
       partial,
     );
     expect(result.ok).toBe(false);
@@ -138,8 +158,8 @@ describe("resolution is exact-match only — no fallback of any kind", () => {
 
   it("fails on a malformed variant id rather than sending it to Shopify", () => {
     const result = resolveMerchandise(
-      { productId: "p-custom-takeout", sizeId: "m", materialId: "standard", colorId: "white" },
-      { "p-custom-takeout|m|standard|white": "44123456789012" },
+      { productId: "p-custom-takeout", sizeId: "l", materialId: "insulated", colorId: "white" },
+      { "p-custom-takeout|l|insulated|white": "44123456789012" },
     );
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("unreachable");
@@ -148,7 +168,7 @@ describe("resolution is exact-match only — no fallback of any kind", () => {
 
   it("is not fooled by inherited Object prototype keys", () => {
     const result = resolveMerchandise(
-      { productId: "constructor", sizeId: "m", materialId: "standard", colorId: "white" },
+      { productId: "constructor", sizeId: "l", materialId: "insulated", colorId: "white" },
       {},
     );
     expect(result.ok).toBe(false);
@@ -156,7 +176,7 @@ describe("resolution is exact-match only — no fallback of any kind", () => {
 
   it("performs NO fuzzy matching — a near-miss key resolves to nothing", () => {
     const result = resolveMerchandise(
-      { productId: "p-custom-takeout ", sizeId: "M", materialId: "Standard", colorId: "White" },
+      { productId: "p-custom-takeout ", sizeId: "L", materialId: "Insulated", colorId: "White" },
       map,
     );
     expect(result.ok).toBe(false);
@@ -191,7 +211,7 @@ describe("mapping validation", () => {
 
   it("ERRORS on a key that is not a purchasable configuration (typo)", () => {
     const map = fullMap();
-    map["p-custom-takeout|m|standard|puce"] = V(9999);
+    map["p-custom-takeout|l|insulated|puce"] = V(9999);
     const result = validateMerchandiseMap(map);
     expect(result.issues.some((i) => i.severity === "error" && /not a purchasable/.test(i.message))).toBe(true);
   });

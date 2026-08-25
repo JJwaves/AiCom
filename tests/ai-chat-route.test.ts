@@ -125,18 +125,18 @@ describe("happy path", () => {
         {
           kind: "toolCalls",
           calls: [
-            { name: "updateConfiguration", input: { productId: p.id, patch: { colorId: "black", quantity: 5000 } } },
+            { name: "updateConfiguration", input: { productId: p.id, patch: { colorId: "white", quantity: 5000 } } },
             {
               name: "suggestConfigurationUpdate",
               input: { productId: p.id, patch: { quantity: 10_000 }, label: "Update to 10,000 bags" },
             },
           ],
         },
-        reply("Done — 5,000 black bags. 10,000 would drop the unit price; want that instead?"),
+        reply("Done — 5,000 white bags. 10,000 would drop the unit price; want that instead?"),
         NO_EXTRACTION,
       ]),
     );
-    const res = await POST(post({ message: "5,000 black bags please" }));
+    const res = await POST(post({ message: "5,000 white bags please" }));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.configurationUpdate).toMatchObject({
@@ -144,7 +144,7 @@ describe("happy path", () => {
       revision: expect.any(Number),
       changedFields: expect.arrayContaining(["colorId", "quantity"]),
     });
-    expect(body.configurationUpdate.config).toMatchObject({ colorId: "black", quantity: 5000 });
+    expect(body.configurationUpdate.config).toMatchObject({ colorId: "white", quantity: 5000 });
     expect(body.suggestedActions).toHaveLength(1);
     expect(body.suggestedActions[0]).toMatchObject({
       type: "APPLY_CONFIGURATION_PATCH",

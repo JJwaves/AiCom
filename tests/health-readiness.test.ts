@@ -124,7 +124,6 @@ describe("readiness semantics (§31, §64)", () => {
     expect(blockedIds).toContain("commerce.merchandise_map");
     expect(blockedIds).toContain("artwork.storage");
     expect(blockedIds).toContain("product.pricing_live");
-    expect(blockedIds).toContain("product.moq");
     expect(blockedIds).toContain("admin.credentials");
     expect(blockedIds).toContain("business.domain");
   });
@@ -188,6 +187,46 @@ describe("owner-friendly messages come first (§47, §65)", () => {
       if (check.state !== "READY") expect(check.action, `${check.id} has no action`).toBeTruthy();
     }
   });
+
+  /**
+   * PL Session 04 regression, found by running the report the way production
+   * runs it. With NOTHING configured in production, commerce resolution
+   * THROWS (it refuses to fall back to mock), so readiness took the
+   * "misconfigured" branch and told the owner Shopify was "partially
+   * configured" — sending them to look for a half-set variable that does not
+   * exist. The accurate not-configured message was unreachable in the one
+   * environment it was written for.
+   */
+  it("says Shopify is NOT configured — not 'partially' — when nothing is set in production", () => {
+    const savedNodeEnv = process.env.NODE_ENV;
+    Object.defineProperty(process.env, "NODE_ENV", { value: "production", configurable: true, writable: true, enumerable: true });
+    try {
+      const credentials = byId(commerceChecks(), "commerce.credentials");
+      expect(credentials.state).toBe("BLOCKED");
+      expect(credentials.summary).not.toMatch(/partial/i);
+      expect(credentials.summary).toMatch(/not configured/i);
+      expect(credentials.code).toBe("COMMERCE_NOT_CONFIGURED");
+      expect(credentials.action).toContain("SHOPIFY_STORE_DOMAIN");
+      expect(credentials.action).toContain("SHOPIFY_ADMIN_API_TOKEN");
+    } finally {
+      Object.defineProperty(process.env, "NODE_ENV", { value: savedNodeEnv, configurable: true, writable: true, enumerable: true });
+    }
+  });
+
+  it("says HALF configured only when one of the two variables is actually set", () => {
+    const savedNodeEnv = process.env.NODE_ENV;
+    Object.defineProperty(process.env, "NODE_ENV", { value: "production", configurable: true, writable: true, enumerable: true });
+    process.env.SHOPIFY_STORE_DOMAIN = "bagdirect-test.myshopify.com";
+    try {
+      const credentials = byId(commerceChecks(), "commerce.credentials");
+      expect(credentials.state).toBe("BLOCKED");
+      expect(credentials.summary).toMatch(/half configured/i);
+      expect(credentials.action).toContain("SHOPIFY_ADMIN_API_TOKEN");
+      expect(credentials.action).not.toContain("SHOPIFY_STORE_DOMAIN");
+    } finally {
+      Object.defineProperty(process.env, "NODE_ENV", { value: savedNodeEnv, configurable: true, writable: true, enumerable: true });
+    }
+  });
 });
 
 describe("owner placeholders are surfaced (§43, §65)", () => {
@@ -216,11 +255,27 @@ describe("owner placeholders are surfaced (§43, §65)", () => {
 });
 
 describe("product readiness reports, and never changes, the data (§44, §65)", () => {
-  it("reports demo pricing, unconfirmed MOQ and missing images", () => {
+  it("reports a confirmed MOQ, an unset demo-pricing flag, and missing images", () => {
     const checks = productChecks();
+    // Product #1's prices are LIVE in the catalog, but NEXT_PUBLIC_DEMO_PRICING
+    // is an owner-set build flag: until it says "false" the storefront still
+    // shows the demo notice, so this stays BLOCKED. Readiness is not made
+    // green by the catalog alone.
     expect(byId(checks, "product.pricing_live").state).toBe("BLOCKED");
-    expect(byId(checks, "product.moq").state).toBe("BLOCKED");
+    // The MOQ is owner-confirmed (5,000/design), so this one really is ready.
+    expect(byId(checks, "product.moq").state).toBe("READY");
+    expect(byId(checks, "product.launch_scope").state).toBe("READY");
     expect(byId(checks, "product.images").mandatory).toBe(false);
+    expect(byId(checks, "product.images").state).toBe("WARNING");
+  });
+
+  it("scopes product readiness to launch-enabled products only", () => {
+    // The seed catalog entries still carry DEMO pricing, but they are
+    // launch-disabled and unreachable, so they must not be counted as
+    // blockers — that would bury the blockers that are real.
+    const summary = byId(productChecks(), "product.launch_scope").summary;
+    expect(summary).toContain("Custom Insulated Takeout Bag");
+    expect(summary).toMatch(/launch-disabled/);
   });
 });
 

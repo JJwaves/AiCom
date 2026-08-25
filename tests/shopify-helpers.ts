@@ -1,3 +1,4 @@
+import { FLAT_US_SHIPPING_CENTS } from "@/config/shipping";
 import { requiredMerchandiseKeys } from "@/config/shopify";
 import type { ShopifyTransport } from "@/lib/commerce/shopify-transport";
 import type { Cart } from "@/types/commerce";
@@ -40,6 +41,7 @@ export type FakeShopifyOptions = {
   distort?: (draft: {
     currencyCode: string;
     subtotalPriceSet: { shopMoney: { amount: string; currencyCode: string } };
+    totalShippingPriceSet: { shopMoney: { amount: string; currencyCode: string } };
     lineItems: {
       nodes: {
         quantity: number;
@@ -89,7 +91,11 @@ export function createFakeShopifyTransport(options: FakeShopifyOptions = {}): {
       return { draftOrderCreate: { draftOrder: null, userErrors: options.userErrors } } as T;
     }
 
-    const input = variables.input as { lineItems: DraftOrderLineInput[]; presentmentCurrencyCode: string };
+    const input = variables.input as {
+      lineItems: DraftOrderLineInput[];
+      presentmentCurrencyCode: string;
+      shippingLine?: { title: string; priceWithCurrency: { amount: string; currencyCode: string } };
+    };
     const nodes = input.lineItems.map((line) => {
       const unit = centsFromDecimal(line.priceOverride.amount);
       return {
@@ -108,6 +114,14 @@ export function createFakeShopifyTransport(options: FakeShopifyOptions = {}): {
       invoiceUrl: options.withoutInvoiceUrl ? null : "https://bagdirect-test.myshopify.com/invoices/abc123",
       currencyCode: input.presentmentCurrencyCode,
       subtotalPriceSet: { shopMoney: { amount: decimalFromCents(subtotal), currencyCode: input.presentmentCurrencyCode } },
+      // A real store charges the shipping line it was given, once for the
+      // whole order — the fake echoes exactly that.
+      totalShippingPriceSet: {
+        shopMoney: {
+          amount: input.shippingLine?.priceWithCurrency.amount ?? "0.00",
+          currencyCode: input.presentmentCurrencyCode,
+        },
+      },
       lineItems: { nodes },
     };
     options.distort?.(draft);
@@ -126,3 +140,24 @@ export const TEST_CREDENTIALS = {
 
 /** Sum of a cart's authoritative line totals. */
 export const cartSubtotalCents = (cart: Cart): number => cart.lines.reduce((sum, l) => sum + l.totalCents, 0);
+
+/** The flat customer shipping charge a correct draft order must carry, once. */
+export const EXPECTED_SHIPPING_CENTS = FLAT_US_SHIPPING_CENTS;
+
+/** A correctly-priced draft order for verification tests. */
+export function draftFor(cart: Cart, overrides: Record<string, unknown> = {}) {
+  const nodes = cart.lines.map((l) => ({
+    quantity: l.config.quantity,
+    originalUnitPriceSet: { shopMoney: { amount: decimalFromCents(l.unitPriceCents), currencyCode: cart.currency } },
+    originalTotalSet: { shopMoney: { amount: decimalFromCents(l.totalCents), currencyCode: cart.currency } },
+  }));
+  return {
+    currencyCode: cart.currency,
+    subtotalPriceSet: { shopMoney: { amount: decimalFromCents(cartSubtotalCents(cart)), currencyCode: cart.currency } },
+    totalShippingPriceSet: {
+      shopMoney: { amount: decimalFromCents(FLAT_US_SHIPPING_CENTS), currencyCode: cart.currency },
+    },
+    lineItems: { nodes },
+    ...overrides,
+  };
+}

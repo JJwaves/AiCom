@@ -394,10 +394,27 @@ BagDirect never *executes* a refund — Shopify remains the refund authority.
 
 ## 10. Shipping and tax (§37, §38, §39)
 
-**Shipping is Shopify's.** The draft order sets **no** `shippingLine`, which
-leaves Shopify's shipping profiles to rate the order from the customer's real
-address at checkout. BagDirect does not calculate shipping and does not claim
-to. `config/shipping.ts` remains a storefront *messaging* estimate only.
+**Shipping is a flat BagDirect charge, once per order** (updated by the
+Product #1 production configuration). The draft order sets exactly ONE
+`shippingLine` carrying `FLAT_US_SHIPPING_CENTS` from `config/shipping.ts`
+($100). It is attached to the ORDER, not to a line item, which is what makes a
+six-configuration B2B order pay $100 rather than $600 — the structure enforces
+"once per order", not a comment. The draft order is read back and
+`totalShippingPriceSet` is VERIFIED against that constant like every other
+amount, so a doubled or dropped charge aborts the checkout and deletes the
+draft.
+
+It is a CUSTOMER CHARGE, not a measured freight cost and not tax: it never
+enters BagDirect's product revenue (`orders.totalCents` stays the product
+subtotal) and never enters supplier cost. `config/costs.ts` records it as
+`shippingPolicy.customerCharge: { kind: "flat_per_order" }` — the money
+collected — while `products.*.shipping`, the freight cost it would offset,
+stays null.
+
+**Verify in the Shopify admin that no additional shipping rate is applied on
+top of the draft order's shipping line.** A shipping profile that also rates
+the order would charge the customer twice, and that is a store setting
+BagDirect cannot see.
 
 **Tax is Shopify's.** No custom tax engine exists. The draft order sets no tax
 fields; the variant's tax settings and the store's tax configuration apply.

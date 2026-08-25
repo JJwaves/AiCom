@@ -1,6 +1,6 @@
 import { PRICING_INTELLIGENCE } from "@/config/pricing-intelligence";
 import { isDemoPricing } from "@/config/business";
-import { listCatalogProducts } from "@/lib/commerce/catalog";
+import { listAllCatalogProducts } from "@/lib/commerce/catalog";
 import { listInsights, listOpportunities } from "@/lib/data/insight-service";
 import { loadSessionEventFacts } from "@/lib/data/pricing-intelligence-service";
 import { loadConversationCorpus } from "@/modules/customer-intelligence/aggregate";
@@ -87,7 +87,7 @@ export async function buildPricingIntelligenceSnapshot(period: Period): Promise<
   const prev = previousPeriod(period);
 
   const [products, corpus, prevCorpus, opportunities, insights] = await Promise.all([
-    listCatalogProducts(),
+    listAllCatalogProducts(),
     loadConversationCorpus(period),
     loadConversationCorpus(prev),
     listOpportunities(100),

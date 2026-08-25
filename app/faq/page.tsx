@@ -6,7 +6,7 @@ import { FAQAccordion, FinalCTA } from "@/components/landing/sections";
 export const metadata: Metadata = {
   title: "FAQ — Ordering, Artwork, Shipping",
   description:
-    "Answers on minimum order quantities, artwork proofs, file formats, US and Canada shipping, volume pricing and custom-printed returns.",
+    "Answers on the 5,000-piece minimum, digital proofs, artwork file formats, flat U.S. shipping, pricing and custom-printed returns.",
   alternates: { canonical: "/faq" },
 };
 

@@ -74,7 +74,7 @@ export function Header() {
               </span>
             )}
           </Link>
-          <Link href="/products/custom-non-woven-takeout-bags" className="btn btn--primary hidden text-sm sm:inline-flex">
+          <Link href="/products/custom-insulated-takeout-bags" className="btn btn--primary hidden text-sm sm:inline-flex">
             Shop takeout bags
           </Link>
           {!isLanding && (
@@ -108,7 +108,7 @@ export function Header() {
             ))}
             <li className="py-3">
               <Link
-                href="/products/custom-non-woven-takeout-bags"
+                href="/products/custom-insulated-takeout-bags"
                 className="btn btn--primary w-full text-sm"
                 onClick={() => setOpen(false)}
               >

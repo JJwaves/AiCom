@@ -309,7 +309,46 @@ it off will never enrol anyone. Toggling it means a rebuild and redeploy.
 
 ---
 
-## 12. Routine checks
+## 12. The soft-launch day — where to look, in order
+
+Eight places, and this is the whole list. Everything else can wait for the
+weekly pass. Times are suggestions; the ORDER is the point — first-party truth
+before vendor dashboards, because BagDirect's own `purchase_completed` is
+complete and the vendor copies are not.
+
+**Morning (5 minutes)**
+
+| Look at | Healthy answer | If not |
+| --- | --- | --- |
+| `GET /api/health/ready` | `200`, `"status":"ready"` | Read `blockers[]` — it names the fix. A 503 means no new order can be trusted |
+| `/admin/launch-readiness` | Nothing newly BLOCKED | Compare against yesterday; a new blocker is usually an expired credential |
+| Error tracker (Sentry / webhook destination) | No `COMMERCE_NOT_CONFIGURED`, no checkout error spike, no webhook failures | §2 emergency switches |
+| `/admin/handoffs` | No unhandled escalation older than your reply SLA | Reply, then mark handled |
+
+**During the day**
+
+| Look at | Healthy answer |
+| --- | --- |
+| Shopify → Orders | Every paid order also exists in BagDirect with the same total |
+| Artwork on each new order line | Openable file, right line. **A printed order without artwork cannot be produced — chase it the same day** |
+| AI usage (if AI Sales is on) | Spend tracking below the daily budget cap |
+
+**End of day (5 minutes)**
+
+| Look at | Healthy answer | If not |
+| --- | --- | --- |
+| Reconciliation sweep (`/admin/launch-readiness`) | Repairs **zero** orders | A repair means a webhook was lost. One is recoverable; a pattern is a webhook-registration problem — §3 |
+| Shopify order count vs BagDirect order count | Equal | §4. Never adjust BagDirect by hand |
+| GA4 / Google Ads purchase count vs BagDirect `purchase_completed` | GA4 ≤ BagDirect | Expected: browser tracking undercounts (a buyer who closes the tab never fires it). BagDirect's count is the true one — never "correct" it upward |
+
+**The rule underneath all of this:** BagDirect's own order table is the truth
+about what was sold. Shopify is the truth about what was PAID. Everything
+else — GA4, Google Ads, Meta — is a copy that is allowed to be lower, and is
+never allowed to change either of the first two.
+
+---
+
+## 13. Routine checks
 
 | Cadence | Check |
 | --- | --- |

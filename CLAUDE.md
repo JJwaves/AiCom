@@ -12,6 +12,10 @@ context existing.
 `docs/AI_PLATFORM_ROADMAP.md`; each phase re-reads its relevant spec
 sections. It is a vision document, not a single-session to-do list.
 
+**Product catalog and launch scope: [docs/PRODUCT_CATALOG.md](docs/PRODUCT_CATALOG.md)**
+— which products exist, which are sellable, what the customer may choose, and
+how Product #1's four prices are produced.
+
 **All architecture docs live in `docs/`** (audit, architecture, database
 schema, AI agents, guardrails, roadmap, master prompt). Development
 sessions are driven by the prompt files in `prompts/` — read
@@ -20,9 +24,14 @@ sessions are driven by the prompt files in `prompts/` — read
 ## Product
 
 AI-native factory-direct B2B commerce platform.
-- Initial market: United States and Canada.
-- Initial customers: restaurants and coffee shops.
-- Initial product: custom non-woven takeout bags.
+- Initial market: **United States only** (Canada is not served during the soft
+  launch — no rate, no customs handling, no CAD pricing).
+- Initial customers: restaurants, takeout businesses, catering, bakeries and
+  food delivery.
+- Initial product: **Custom Insulated Takeout Bag** — the ONE launch-enabled
+  product (`config/products.ts`). PP laminated / non-woven / aluminium foil,
+  Large 26×26×17 cm and Extra Large 30×30×20 cm, black or white, custom
+  artwork printing, MOQ 5,000/design, orderable at 5,000 or 10,000.
 - Primary conversion: online purchase. Secondary: custom quote request.
 
 ## Core architecture rule
@@ -52,6 +61,181 @@ limits, refund authorization, agent autonomy, approvals.
   session; update this file and the relevant architecture docs.
 
 ## Current project stage
+
+**PRODUCT #1 PRODUCTION CONFIGURATION COMPLETE (2026-08-17) — the storefront
+now sells a REAL product at REAL owner-confirmed prices. Launch verdict is
+still NO-GO, but for four owner-infrastructure reasons instead of ten, and the
+Shopify variant requirement dropped from 114 to 4.**
+
+This was a narrowly scoped production-configuration session, not launch
+engineering: replace the demo insulated-takeout-bag catalog with the first real
+BagDirect soft-launch product, and let launch readiness stay BLOCKED wherever
+owner configuration is genuinely still missing.
+
+**1. ONE LAUNCH-ENABLED PRODUCT, AND THE OTHERS ARE UNREACHABLE.**
+`Product.launchEnabled` is the new switch, and `lib/commerce/catalog.ts` — the
+one facade every catalog read goes through — serves launch-enabled products
+only. That single lever makes a disabled product invisible everywhere at once:
+its page 404s, it is absent from listings, the sitemap, landing pages, AI tool
+results and the cart, and checkout rejects its id as an unknown product. The
+three seed products are KEPT (catalog architecture for future products) and
+still carry DEMO pricing — which is exactly why they must not be reachable.
+`listAllCatalogProducts()` is the deliberate exception: cost-model validation
+must still see every entry that exists in the file.
+
+**2. THE FOUR CONFIRMED PRICES COME OUT OF THE EXISTING ENGINE, IN WHOLE
+CENTS.** No new pricing concept was added. `SizeOption` gained
+`priceDeltaCents`, so `unit = tier(quantity) + size delta` reproduces all four
+numbers exactly: tiers 5,000 → 19¢ and 10,000 → 15¢, Extra Large +4¢ at every
+tier. Large $950 / $1,500 · Extra Large $1,150 / $1,900 — product subtotals,
+shipping separate. **The supplier's historic XL job implies $0.185/bag; the MVP
+sells $0.19 rather than introducing a fractional-cent monetary authority for
+one price**, and that decision is recorded in `config/products.ts` and
+BUSINESS_CONFIG_TODO rather than left for someone to rediscover.
+
+**3. THE CUSTOMER CHOOSES FOUR THINGS, AND THE REST ARE SPECIFICATIONS.**
+Size, colour, quantity, artwork. The three-layer construction is
+`Product.specifications` — rendered, never selectable — because the factory
+does not offer alternatives and a picker would invent a capability. There is
+ONE print option and therefore no print-colour-count selector: real printing
+cost depends on production colour separation, which internal review decides, so
+asking the customer to price it would be asking them to price something nobody
+can determine at configure time. There is no material selector (one entry) and
+no handle is offered, because none is factory-confirmed.
+
+**4. THE ORDERABLE QUANTITIES ARE A CLOSED SET, ENFORCED IN THE ENGINE.**
+`allowCustomQuantity: false` removes the free-text quantity input, and
+`requiresCustomQuote` refuses anything that is not exactly 5,000 or 10,000 —
+in the engine both the configurator and `/api/checkout` call, so a hand-crafted
+request cannot buy a quantity nobody priced. Below MOQ, above 10,000, off-tier,
+a custom size (5,000-piece minimum) and any other colour all route to
+`/request-quote`.
+
+**5. SHIPPING IS $100 ONCE PER ORDER, AND THE STRUCTURE ENFORCES IT.** It rides
+the Shopify draft order as a single `shippingLine` attached to the ORDER, so a
+six-configuration B2B order pays $100 rather than $600 — that is not a comment,
+it is where the field lives. The draft order is read back and the shipping
+total VERIFIED like every other amount, so a doubled charge aborts the
+checkout. It is shown separately from the product subtotal on the product page,
+in the cart and at Shopify. It is recorded in `config/costs.ts` as
+`shippingPolicy.customerCharge: flat_per_order` — the money COLLECTED — while
+`products.*.shipping`, the freight COST, stays null. The two are different
+facts and the model already had a place for each.
+
+**6. NO CNY VALUE ENTERED THE USD COST MODEL.** The factory quotes ¥0.67/bag
+(Large) and ¥0.81/bag (XL) plus ¥310/¥400 plate fees per production colour.
+Those are recorded as a COMMENT in `config/costs.ts` and asserted by test to
+appear nowhere in the configured values. BagDirect's revenue is USD and the
+unit-economics architecture deliberately has no FX model: ¥0.81 read as 81¢
+against a 23¢ sell price invents a catastrophic loss; read as 0.81 of anything
+it invents a currency. Profit analytics correctly stay "unavailable", and
+missing costs still never block a sale.
+
+**7. A BUG THE BROWSER PASS FOUND: a stored configuration outlived its
+catalog.** Replacing the catalog invalidated every persisted
+`product_configurations` row, and `resolveCurrentConfiguration` returned them
+verbatim — so the configurator looked up a print option that no longer existed,
+silently stopped requiring artwork, and left **Add to cart enabled on an
+unbuyable configuration** (checkout would have refused it, but only after the
+customer filled everything in). `reconcileConfiguration(product, stored)` now
+falls back to the catalog default for any retired option on both the read and
+the patch path, and reports which fields moved. Six regression tests.
+
+**8. READINESS SCOPES TO WHAT IS ACTUALLY BEING LAUNCHED.**
+`requiredMerchandiseKeys()` reads `LAUNCH_PRODUCTS`, so the Shopify requirement
+is 2 sizes × 1 material × 2 colours = **4 variants, not 114** — demanding
+merchandise for products that cannot be sold reported a blocker that blocked
+nothing. Product checks scope the same way, and a new `product.launch_scope`
+check states the scope explicitly. **Readiness was not made green**: it went
+10 BLOCKED → 4 BLOCKED (Shopify variants, artwork storage, domain, three
+customer-facing placeholders), and `product.pricing_live` stays BLOCKED until
+the owner also sets `NEXT_PUBLIC_DEMO_PRICING=false` — evidence AND assertion,
+unchanged from PL-S04.
+
+**9. AI SALES KNOWS THE REAL PRODUCT AND CANNOT OVERSTATE IT.** The persona
+prompt (v1.3.0) states the launch facts and the must-not-claim list; the
+catalog tool now exposes `allowCustomQuantity`, `specifications` and the
+dimension UNIT (never assumed — this product is centimetres, the seed catalog
+is inches); `getShippingEstimate` returns the flat charge as `mode:"flat"` and
+an unserved market as `mode:"unavailable"` rather than quoting the US rate, and
+carries no delivery date in any mode. No tool permission was widened.
+
+**10. BROWSER-VERIFIED (desktop + 375 px).** Real prices with no demo badge;
+Large 5,000 $950 → $1,050 with shipping; XL 10,000 $1,900 → $2,000; a
+two-configuration cart charging $2,850 + **one** $100 shipping = $2,950; a
+Canadian postcode refused rather than quoted; every disabled product 404;
+`/products` listing exactly one product; artwork required and Add to cart
+correctly disabled; no console errors; nothing overflowing at 375 px.
+
+Tests: **1496 passing** (was 1424; +72, including `tests/product-one.test.ts`),
+typecheck clean, lint clean, build clean.
+
+**Next step is still not a coding session.** It is the four owner blockers —
+BUSINESS_CONFIG_TODO → "THE SHORT LIST", now shorter.
+
+---
+
+## Previous stage — Production Launch Session 04
+
+**PRODUCTION LAUNCH SESSION 04 "Production Configuration + E2E Validation"
+COMPLETE (2026-08-17) — VERDICT: NO-GO. PRODUCTION BLOCKERS REMAIN.**
+
+Session 04's job was to configure a real production environment and prove one
+real order end to end. It could not, for one reason: **no production
+environment exists and no owner values were supplied.** There is no production
+Postgres, no Shopify store, no object storage, no domain, no real prices, no
+confirmed MOQ, no admin credentials. Ten mandatory readiness checks are
+BLOCKED and **every one of them is owner data or owner infrastructure — not a
+single one is an engineering gap.**
+
+What the session did instead, and what it is worth: it ran the whole system
+the way production runs it — a real `next build` served by `next start` with
+`NODE_ENV=production` — and verified the FAIL-CLOSED behaviour that decides
+whether a broken launch is safe or expensive. `POST /api/checkout` answered
+503 and minted no `MOCK-*` order. An unsigned webhook was refused. Artwork
+upload with no storage said so rather than pretending. `/admin/*` was 404 with
+credentials unset, 401 with them set and wrong, 200 with them right.
+`/api/health/ready` answered 503 and leaked no secret value. `robots.txt`
+refused crawling. Nothing overflowed at 375px.
+
+**That exercise found three real production bugs, all invisible from a dev
+server or a test fixture, and all now fixed with regression tests:**
+
+1. **Readiness told the owner the wrong thing about Shopify.** With nothing
+   configured in production, `resolveCommerceConfiguration()` THROWS (it
+   refuses to fall back to mock), so `describeCommerceReadiness()` reported
+   `misconfigured` and the launch page rendered "Shopify is **partially**
+   configured" — sending the owner to hunt a half-set variable that did not
+   exist. The accurate "not configured" message existed but was unreachable in
+   the only environment it was written for. `misconfigured` now carries a
+   `reason` (`not_configured` / `partial` / `invalid`) and the page names the
+   actual problem.
+2. **`sitemap.xml` published 21 URLs on `example.com`.** Session 03's
+   domain-is-configuration decision was implemented in `robots.ts` and missed
+   in `sitemap.ts`, which still built its base from `BUSINESS.DOMAIN` — the
+   placeholder accessor that exists only so `next build` survives. Verified by
+   fetching the path from the production build. `robots.txt`'s `Disallow: /`
+   stops neither a direct fetch nor a manual Search Console submission. The
+   sitemap now publishes nothing when the domain is unknown.
+3. **`NEXT_PUBLIC_DEMO_PRICING=false` over a still-DEMO catalog published fake
+   prices as real ones.** Setting the flag before replacing the prices — the
+   exact ordering the checklist warns about — removed the "Demo pricing" badge
+   from the configurator AND emitted `AggregateOffer lowPrice 0.33 /
+   highPrice 0.62` into the product page's structured data, where search
+   engines and Merchant Center read it as a real offer. The JSON-LD gate
+   ignored `pricingStatus` entirely; the configurator required both signals to
+   agree before warning; the homepage panel warned unconditionally and would
+   have kept warning after real prices went live. All three now use
+   `showsDemoPricing(product)` = evidence OR assertion.
+
+Tests: **1424 passing** (was 1409), typecheck clean, lint clean, build clean.
+
+**Next step is not a coding session.** It is BUSINESS_CONFIG_TODO → "THE SHORT
+LIST", ten items, in order. When those exist, re-run this session.
+
+---
+
+## Previous stage — Production Launch Session 03
 
 **PRODUCTION LAUNCH SESSION 03 "Operational Hardening" COMPLETE (2026-08-16)
 — the four P1 operational risks are closed: an authoritative purchase now
@@ -2411,6 +2595,136 @@ the browser with every cost `null`).
 `reconciliation`, `health-readiness`, `observability`, `artwork-abuse`,
 `operational-hardening-separation`.
 
+## Completed in Production Launch Session 04 (2026-08-17) — Production Configuration + E2E Validation
+
+**LAUNCH VERDICT: NO-GO — PRODUCTION BLOCKERS REMAIN.**
+
+Not a feature session. The question was "can BagDirect safely accept a small
+amount of real customer traffic?" The answer is no, and the reason is
+singular: **no production environment has been created and no owner values
+have been supplied.** Every blocker below is data or infrastructure only the
+owner can provide.
+
+### Production environment — what exists
+
+**Nothing.** There is no hosting platform configured (no Vercel/Netlify/Docker
+config in the repo), no production Postgres, no Shopify store, no object
+storage, no domain, no monitoring destination. The local machine has neither
+Postgres nor Docker, so not even a scratch Postgres could be stood up to
+validate the migration path — migrations have still only ever been applied to
+PGlite. `db/migrations/meta/_journal.json` lists 11 entries (0000–0010),
+complete and consistent with the files on disk.
+
+Everything below was measured against a real `next build` served by
+`next start` with `NODE_ENV=production` — not `next dev`, not a test fixture.
+
+### Readiness: BEFORE and AFTER are identical, and that is the finding
+
+| | BEFORE | AFTER |
+| --- | --- | --- |
+| `/api/health/live` | 200 `{"status":"ok"}` | 200 `{"status":"ok"}` |
+| `/api/health/ready` | 503 `not_ready` | 503 `not_ready` |
+| READY / WARNING / BLOCKED | 1 / 18 / 10 | 1 / 18 / 10 |
+
+No blocker moved, because no owner input arrived. The AFTER differs only in
+that three checks now report the truth instead of a misleading version of it.
+
+**The ten mandatory blockers:** Shopify not configured · 114 of 114 variants
+unmapped · no `DATABASE_URL` · 4 of 4 products on demo prices · MOQ still the
+unconfirmed 500 · no artwork storage · no admin credentials · no
+`NEXT_PUBLIC_SITE_DOMAIN` · 4 customer-facing `[TO BE PROVIDED]` values ·
+database unreachable.
+
+### What WAS verified — the fail-closed properties
+
+Production cannot silently do the wrong thing. Verified by request, on the
+production build:
+
+| Property | Result |
+| --- | --- |
+| `POST /api/checkout` with no Shopify config | **503**, log `COMMERCE_NOT_CONFIGURED`, **no `MOCK-*` order minted** |
+| Unsigned Shopify webhook | 503, writes nothing |
+| Artwork upload, storage unset | 503 `UNAVAILABLE` — never pretends to succeed |
+| `/admin/*` + `/api/admin/*`, credentials unset | **404** (no existence oracle) |
+| Admin with credentials set | 401 unauthenticated · 401 wrong password · 200 correct |
+| `/api/health/ready?verbose=1` | No secret VALUE; only variable names appear |
+| `robots.txt`, domain unset | `Disallow: /` — refuses crawling entirely |
+| Third-party scripts loaded | Zero (none configured); no `gtag`, `dataLayer`, `fbq` |
+| Mobile 375px: home, product, configurator | No horizontal overflow |
+| Merchandise map validation | 114 required · 0 mapped · 114 missing · 0 duplicate · 0 invalid |
+| `npm run ai:smoke`, no key | Skips cleanly; does not fail the build |
+
+### Production bugs found and fixed
+
+Each was invisible from a dev server, because each needed `NODE_ENV=production`
+or a real production build to reproduce.
+
+**1. Readiness misdescribed unconfigured Shopify as "partially configured."**
+*Root cause:* in production with nothing set, `resolveCommerceConfiguration()`
+throws rather than returning mock, so `describeCommerceReadiness()` returned
+`mode: "misconfigured"` — which the readiness check read as "partial". The
+accurate branch was unreachable in production. *Fix:* the descriptor now
+returns `reason: "not_configured" | "partial" | "invalid"`, decided from the
+same env read, and the check renders the matching message and code.
+*Regression:* `tests/commerce-guard.test.ts` (all three reasons),
+`tests/health-readiness.test.ts` (production message and action).
+
+**2. `sitemap.xml` published 21 URLs on a domain the owner does not own.**
+*Symptom:* `GET /sitemap.xml` → 200 with `<loc>https://example.com…` for every
+page. *Root cause:* Session 03 moved the domain into `NEXT_PUBLIC_SITE_DOMAIN`
+and applied the null-refusing accessor to `robots.ts` but not `sitemap.ts`,
+which still read `BUSINESS.DOMAIN` — the placeholder-returning accessor that
+exists only so `next build` survives missing owner input. `Disallow: /` stops
+neither a direct fetch nor a manual Search Console submission. *Fix:*
+`sitemap.ts` reads `siteUrl()` and returns `[]` when null. *Regression:*
+`tests/canonical-domain.test.ts` — covers both surfaces, unset / placeholder /
+real domain.
+
+**3. `NEXT_PUBLIC_DEMO_PRICING=false` over a DEMO catalog published demo
+prices as real offers.** *Symptom:* with the flag false and
+`pricingStatus: "DEMO"` (the exact ordering mistake §16 of the checklist warns
+about), the product page emitted `AggregateOffer lowPrice 0.33 highPrice 0.62`
+into its JSON-LD, and the configurator's "Demo pricing" badge disappeared.
+*Root cause:* three surfaces gated on different combinations of the same two
+inputs — JSON-LD on the env flag alone, the configurator on `flag && DEMO`,
+the homepage panel on nothing at all. *Fix:* one helper,
+`showsDemoPricing(product) = isDemoPricing() || pricingStatus === "DEMO"`, used
+by all three. Evidence and assertion are OR-ed: neither may overrule the other
+into showing a fake number as real. *Regression:*
+`tests/demo-pricing-disclosure.test.ts`. Re-verified on a rebuilt production
+server: badge restored, zero `lowPrice` published.
+
+### Vendor status — every one UNVERIFIED
+
+Shopify · Artwork storage · Anthropic · GA4 · Google Ads · Meta · Monitoring:
+**UNVERIFIED**. None is configured, so none was contacted. No test order, no
+payment, no webhook delivery, no refund, no reconciliation run against a real
+store, no artwork round-trip, no GA4 purchase, no conversion event. **Every
+line of §52–§62 of the session brief is unexecuted, and none of it can be
+faked.**
+
+### Pricing / MOQ / products
+
+`pricingStatus` is `DEMO` on all 4 products; `MOQ_CONFIRMED: false` with the
+placeholder 500; product `images[].src` are all `null`. `config/costs.ts` and
+`config/ai-pricing.ts` remain fully null — deliberate, and NOT launch
+blockers: missing costs block profit analytics, never a sale.
+
+### Soft-launch scope, when the inputs exist
+
+US only · only configurations present in `SHOPIFY_MERCHANDISE_MAP` · guest
+checkout · experiments OFF · CRO agent OFF · Google Ads agent OFF · Meta agent
+OFF · all autonomous actions OFF (the executor registry is still empty by
+design) · AI Sales OFF until `npm run ai:smoke` passes against a real key and
+budget caps are valid. Do not enable Canada.
+
+### Next step
+
+BUSINESS_CONFIG_TODO → "THE SHORT LIST" — ten owner items in dependency order.
+Then re-run Session 04. There is no code session between here and a first sale.
+
+---
+
 ## Important decisions (and why)
 
 1. **Database is the first ADD** — every roadmap capability consumes
@@ -2761,6 +3075,28 @@ the browser with every cost `null`).
 
 ## Known issues
 
+- **(Product #1) All six product photography slots are empty.** The page renders
+  labelled placeholder slots. Owner/supplier assets only — no AI-generated
+  product photography, and no other supplier's branding presented as
+  BagDirect's. Exact shot list: BUSINESS_CONFIG_TODO → "Product #1".
+- **(Product #1) Profit analytics remain unavailable, deliberately.** The
+  factory quotes in CNY and there is no FX model, so `config/costs.ts` stays
+  null for this product. The CNY figures are a comment, asserted by test not to
+  appear in any configured value.
+- **(Product #1) Transit time is still `[TO BE PROVIDED]`.** Production time is
+  real (15–30 days after proof approval); nobody has contracted a carrier, so
+  no delivery date is promised anywhere.
+- **(Product #1) The digital proof is a HUMAN production step.** Nothing in the
+  codebase generates or sends one, and no copy claims it is automatic or
+  instant. The proof turnaround itself is not stated because it is not known.
+- **(Product #1) The $100 shipping charge is a commercial decision, not a
+  measured freight cost.** If real freight exceeds it, the difference is a
+  subsidy — and the subsidy cannot be computed until USD costs exist.
+- **(Product #1) Configurations persisted under an older catalog are
+  reconciled, not migrated.** A retired option falls back to the catalog
+  default for that field on read; the stored row is only rewritten on the next
+  sync.
+
 - **(PL-S03) Browser-based ad conversion tracking undercounts.** GA4 and
   Google Ads only see a purchase if the buyer returns to a BagDirect page
   after paying on Shopify. BagDirect's own `purchase_completed` is complete
@@ -3070,9 +3406,12 @@ the browser with every cost `null`).
 
 ## Business configuration still needed
 
-See `BUSINESS_CONFIG_TODO.md` — notably: real prices (site shows DEMO
-notices until `NEXT_PUBLIC_DEMO_PRICING=false`; until then every S12 pricing
-conclusion is about a placeholder price list, and the dashboard says so), **the
+See `BUSINESS_CONFIG_TODO.md` — notably: **the four Shopify variant GIDs for
+Product #1** (Large/Black, Large/White, XL/Black, XL/White), artwork storage
+credentials, `NEXT_PUBLIC_SITE_DOMAIN`, the three remaining customer-facing
+`[TO BE PROVIDED]` values, and `NEXT_PUBLIC_DEMO_PRICING=false` in production
+(the catalog already says LIVE; both signals must agree). Prices and MOQ are
+now REAL and confirmed for the launch product. Also still open: **the
 entire cost model** (S13.5 completed the MODEL; `config/costs.ts` is still
 100% `null` `[TO BE PROVIDED]` — margins, contribution profit, POAS and the
 minimum safe price all stay "unavailable", price guardrails fail closed, and
@@ -3199,14 +3538,21 @@ the 03.5 hardening pass (small blast radius, none block Session 04):
 
 ## Recommended next session
 
-**Production Launch Session 04 — Production Configuration + End-to-End Soft
-Launch Validation.** Do not start it automatically.
+**Not a session. Owner configuration — BUSINESS_CONFIG_TODO → "THE SHORT
+LIST".** Then re-run Production Launch Session 04. Do not start either
+automatically.
+
+Session 04 already ran and returned **NO-GO**. Re-running it against the same
+empty environment will return NO-GO again for the same ten reasons; the
+blockers are inputs, and no amount of engineering produces them. There is no
+useful code session between here and a first sale.
 
 **The engineering for a real, safe sale is done.** Sessions 02 and 03 closed
-every P0 commerce blocker and every P1 operational risk. What remains is
-owner data and owner configuration — and `/admin/launch-readiness` computes
-the exact list from the running system, which is more trustworthy than
-anything written down here.
+every P0 commerce blocker and every P1 operational risk; Session 04 verified
+the fail-closed behaviour on a real production build and fixed the three
+reporting/output bugs it found. What remains is owner data and owner
+configuration — and `/admin/launch-readiness` computes the exact list from the
+running system, which is more trustworthy than anything written down here.
 
 ### Remaining P0 — all owner input, none engineering
 

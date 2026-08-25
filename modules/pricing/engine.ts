@@ -16,11 +16,23 @@ export function tierForQuantity(tiers: PricingTier[], quantity: number): Pricing
   return match;
 }
 
-/** Sum of per-unit option deltas (material + printing) in cents. */
-export function optionDeltaCents(product: Product, config: Pick<ProductConfiguration, "materialId" | "printOptionId">): number {
+/**
+ * Sum of per-unit option deltas (size + material + printing) in cents.
+ *
+ * The SIZE delta is what lets one quantity-tier table serve differently
+ * priced sizes: Product #1's Extra Large is a flat +4¢/bag over Large at
+ * every tier, which reproduces its four confirmed prices exactly in integer
+ * cents (config/products.ts). An unknown option id contributes 0 — the
+ * caller's validation, not arithmetic, is what rejects it.
+ */
+export function optionDeltaCents(
+  product: Product,
+  config: Pick<ProductConfiguration, "materialId" | "printOptionId"> & Partial<Pick<ProductConfiguration, "sizeId">>,
+): number {
+  const size = config.sizeId === undefined ? undefined : product.sizes.find((s) => s.id === config.sizeId);
   const material = product.materials.find((m) => m.id === config.materialId);
   const print = product.printOptions.find((p) => p.id === config.printOptionId);
-  return (material?.priceDeltaCents ?? 0) + (print?.priceDeltaCents ?? 0);
+  return (size?.priceDeltaCents ?? 0) + (material?.priceDeltaCents ?? 0) + (print?.priceDeltaCents ?? 0);
 }
 
 /** Savings vs the smallest-quantity tier, as a fraction 0–1. */
@@ -61,15 +73,25 @@ export function baseUnitPriceCents(product: Product): number {
 }
 
 /**
- * True when the configuration cannot be auto-priced and must go through
- * the custom-quote flow: custom color, custom dimensions, or below-MOQ /
- * above-largest-tier-ceiling quantities are all still priceable except
- * below-MOQ; custom color and custom dimensions are not.
+ * True when the configuration cannot be auto-priced and must go through the
+ * custom-quote flow:
+ *
+ *   - custom dimensions       (the factory supports them; the price is not
+ *                              a published number)
+ *   - a custom colour
+ *   - below the product MOQ
+ *   - an off-tier quantity on a product with `allowCustomQuantity: false`.
+ *     For Product #1 the two presets ARE the orderable quantities: 12,000
+ *     and 25,000 have no published price, so they are quoted rather than
+ *     invented. This is enforced here — in the engine both the configurator
+ *     and /api/checkout call — so a hand-crafted request cannot buy a
+ *     quantity nobody priced.
  */
 export function requiresCustomQuote(product: Product, config: ProductConfiguration): boolean {
   if (config.customDimensions) return true;
   const color = product.colors.find((c) => c.id === config.colorId);
   if (color?.custom) return true;
   if (config.quantity < product.minQuantity) return true;
+  if (!product.allowCustomQuantity && !product.quantityPresets.includes(config.quantity)) return true;
   return false;
 }

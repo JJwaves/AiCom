@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { showsDemoPricing } from "@/config/business";
+import { FLAT_US_SHIPPING_CENTS } from "@/config/shipping";
 import { quoteConfiguration } from "@/modules/pricing";
-import { formatMoney, formatPct, formatQty, formatUnitPrice } from "@/lib/format";
+import { formatDimensions, formatMoney, formatPct, formatQty, formatUnitPrice } from "@/lib/format";
 import type { Product } from "@/types/commerce";
 
 /**
@@ -12,18 +14,28 @@ import type { Product } from "@/types/commerce";
  * watch the unit price and total move. Instrument-panel styling.
  * The product arrives as a prop from a server component (catalog reads go
  * through lib/commerce/catalog, never config/products).
+ *
+ * EVERY LABEL IS DERIVED FROM THE CONFIGURATION IT PRICES. This panel used to
+ * hardcode its size and printing text ("Medium · 12\"W × 10\"H × 8\"G",
+ * "1-color logo") while quoting a different configuration entirely, so a
+ * catalog change left the homepage advertising a size that does not exist at a
+ * price belonging to another one. A displayed spec is now unable to disagree
+ * with the quoted spec, because there is only one source for both.
  */
 export function PricingDemo({ product }: { product: Product }) {
-  const [qty, setQty] = useState(5000);
+  const [qty, setQty] = useState(product.quantityPresets[0] ?? product.minQuantity);
 
+  const size = product.sizes[0];
+  const print = product.printOptions[0];
   const quote = quoteConfiguration(product, {
     productId: product.id,
-    sizeId: product.sizes[1]?.id ?? product.sizes[0].id,
+    sizeId: size.id,
     materialId: product.materials[0].id,
     colorId: product.colors[0].id,
-    printOptionId: "one-color",
+    printOptionId: print.id,
     quantity: qty,
   });
+  const cheapestTier = product.pricingTiers[0];
 
   return (
     <div className="graphite-panel p-5 sm:p-6">
@@ -35,9 +47,11 @@ export function PricingDemo({ product }: { product: Product }) {
 
       <dl className="mt-4 grid grid-cols-2 gap-y-2 font-mono text-sm">
         <dt className="text-graphite-muted">size</dt>
-        <dd className="text-right text-graphite-ink">Medium · 12&quot;W × 10&quot;H × 8&quot;G</dd>
+        <dd className="text-right text-graphite-ink">
+          {size.label} · {formatDimensions({ ...size.dimensions, unit: size.unit })}
+        </dd>
         <dt className="text-graphite-muted">printing</dt>
-        <dd className="text-right text-graphite-ink">1-color logo</dd>
+        <dd className="text-right text-graphite-ink">{print.label}</dd>
         <dt className="text-graphite-muted">quantity</dt>
         <dd className="text-right text-graphite-ink">{formatQty(qty)} bags</dd>
       </dl>
@@ -70,13 +84,20 @@ export function PricingDemo({ product }: { product: Product }) {
               {formatUnitPrice(quote.unitPriceCents, quote.currency)}
             </p>
             {quote.savingsPct > 0 && (
-              <p className="mt-1 font-mono text-[11px] text-ok">save {formatPct(quote.savingsPct)} vs 500-unit price</p>
+              <p className="mt-1 font-mono text-[11px] text-ok">
+                save {formatPct(quote.savingsPct)} vs the {formatQty(cheapestTier.minQty)} price
+              </p>
             )}
           </div>
           <div className="text-right">
             <p className="label-mono !text-graphite-muted">Total</p>
             <p className="font-mono text-2xl font-semibold sm:text-3xl" style={{ color: "oklch(70% 0.14 256)" }}>
               {formatMoney(quote.totalCents, quote.currency)}
+            </p>
+            {/* Shipping is a separate charge; the panel must not read as an
+                all-in price. */}
+            <p className="mt-1 font-mono text-[11px] text-graphite-muted">
+              + {formatMoney(FLAT_US_SHIPPING_CENTS, quote.currency)} shipping
             </p>
           </div>
         </div>
@@ -88,9 +109,11 @@ export function PricingDemo({ product }: { product: Product }) {
       >
         Configure yours — full pricing
       </Link>
-      <p className="mt-2 text-center font-mono text-[10px] uppercase tracking-wide text-graphite-muted">
-        Demo pricing shown — final prices on the product page
-      </p>
+      {showsDemoPricing(product) && (
+        <p className="mt-2 text-center font-mono text-[10px] uppercase tracking-wide text-graphite-muted">
+          Demo pricing shown — final prices on the product page
+        </p>
+      )}
     </div>
   );
 }
