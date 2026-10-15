@@ -1,0 +1,6 @@
+interface:
+  display_name: "B2B Commerce UI"
+  short_description: "Takeout packaging product and quote workflows"
+  default_prompt: "Use $b2b-commerce-ui for the B2B takeout packaging project, within the requested scope."
+policy:
+  allow_implicit_invocation: true

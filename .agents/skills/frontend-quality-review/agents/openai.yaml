@@ -1,0 +1,6 @@
+interface:
+  display_name: "Frontend Quality Review"
+  short_description: "Review brand, mobile and B2B inquiry usability"
+  default_prompt: "Use $frontend-quality-review for the B2B takeout packaging project, within the requested scope."
+policy:
+  allow_implicit_invocation: true

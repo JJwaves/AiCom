@@ -1,0 +1,6 @@
+interface:
+  display_name: "B2B Brand Design System"
+  short_description: "Brand direction and reusable B2B design contracts"
+  default_prompt: "Use $brand-design-system for the B2B takeout packaging project, within the requested scope."
+policy:
+  allow_implicit_invocation: true
