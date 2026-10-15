@@ -137,7 +137,7 @@ export function AnalyticsProvider({ children }: { children: React.ReactNode }) {
         <div
           role="region"
           aria-label="Cookie consent"
-          className="fixed inset-x-4 bottom-4 z-50 mx-auto max-w-xl surface p-4 sm:p-5"
+          className="fixed inset-x-4 bottom-4 z-50 mx-auto max-w-xl rounded-md border border-brand-hairline-strong bg-brand-surface p-4 shadow-overlay sm:p-5"
           style={{ boxShadow: "0 4px 24px oklch(24% 0.02 258 / 0.12)" }}
         >
           <p className="text-sm text-ink-2">

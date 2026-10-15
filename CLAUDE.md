@@ -32,7 +32,9 @@ AI-native factory-direct B2B commerce platform.
   product (`config/products.ts`). PP laminated / non-woven / aluminium foil,
   Large 26×26×17 cm and Extra Large 30×30×20 cm, black or white, custom
   artwork printing, MOQ 5,000/design, orderable at 5,000 or 10,000.
-- Primary conversion: online purchase. Secondary: custom quote request.
+- Primary conversion (Phase 1, since the 2026-10-15 redesign): **quote request**.
+  Online purchase (cart → Shopify) is built and intact behind
+  `NEXT_PUBLIC_CHECKOUT_ENABLED` for Phase 2.
 
 ## Core architecture rule
 
@@ -61,6 +63,79 @@ limits, refund authorization, agent autonomy, approvals.
   session; update this file and the relevant architecture docs.
 
 ## Current project stage
+
+**STOREFRONT REDESIGN — "PREMIUM INDUSTRIAL MINIMALISM" (2026-10-15).** The
+public site was rebuilt on a reusable design system; the pricing engine, the
+quote API, the data layer, the AI layer and every test are untouched. Launch
+readiness is unchanged (same owner blockers as below).
+
+1. **Design system is now a first-class artefact.** `DESIGN.md` (brand book:
+   theme, colour roles with measured contrast ratios, type scale, component
+   styling, layout, depth, do/don't, responsive, agent prompt guide) and
+   `design/tokens.json` (the single source of every value, each with a
+   `usage` note). `node scripts/build-tokens.mjs` → `design/generated/tokens.css`
+   (Tailwind v4 `@theme` with `brand-*` colours + the shadcn variable
+   contract mapped onto them) and `tokens.ts`. **Edit the JSON, never the
+   generated CSS.** The old "Cobalt" class names (`paper`, `ink-3`, `rule`,
+   `.btn`, `.surface`, `.chip`, `.label-mono` …) survive as ALIASES in
+   `app/globals.css` so un-migrated surfaces (admin, AI chat widget, cart /
+   order pages, policies) render coherently; remove an alias once its last
+   consumer is migrated.
+2. **shadcn/ui installed the way the current CLI does it** (`components.json`,
+   style `base-nova` on `@base-ui/react`, `lib/utils.ts`, `components/ui/*`).
+   Button / Input / Textarea / Label / Badge / Accordion / Sheet were restyled
+   to the system: 44 px controls, ink primary, ONE terracotta `accent` button
+   per page (reserved for "Request a quote"), 4 px radius, no shadows except
+   `shadow-overlay` on floating layers. Dependencies added: `shadcn`
+   (provides `shadcn/tailwind.css`), `@base-ui/react`, `cn`,
+   `class-variance-authority`, `lucide-react`, `tw-animate-css`. Nothing from
+   HyperUI, DaisyUI or Chakra.
+3. **Phase 1 is QUOTE-LED, by a build-time switch.** `isCheckoutEnabled()` in
+   `config/business.ts` (`NEXT_PUBLIC_CHECKOUT_ENABLED`, default OFF): the
+   header has no cart link, the configurator's primary CTA carries the exact
+   configuration to `/request-quote?product&size&color&qty`, the durable
+   artwork uploader and "Add to cart" render only when the switch is on, and
+   `/order-status` links are hidden. The cart, `/api/checkout`, Shopify draft
+   orders and webhooks are intact and untouched — flip the switch for Phase 2.
+   `QUOTE_CTA` holds the one wording ("Request a quote", "within one business
+   day").
+4. **Rebuilt surfaces** (UI only; store/engine/analytics calls byte-for-byte):
+   `app/layout.tsx`, `components/layout/{Header,Footer}.tsx` (sheet nav with
+   pinned CTA), `components/landing/{sections,LandingTemplate,WholesalePricing}.tsx`,
+   `components/product/{ProductConfigurator,PhotoStage,TierPricingTable,BagIllustration}.tsx`,
+   `components/forms/QuoteForm.tsx` (brief's fields — company, contact, email,
+   product, size, colour, quantity, ZIP, logo upload, requirements — composed
+   into the UNCHANGED `quoteSchema` / multipart `/api/quote` contract),
+   `app/{page,products/page,products/[slug]/page,request-quote/*,about,faq,contact,how-it-works,custom-bags,not-found}.tsx`.
+   `PricingDemo.tsx` removed (unused). `components/product/PhotoStage.tsx` is
+   the designed placeholder: a 4:5 / 1:1 / 16:9 stage that renders the SVG bag
+   + a "Photo to come" caption until `images[].src` exists, then swaps to
+   `next/image` with no layout change.
+5. **Copy honesty preserved.** No fabricated testimonials, logos, counts or
+   certifications; `[TO BE PROVIDED]` values render as "To be confirmed";
+   demo pricing still badges through `showsDemoPricing`; FAQ copy says
+   "shown on your quote" instead of "calculated at checkout".
+6. **Claude Code skills (project-level, `.claude/skills/`)** —
+   `brand-design-system`, `b2b-commerce-ui`, `frontend-quality-review` (ours)
+   plus `design-taste-frontend` and `redesign-existing-projects` (vendored
+   from Leonxlnx/taste-skill, MIT; scripts reviewed — see
+   `docs/DESIGN_REFERENCES.md`). Which one for which task:
+   `docs/DESIGN_SKILLS_GUIDE.md`. `.claude/**` is ESLint-ignored.
+   `taste-skill`'s inspector enforces its own no-ornament house style; where it
+   contradicts DESIGN.md (hairlines, eyebrows, warm canvas, no entrance
+   motion) DESIGN.md wins — take its measurable findings only.
+7. **Verified.** `node scripts/lint-design.mjs` clean on every redesigned
+   file; typecheck clean; ESLint clean; `next build` clean; Playwright
+   screenshots at 390 / 768 / 1440 for home, PDP, inquiry, about, FAQ,
+   contact — no console errors, no horizontal overflow (a wide price-break
+   table now scrolls INSIDE its grid column: `.table-scroll` has
+   `contain: inline-size`).
+
+**Tests: 1490 passing, 6 failing in `tests/google-ads-metrics.test.ts` —
+PRE-EXISTING on `main` (verified by stashing every change and re-running);
+first-party Google Ads attribution fixtures, unrelated to the storefront.**
+
+### Previous stage — Product #1 production configuration
 
 **PRODUCT #1 PRODUCTION CONFIGURATION COMPLETE (2026-08-17) — the storefront
 now sells a REAL product at REAL owner-confirmed prices. Launch verdict is
@@ -1381,7 +1456,9 @@ docs/CURRENT_SYSTEM_AUDIT.md + its Session-02 resolution note):
 - `lib/analytics/track.ts` — typed dataLayer events, consent-gated,
   purchase dedup. `lib/attribution` — first/last touch. Both client-side.
 - `/api/quote` — validated quote intake → `QUOTE_WEBHOOK_URL` or log.
-- Design system: Hallmark Cobalt theme (OKLCH tokens in `app/globals.css`).
+- Design system: Premium Industrial Minimalism — `DESIGN.md` + `design/tokens.json`
+  → `design/generated/tokens.css` (generated) → `app/globals.css`; shadcn/ui in
+  `components/ui/`; legacy Cobalt class names aliased in globals.css.
 - Docs: README, BUSINESS_CONFIG_TODO, LAUNCH_CHECKLIST, plus the AI-platform
   set (below). Placeholder brand "BagDirect"; demo pricing visibly flagged
   via `NEXT_PUBLIC_DEMO_PRICING`.

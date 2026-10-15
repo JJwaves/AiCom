@@ -78,7 +78,7 @@ export function ArtworkUploader({
           setDragOver(false);
           void handleFile(e.dataTransfer.files?.[0]);
         }}
-        className={`flex cursor-pointer flex-col items-center justify-center gap-1 rounded-[10px] border border-dashed px-4 py-6 text-center transition-colors ${
+        className={`flex cursor-pointer flex-col items-center justify-center gap-1 rounded-md border border-dashed px-4 py-6 text-center transition-colors ${
           dragOver ? "border-accent bg-accent-soft" : "border-rule-2 bg-paper-2 hover:border-ink-3"
         }`}
       >
@@ -122,7 +122,7 @@ export function ArtworkUploader({
       />
 
       {error && (
-        <p id={errId} role="alert" className="mt-2 rounded-[6px] bg-error-soft px-3 py-2 text-xs text-error">
+        <p id={errId} role="alert" className="mt-2 rounded-sm bg-error-soft px-3 py-2 text-xs text-error">
           {error}
         </p>
       )}

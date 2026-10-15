@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { PROOF_POLICY, showsDemoPricing } from "@/config/business";
+import { BUSINESS, PROOF_POLICY, QUOTE_CTA, isCheckoutEnabled, showsDemoPricing } from "@/config/business";
 import { estimateShipping, FLAT_US_SHIPPING_CENTS, FLAT_US_SHIPPING_COPY } from "@/config/shipping";
 import { quoteConfiguration, requiresCustomQuote } from "@/modules/pricing";
 import { track } from "@/lib/analytics/track";
@@ -13,14 +13,17 @@ import type { TrackedField } from "@/lib/configuration/store";
 import { describeDimensions, formatDimensions, formatMoney, formatPct, formatQty, formatUnitPrice } from "@/lib/format";
 import type { CtaCopyVariant, ShippingMessageVariant } from "@/modules/experiments/variants";
 import type { Product } from "@/types/commerce";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import { ArtworkUploader } from "./ArtworkUploader";
 import { TierPricingTable } from "./TierPricingTable";
-import { BagIllustration } from "./BagIllustration";
+import { PhotoStage } from "./PhotoStage";
 
 /**
  * The product configurator — the primary conversion surface.
  * Order of controls mirrors the buying decision: size → color → printing →
- * artwork → quantity → price → shipping → add to cart.
+ * artwork → quantity → price → shipping → CTA.
  *
  * Session 06: selection state lives in the SHARED configuration store
  * (lib/configuration) — the same validated state the AI Packaging Expert
@@ -33,6 +36,13 @@ import { BagIllustration } from "./BagIllustration";
  * values rendered as React children — never markup — and both default to
  * null, which renders exactly the pre-Session-11 UI. Nothing about pricing,
  * validation, cart payloads or button behaviour is experimentable.
+ *
+ * Storefront redesign (2026-10-15): Premium Industrial Minimalism UI on the
+ * shadcn/ui primitives. Phase 1 is QUOTE-LED (config/business.ts
+ * `isCheckoutEnabled()`): the primary CTA carries the configuration to
+ * /request-quote and artwork travels with the quote; with checkout enabled the
+ * original add-to-cart path (artwork uploader, cart, Shopify) renders instead.
+ * The store, the engine calls and every analytics event are unchanged.
  */
 export type ConfiguratorExperiments = {
   shippingMessage?: ShippingMessageVariant | null;
@@ -61,12 +71,61 @@ const FIELD_ANNOUNCE_LABELS: Record<string, string> = {
   quantity: "quantity",
 };
 
+/** Option button — radio semantics via aria-pressed, selected = accent border + soft fill + check. */
+function OptionButton({
+  selected,
+  onClick,
+  children,
+  meta,
+  className = "",
+  ariaLabel,
+}: {
+  selected: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+  meta?: React.ReactNode;
+  className?: string;
+  ariaLabel?: string;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      aria-label={ariaLabel}
+      onClick={onClick}
+      className={`flex min-h-14 w-full items-center justify-between gap-3 rounded-sm border px-4 py-3 text-left text-sm transition-colors outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-focus ${
+        selected
+          ? "border-brand-accent bg-brand-accent-soft text-brand-ink ring-1 ring-brand-accent ring-inset"
+          : "border-brand-border-control bg-brand-surface text-brand-ink-2 hover:border-brand-ink"
+      } ${className}`}
+    >
+      <span className="flex min-w-0 items-center gap-3">{children}</span>
+      <span className="flex shrink-0 items-center gap-3 text-xs text-brand-ink-muted tabular">
+        {meta}
+        <span
+          aria-hidden="true"
+          className={`flex size-5 items-center justify-center rounded-full border ${
+            selected ? "border-brand-accent-ink bg-brand-accent-ink text-white" : "border-brand-border-control"
+          }`}
+        >
+          {selected && (
+            <svg viewBox="0 0 12 12" className="size-3" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <path d="M2.5 6.5l2.5 2.5 4.5-5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          )}
+        </span>
+      </span>
+    </button>
+  );
+}
+
 function ConfiguratorView({ product, experiments }: { product: Product; experiments?: ConfiguratorExperiments }) {
   const router = useRouter();
   const { addLine } = useCart();
   const { state, config, setSize, setMaterial, setColor, setPrintOption, setQuantity, setArtwork, flushSync } =
     useConfiguration();
   const startedRef = useRef(false);
+  const checkout = isCheckoutEnabled();
 
   const [customQty, setCustomQty] = useState<string>("");
   const [postal, setPostal] = useState("");
@@ -81,7 +140,7 @@ function ConfiguratorView({ product, experiments }: { product: Product; experime
   /* Session 11 experiment overrides — presentation only, already validated
    * server-side. `null` everywhere means "render the normal UI". */
   const shippingMessage = experiments?.shippingMessage ?? null;
-  const ctaLabel = experiments?.primaryCta?.ctaLabel ?? "Add to cart";
+  const ctaLabel = experiments?.primaryCta?.ctaLabel ?? (checkout ? "Add to cart" : QUOTE_CTA.label);
   const ctaHelperText = experiments?.primaryCta?.helperText ?? null;
 
   const quote = useMemo(() => quoteConfiguration(product, config), [product, config]);
@@ -98,7 +157,8 @@ function ConfiguratorView({ product, experiments }: { product: Product; experime
   const selectedPrint = product.printOptions.find((p) => p.id === printId);
   const selectedSize = product.sizes.find((s) => s.id === sizeId);
   const selectedColor = product.colors.find((c) => c.id === colorId);
-  const missingArtwork = Boolean(selectedPrint?.requiresArtwork) && !artwork;
+  /* Artwork gates ADD TO CART only. With the quote flow the file travels with the quote request. */
+  const missingArtwork = checkout && Boolean(selectedPrint?.requiresArtwork) && !artwork;
 
   // External (AI/restore) changes: reconcile the custom-quantity echo field,
   // and for AI changes highlight the touched controls + announce politely.
@@ -140,12 +200,12 @@ function ConfiguratorView({ product, experiments }: { product: Product; experime
   const aiTouched = (...fields: TrackedField[]) => fields.some((f) => aiFields.has(f));
   const aiMark = (...fields: TrackedField[]) =>
     aiTouched(...fields) ? (
-      <span className="ml-2 rounded bg-accent-soft px-1.5 py-0.5 font-mono text-[10px] normal-case tracking-normal text-accent">
+      <Badge variant="secondary" className="ml-3">
         Updated by Packaging Expert
-      </span>
+      </Badge>
     ) : null;
   const aiRing = (...fields: TrackedField[]) =>
-    aiTouched(...fields) ? "rounded-[10px] bg-accent-soft/60 outline outline-1 outline-accent/40 p-2 -m-2 transition-colors" : "transition-colors";
+    aiTouched(...fields) ? "-mx-3 rounded-md bg-brand-accent-soft/60 px-3 py-2 outline outline-1 outline-brand-accent/40 transition-colors" : "transition-colors";
 
   const markStarted = () => {
     if (!startedRef.current) {
@@ -214,166 +274,170 @@ function ConfiguratorView({ product, experiments }: { product: Product; experime
     setTimeout(() => router.push("/cart"), 450);
   };
 
+  /* Quote-led CTA: carry the exact configuration into the inquiry form. */
+  const quoteParams = new URLSearchParams({
+    product: product.slug,
+    qty: String(quantity),
+    ...(selectedSize ? { size: selectedSize.id } : {}),
+    ...(selectedColor ? { color: selectedColor.id } : {}),
+  });
+  const quoteHref = `${QUOTE_CTA.href}?${quoteParams.toString()}`;
+  const onQuoteClick = () => {
+    void flushSync();
+    track({ name: "request_custom_quote", params: { product_id: product.id } });
+  };
+
+  const fromTier = product.pricingTiers[product.pricingTiers.length - 1];
+  const priceReady = Boolean(quote) && !needsQuote;
+  let step = 0;
+  const nextStep = () => String(++step).padStart(2, "0");
+
   return (
-    <div className="grid gap-10 lg:grid-cols-[1.1fr_1fr]">
+    <div className="grid gap-12 lg:grid-cols-12 lg:gap-16">
       {/* Assistive announcements for AI-driven configuration changes. */}
       <p aria-live="polite" role="status" className="sr-only">
         {announcement}
       </p>
 
-      {/* LEFT — gallery */}
-      <div className="lg:sticky lg:top-24 lg:self-start">
-        <div className="surface flex items-center justify-center p-8">
-          <BagIllustration
-            bodyColor={selectedColor?.swatch ?? "oklch(97% 0 0)"}
-            showLogo={printId !== "none"}
-            logoColors={printId === "two-color" ? 2 : 1}
-            className="w-full max-w-sm"
-            title={`${product.title} in ${selectedColor?.label ?? "white"}${printId !== "none" ? " with logo print area" : ""}`}
-          />
-        </div>
+      {/* LEFT — gallery: one large stage + the shot list as thumbnails. */}
+      <div className="lg:col-span-7 lg:sticky lg:top-24 lg:self-start">
+        <PhotoStage
+          image={product.images[0] ?? null}
+          ratio="4/5"
+          bagColor={selectedColor?.swatch}
+          showLogo={printId !== "none"}
+          priority
+          label={`${product.title} — ${selectedColor?.label ?? ""}${selectedSize ? `, ${selectedSize.label}` : ""}`}
+          className="lg:aspect-square"
+          illustrationClassName="w-1/2"
+        />
         {selectedSize && (
-          <p className="label-mono mt-3 text-center">
-            {selectedSize.label} · {formatDimensions({ ...selectedSize.dimensions, unit: selectedSize.unit })}
+          <p className="mt-3 text-sm text-brand-ink-muted tabular">
+            {selectedSize.label} · {formatDimensions({ ...selectedSize.dimensions, unit: selectedSize.unit })} ·{" "}
+            {describeDimensions({ ...selectedSize.dimensions, unit: selectedSize.unit })}
           </p>
         )}
-        <div className="mt-4 grid grid-cols-2 gap-3">
-          {product.images.slice(0, 4).map((img) =>
-            img.src ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img key={img.slot} src={img.src} alt={img.alt} className="surface w-full" />
-            ) : (
-              <div key={img.slot} className="photo-slot !min-h-28">
-                <span className="label-mono">Photo slot</span>
-                <span className="text-xs">{img.alt}</span>
-              </div>
-            ),
-          )}
-        </div>
+        <ul className="mt-4 grid grid-cols-4 gap-3">
+          {product.images.slice(1, 5).map((img) => (
+            <li key={img.slot}>
+              <PhotoStage
+                image={img}
+                ratio="1/1"
+                tone={img.slot.includes("white") ? "kraft" : "canvas"}
+                bagColor={img.slot.includes("white") ? product.colors.find((c) => c.id === "white")?.swatch : selectedColor?.swatch}
+                showLogo
+                sizes="(min-width: 1024px) 12vw, 25vw"
+                illustrationClassName="w-3/5"
+                caption={false}
+              />
+            </li>
+          ))}
+        </ul>
       </div>
 
-      {/* RIGHT — configurator */}
-      <div onPointerDown={markStarted} onKeyDown={markStarted}>
-        <h1 className="text-3xl sm:text-4xl" style={{ fontWeight: 600 }}>
-          {product.title}
-        </h1>
-        <p className="mt-2 text-ink-2">{product.positioning}</p>
-        <p className="mt-3 font-mono text-sm text-ink">
-          From{" "}
-          <span className="text-lg font-semibold">
-            {formatUnitPrice(product.pricingTiers[product.pricingTiers.length - 1].unitPriceCents, product.currency)}
-            /bag
-          </span>{" "}
-          <span className="text-ink-3">
-            at {formatQty(product.pricingTiers[product.pricingTiers.length - 1].minQty)}
-            {fixedQuantities ? " pieces" : "+ units"}
-          </span>
-        </p>
-        {showsDemoPricing(product) && (
-          <p className="mt-2 inline-block rounded-[6px] bg-error-soft px-2 py-1 font-mono text-[11px] uppercase tracking-wide text-error">
-            Demo pricing — replace before launch
-          </p>
-        )}
+      {/* RIGHT — facts, then the configurator. */}
+      <div className="lg:col-span-5" onPointerDown={markStarted} onKeyDown={markStarted}>
+        <p className="eyebrow">Custom insulated takeout bag · made to order</p>
+        <h1 className="type-h1 mt-3">{product.title}</h1>
+        <p className="mt-3 text-base leading-body text-brand-ink-2">{product.positioning}</p>
 
-        {/* Fixed construction — a SPECIFICATION, never a selectable option. */}
-        {product.specifications.length > 0 && (
-          <dl className="mt-6 grid gap-x-6 gap-y-1 rounded-[10px] border border-rule p-4 text-sm sm:grid-cols-2">
-            {product.specifications.map((spec) => (
-              <div key={spec.label} className="flex justify-between gap-3 sm:block">
-                <dt className="label-mono">{spec.label}</dt>
-                <dd className="text-right text-ink-2 sm:text-left">{spec.value}</dd>
-              </div>
-            ))}
-          </dl>
+        {/* The B2B facts a buyer needs before anything else (b2b-commerce-ui principle 1). */}
+        <dl className="mt-6 grid grid-cols-2 gap-x-6 border-y border-brand-hairline text-sm">
+          {[
+            {
+              k: "From",
+              v: `${formatUnitPrice(fromTier.unitPriceCents, product.currency)}/bag at ${formatQty(fromTier.minQty)}`,
+            },
+            { k: "Minimum order", v: `${formatQty(product.minQuantity)} per design` },
+            { k: "Production", v: BUSINESS.STANDARD_PRODUCTION_TIME },
+            { k: "Construction", v: product.materials[0]?.label ?? "Insulated, three layers" },
+          ].map((row) => (
+            <div key={row.k} className="border-b border-brand-hairline py-3">
+              <dt className="eyebrow">{row.k}</dt>
+              <dd className="mt-1 font-medium text-brand-ink tabular">{row.v}</dd>
+            </div>
+          ))}
+        </dl>
+        {showsDemoPricing(product) && (
+          <Badge variant="secondary" className="mt-4">
+            Demo pricing — replace before launch
+          </Badge>
         )}
 
         {/* 1 · Size */}
         <fieldset className={`mt-8 ${aiRing("sizeId")}`}>
-          <legend className="label-mono mb-2">1 · Size{aiMark("sizeId")}</legend>
-          <div className="flex flex-wrap gap-2">
+          <legend className="flex items-center font-heading text-lg font-medium text-brand-ink">
+            <span className="mr-3 text-brand-accent tabular">{nextStep()}</span>Size{aiMark("sizeId")}
+          </legend>
+          <div className="mt-3 grid gap-2">
             {product.sizes.map((s) => (
-              <button
+              <OptionButton
                 key={s.id}
-                type="button"
-                className="chip"
-                aria-pressed={s.id === sizeId}
+                selected={s.id === sizeId}
                 onClick={() => {
                   setSize(s.id);
                   track({ name: "select_size", params: { product_id: product.id, size: s.label } });
                 }}
+                meta={s.priceDeltaCents > 0 ? `+${formatUnitPrice(s.priceDeltaCents, product.currency)}/bag` : undefined}
               >
-                <span>{s.label}</span>
-                <span className="font-mono text-xs text-ink-3">{formatDimensions({ ...s.dimensions, unit: s.unit })}</span>
-              </button>
+                <span className="font-medium text-brand-ink">{s.label}</span>
+                <span className="text-xs text-brand-ink-muted tabular">{formatDimensions({ ...s.dimensions, unit: s.unit })}</span>
+              </OptionButton>
             ))}
           </div>
-          {selectedSize && (
-            <p className="mt-2 font-mono text-xs text-ink-3">
-              {describeDimensions({ ...selectedSize.dimensions, unit: selectedSize.unit })}
-            </p>
-          )}
-          <p className="mt-2 text-xs text-ink-3">
-            Need a custom size? The factory can make one — it is quoted individually, minimum{" "}
-            {formatQty(product.minQuantity)} pieces.{" "}
-            <Link href={`/request-quote?product=${product.slug}&size=custom`} className="text-accent underline">
+          <p className="mt-3 text-xs text-brand-ink-muted">
+            Need a custom size? The factory can make one, quoted individually, minimum {formatQty(product.minQuantity)} pieces.{" "}
+            <Link href={`${QUOTE_CTA.href}?product=${product.slug}&size=custom`} className="text-brand-accent-ink underline underline-offset-3 hover:text-brand-ink">
               Request a custom size quote
             </Link>
           </p>
         </fieldset>
 
-        {/* 2 · Material */}
+        {/* 2 · Material — only when the factory offers a choice. */}
         {product.materials.length > 1 && (
-          <fieldset className={`mt-6 ${aiRing("materialId")}`}>
-            <legend className="label-mono mb-2">2 · Material weight{aiMark("materialId")}</legend>
-            <div className="flex flex-wrap gap-2">
+          <fieldset className={`mt-8 ${aiRing("materialId")}`}>
+            <legend className="flex items-center font-heading text-lg font-medium text-brand-ink">
+              <span className="mr-3 text-brand-accent tabular">{nextStep()}</span>Material weight{aiMark("materialId")}
+            </legend>
+            <div className="mt-3 grid gap-2">
               {product.materials.map((m) => (
-                <button
+                <OptionButton
                   key={m.id}
-                  type="button"
-                  className="chip"
-                  aria-pressed={m.id === materialId}
+                  selected={m.id === materialId}
                   onClick={() => setMaterial(m.id)}
+                  meta={m.priceDeltaCents > 0 ? `+${formatUnitPrice(m.priceDeltaCents, product.currency)}/bag` : undefined}
                 >
-                  {m.label}
-                  {m.priceDeltaCents > 0 && (
-                    <span className="font-mono text-xs text-accent">+{formatUnitPrice(m.priceDeltaCents)}/bag</span>
-                  )}
-                </button>
+                  <span className="font-medium text-brand-ink">{m.label}</span>
+                </OptionButton>
               ))}
             </div>
           </fieldset>
         )}
 
-        {/* 3 · Color */}
-        <fieldset className={`mt-6 ${aiRing("colorId")}`}>
-          <legend className="label-mono mb-2">
-            {product.materials.length > 1 ? "3" : "2"} · Bag color{aiMark("colorId")}
+        {/* 3 · Colour */}
+        <fieldset className={`mt-8 ${aiRing("colorId")}`}>
+          <legend className="flex items-center font-heading text-lg font-medium text-brand-ink">
+            <span className="mr-3 text-brand-accent tabular">{nextStep()}</span>Bag colour{aiMark("colorId")}
           </legend>
-          <div className="flex flex-wrap gap-2">
+          <div className="mt-3 grid grid-cols-2 gap-2">
             {product.colors.map((c) => (
-              <button
+              <OptionButton
                 key={c.id}
-                type="button"
-                className="chip"
-                aria-pressed={c.id === colorId}
+                selected={c.id === colorId}
                 onClick={() => {
                   setColor(c.id);
                   track({ name: "select_color", params: { product_id: product.id, color: c.label } });
                 }}
+                ariaLabel={c.label}
               >
-                <span
-                  aria-hidden="true"
-                  className="inline-block h-4 w-4 rounded-full border border-rule-2"
-                  style={{ background: c.swatch }}
-                />
-                {c.label}
-              </button>
+                <span aria-hidden="true" className="inline-block size-5 shrink-0 rounded-full border border-brand-hairline-strong" style={{ background: c.swatch }} />
+                <span className="font-medium text-brand-ink">{c.label}</span>
+              </OptionButton>
             ))}
           </div>
           {selectedColor?.custom && (
-            <p className="mt-2 rounded-[6px] bg-accent-soft px-3 py-2 text-xs text-ink-2">
-              Custom colors are quoted individually — finish your specs below and we&apos;ll route you to the quote
-              form.
+            <p className="mt-3 rounded-sm bg-brand-accent-soft px-3 py-2 text-xs text-brand-ink-2">
+              Custom colours are quoted individually — finish your specs and send them with the quote request.
             </p>
           )}
         </fieldset>
@@ -382,42 +446,48 @@ function ConfiguratorView({ product, experiments }: { product: Product; experime
             customer uploads artwork and production review decides the colour
             separation, so no print-colour-count selector is shown. */}
         {singlePrintOption ? (
-          <div className="mt-6 rounded-[10px] border border-rule p-4">
-            <p className="label-mono">Printing</p>
-            <p className="mt-1 text-sm font-medium text-ink">{product.printOptions[0].label}</p>
-            <p className="mt-1 text-sm text-ink-3">{product.printOptions[0].description}</p>
+          <div className={`mt-8 ${aiRing("printOptionId")}`}>
+            <p className="flex items-center font-heading text-lg font-medium text-brand-ink">
+              <span className="mr-3 text-brand-accent tabular">{nextStep()}</span>Custom logo{aiMark("printOptionId")}
+            </p>
+            <div className="mt-3 border-y border-brand-hairline py-4 text-sm">
+              <p className="font-medium text-brand-ink">{product.printOptions[0].label}</p>
+              <p className="mt-1 text-brand-ink-2">{product.printOptions[0].description}</p>
+              <p className="mt-2 text-brand-ink-muted">
+                {checkout ? "Upload artwork below." : "Attach your logo or artwork to the quote request — PNG, JPG, PDF, AI or EPS, up to 25 MB."}{" "}
+                {PROOF_POLICY.detail}
+              </p>
+            </div>
           </div>
         ) : (
-        <fieldset className={`mt-6 ${aiRing("printOptionId")}`}>
-          <legend className="label-mono mb-2">Printing{aiMark("printOptionId")}</legend>
-          <div className="grid gap-2">
-            {product.printOptions.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                className="chip w-full !justify-between text-left"
-                aria-pressed={p.id === printId}
-                onClick={() => {
-                  setPrintOption(p.id);
-                  track({ name: "select_print_option", params: { product_id: product.id, print_option: p.id } });
-                }}
-              >
-                <span>
-                  <span className="block font-medium">{p.label}</span>
-                  <span className="block text-xs font-normal text-ink-3">{p.description}</span>
-                </span>
-                <span className="font-mono text-xs text-ink-3">
-                  {p.priceDeltaCents > 0 ? `+${formatUnitPrice(p.priceDeltaCents)}/bag` : "included"}
-                </span>
-              </button>
-            ))}
-          </div>
-        </fieldset>
+          <fieldset className={`mt-8 ${aiRing("printOptionId")}`}>
+            <legend className="flex items-center font-heading text-lg font-medium text-brand-ink">
+              <span className="mr-3 text-brand-accent tabular">{nextStep()}</span>Printing{aiMark("printOptionId")}
+            </legend>
+            <div className="mt-3 grid gap-2">
+              {product.printOptions.map((p) => (
+                <OptionButton
+                  key={p.id}
+                  selected={p.id === printId}
+                  onClick={() => {
+                    setPrintOption(p.id);
+                    track({ name: "select_print_option", params: { product_id: product.id, print_option: p.id } });
+                  }}
+                  meta={p.priceDeltaCents > 0 ? `+${formatUnitPrice(p.priceDeltaCents, product.currency)}/bag` : "included"}
+                >
+                  <span className="block">
+                    <span className="block font-medium text-brand-ink">{p.label}</span>
+                    <span className="block text-xs text-brand-ink-muted">{p.description}</span>
+                  </span>
+                </OptionButton>
+              ))}
+            </div>
+          </fieldset>
         )}
 
-        {/* 5 · Artwork */}
-        {selectedPrint?.requiresArtwork && (
-          <div className="mt-6">
+        {/* 5 · Artwork — the durable uploader is part of the checkout path only. */}
+        {checkout && selectedPrint?.requiresArtwork && (
+          <div className="mt-8">
             <ArtworkUploader
               value={artwork ?? null}
               onChange={(ref) => {
@@ -431,17 +501,33 @@ function ConfiguratorView({ product, experiments }: { product: Product; experime
         )}
 
         {/* 6 · Quantity */}
-        <fieldset className={`mt-6 ${aiRing("quantity")}`}>
-          <legend className="label-mono mb-2">Quantity{aiMark("quantity")}</legend>
-          <div className="flex flex-wrap gap-2">
-            {product.quantityPresets.map((q) => (
-              <button key={q} type="button" className="chip font-mono" aria-pressed={q === quantity && !customQty} onClick={() => setQty(q)}>
-                {formatQty(q)}
-              </button>
-            ))}
+        <fieldset className={`mt-8 ${aiRing("quantity")}`}>
+          <legend className="flex items-center font-heading text-lg font-medium text-brand-ink">
+            <span className="mr-3 text-brand-accent tabular">{nextStep()}</span>Quantity{aiMark("quantity")}
+          </legend>
+          <div className={`mt-3 grid gap-2 ${product.quantityPresets.length <= 3 ? "grid-cols-2" : "grid-cols-3"}`}>
+            {product.quantityPresets.map((q) => {
+              const unit = product.pricingTiers.filter((t) => t.minQty <= q).at(-1);
+              const unitPrice = unit ? unit.unitPriceCents + (selectedSize?.priceDeltaCents ?? 0) : null;
+              return (
+                <OptionButton
+                  key={q}
+                  selected={q === quantity && !customQty}
+                  onClick={() => setQty(q)}
+                  meta={unitPrice !== null ? `${formatUnitPrice(unitPrice, product.currency)}/bag` : undefined}
+                >
+                  <span className="font-medium text-brand-ink tabular">{formatQty(q)} bags</span>
+                </OptionButton>
+              );
+            })}
             {!fixedQuantities && (
-              <label className="chip cursor-text" data-selected={Boolean(customQty)}>
-                <span className="text-xs text-ink-3">Custom:</span>
+              <label
+                className={`flex min-h-14 cursor-text items-center gap-2 rounded-sm border px-4 text-sm ${
+                  customQty ? "border-brand-accent bg-brand-accent-soft" : "border-brand-border-control bg-brand-surface"
+                }`}
+                data-selected={Boolean(customQty)}
+              >
+                <span className="text-xs text-brand-ink-muted">Custom</span>
                 <input
                   type="number"
                   inputMode="numeric"
@@ -458,33 +544,30 @@ function ConfiguratorView({ product, experiments }: { product: Product; experime
                       track({ name: "select_quantity", params: { product_id: product.id, quantity: n } });
                     }
                   }}
-                  className="w-24 bg-transparent font-mono text-sm text-ink outline-none"
+                  className="w-24 bg-transparent text-base text-brand-ink outline-none tabular"
                   aria-label="Custom quantity"
                   placeholder={`${formatQty(product.minQuantity)}+`}
                 />
               </label>
             )}
           </div>
-          <p className="mt-2 text-xs text-ink-3">
+          <p className="mt-3 text-xs text-brand-ink-muted">
             Minimum order {formatQty(product.minQuantity)} pieces per design.
             {fixedQuantities && (
               <>
                 {" "}
                 Need more than {formatQty(largestOrderableQty)}?{" "}
-                <Link
-                  href={`/request-quote?product=${product.slug}&qty=${largestOrderableQty}`}
-                  className="text-accent underline"
-                >
-                  Request a custom quote
+                <Link href={`${QUOTE_CTA.href}?product=${product.slug}&qty=${largestOrderableQty}`} className="text-brand-accent-ink underline underline-offset-3 hover:text-brand-ink">
+                  Request a volume quote
                 </Link>
                 .
               </>
             )}
           </p>
           {quantity < product.minQuantity && (
-            <p className="mt-2 text-xs text-error" role="alert">
+            <p className="mt-2 text-xs text-brand-danger" role="alert">
               Minimum order is {formatQty(product.minQuantity)} bags. Smaller runs may be possible —{" "}
-              <Link href={`/request-quote?product=${product.slug}&qty=${quantity}`} className="underline">
+              <Link href={`${QUOTE_CTA.href}?product=${product.slug}&qty=${quantity}`} className="underline">
                 request custom pricing
               </Link>
               .
@@ -492,10 +575,15 @@ function ConfiguratorView({ product, experiments }: { product: Product; experime
           )}
         </fieldset>
 
-        {/* Tier table */}
-        <details className="mt-4 rounded-[10px] border border-rule p-3" open>
-          <summary className="label-mono cursor-pointer select-none">{fixedQuantities ? "Price by quantity" : "Volume pricing"}</summary>
-          <div className="mt-3">
+        {/* Price breaks for the selected size */}
+        <details className="group mt-8 border-y border-brand-hairline py-4">
+          <summary className="flex cursor-pointer list-none items-center justify-between font-heading text-lg font-medium text-brand-ink [&::-webkit-details-marker]:hidden">
+            {fixedQuantities ? "Price by quantity" : "Volume pricing"}
+            <span aria-hidden="true" className="text-brand-ink-muted transition-transform group-open:rotate-45">
+              +
+            </span>
+          </summary>
+          <div className="mt-4">
             <TierPricingTable
               tiers={product.pricingTiers}
               currency={product.currency}
@@ -510,142 +598,91 @@ function ConfiguratorView({ product, experiments }: { product: Product; experime
           </div>
         </details>
 
-        {/* 7 · Price readout — graphite panel */}
-        <div className="graphite-panel mt-6 p-5" aria-live="polite">
-          {quote && !needsQuote ? (
-            <div className="flex flex-wrap items-end justify-between gap-4">
-              <div>
-                <p className="label-mono !text-graphite-muted">Price per bag</p>
-                <p className="font-mono text-3xl font-semibold text-graphite-ink">
-                  {formatUnitPrice(quote.unitPriceCents, quote.currency)}
-                </p>
-                <p className="mt-1 font-mono text-xs text-graphite-muted">
-                  {formatQty(quantity)} bags
-                  {quote.savingsPct > 0 && (
-                    <span className="ml-2 rounded bg-ok-soft px-1.5 py-0.5 text-ok">
-                      you save {formatPct(quote.savingsPct)} at this quantity
-                    </span>
-                  )}
-                </p>
+        {/* 7 · Price readout — surface panel, tabular figures, subtotal / shipping / total kept visibly separate.
+            The $100 is a shipping CHARGE, not tax and not duty, charged once per order. */}
+        <div className="mt-8 rounded-md border border-brand-hairline-strong bg-brand-surface p-5" aria-live="polite">
+          {priceReady && quote ? (
+            <>
+              <div className="flex flex-wrap items-end justify-between gap-4">
+                <div>
+                  <p className="eyebrow">Price per bag</p>
+                  <p className="mt-1 font-heading text-4xl leading-none font-medium text-brand-ink tabular">
+                    {formatUnitPrice(quote.unitPriceCents, quote.currency)}
+                  </p>
+                  <p className="mt-2 text-sm text-brand-ink-muted tabular">
+                    {formatQty(quantity)} bags
+                    {quote.savingsPct > 0 && <span className="ml-2 text-brand-success">· {formatPct(quote.savingsPct)} below the base tier</span>}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="eyebrow">Product subtotal</p>
+                  <p className="mt-1 font-heading text-4xl leading-none font-medium text-brand-ink tabular">
+                    {formatMoney(quote.totalCents, quote.currency)}
+                  </p>
+                </div>
               </div>
-              <div className="text-right">
-                <p className="label-mono !text-graphite-muted">Product subtotal</p>
-                <p className="font-mono text-3xl font-semibold" style={{ color: "oklch(70% 0.14 256)" }}>
-                  {formatMoney(quote.totalCents, quote.currency)}
+              <dl className="mt-5 space-y-2 border-t border-brand-hairline pt-4 text-sm tabular">
+                <div className="flex justify-between text-brand-ink-2">
+                  <dt>Product subtotal</dt>
+                  <dd>{formatMoney(quote.totalCents, quote.currency)}</dd>
+                </div>
+                <div className="flex justify-between text-brand-ink-2">
+                  <dt>Shipping (flat, per order)</dt>
+                  <dd>{formatMoney(FLAT_US_SHIPPING_CENTS, quote.currency)}</dd>
+                </div>
+                <div className="flex justify-between font-medium text-brand-ink">
+                  <dt>Total before tax</dt>
+                  <dd>{formatMoney(quote.totalCents + FLAT_US_SHIPPING_CENTS, quote.currency)}</dd>
+                </div>
+                <p className="pt-1 text-xs text-brand-ink-muted">
+                  {FLAT_US_SHIPPING_COPY}. {checkout ? "Any sales tax is calculated by our checkout at payment." : "Any sales tax is shown on your quote."}
                 </p>
-              </div>
-            </div>
+              </dl>
+            </>
           ) : (
-            <p className="text-sm text-graphite-ink">
-              This configuration is quoted individually — use{" "}
-              <Link href={`/request-quote?product=${product.slug}`} className="underline" style={{ color: "oklch(70% 0.14 256)" }}>
-                Request custom pricing
+            <p className="text-sm text-brand-ink-2">
+              This configuration is quoted individually — send it with{" "}
+              <Link href={quoteHref} className="text-brand-accent-ink underline underline-offset-3 hover:text-brand-ink">
+                a quote request
               </Link>{" "}
-              and we&apos;ll price it within one business day.
+              and we price it {QUOTE_CTA.responseTime}.
             </p>
-          )}
-
-          {/* Product subtotal, shipping and the pre-tax total, kept visibly
-              separate. The $100 is a shipping CHARGE, not tax and not duty,
-              and it is charged once per order — adding a second
-              configuration does not add a second $100. */}
-          {quote && !needsQuote && (
-            <dl className="mt-4 space-y-1.5 border-t border-graphite-muted/25 pt-3 font-mono text-sm">
-              <div className="flex justify-between text-graphite-muted">
-                <dt>Product subtotal</dt>
-                <dd>{formatMoney(quote.totalCents, quote.currency)}</dd>
-              </div>
-              <div className="flex justify-between text-graphite-muted">
-                <dt>Shipping (flat, per order)</dt>
-                <dd>{formatMoney(FLAT_US_SHIPPING_CENTS, quote.currency)}</dd>
-              </div>
-              <div className="flex justify-between font-semibold text-graphite-ink">
-                <dt>Total before tax</dt>
-                <dd>{formatMoney(quote.totalCents + FLAT_US_SHIPPING_CENTS, quote.currency)}</dd>
-              </div>
-              <p className="pt-1 text-[11px] font-normal text-graphite-muted">
-                {FLAT_US_SHIPPING_COPY}. Any sales tax is calculated by our checkout at payment.
-              </p>
-            </dl>
           )}
         </div>
 
-        {/* 8 · Production + shipping */}
-        <div className="mt-4 grid gap-3 text-sm">
-          <div className="rounded-[10px] border border-rule p-4">
-            <p className="label-mono">{PROOF_POLICY.headline}</p>
-            <p className="mt-1 text-ink-2">{PROOF_POLICY.detail}</p>
-            <p className="mt-1 text-ink-2">{PROOF_POLICY.productionStart}</p>
-            <p className="mt-2 text-ink-3">{PROOF_POLICY.leadTime}</p>
-          </div>
-          <div>
-            <label htmlFor="postal" className="label-mono mb-1 block">
-              Shipping — {FLAT_US_SHIPPING_COPY}
-            </label>
-            <p className="mb-2 text-xs text-ink-3">
-              Check that we ship to your ZIP code. We ship within the United States only right now.
-            </p>
-            <div className="flex gap-2">
-              <input
-                id="postal"
-                className="input max-w-44"
-                placeholder="ZIP code"
-                value={postal}
-                autoComplete="postal-code"
-                onChange={(e) => setPostal(e.target.value)}
-              />
-              <button
-                type="button"
-                className="btn btn--secondary text-sm"
-                onClick={() => {
-                  const est = estimateShipping(postal);
-                  if (est.mode === "invalid" || est.mode === "unavailable") {
-                    setShippingMsg({ text: est.message, tone: "error" });
-                  } else {
-                    setShippingMsg({ text: est.message, tone: "ok" });
-                    track({ name: "shipping_estimate_requested", params: { market: postal.trim().slice(0, 2) } });
-                  }
-                }}
-              >
-                Check
-              </button>
-            </div>
-            {shippingMsg && (
-              <p className={`mt-1 text-xs ${shippingMsg.tone === "error" ? "text-error" : "text-ok"}`} role="status">
-                {shippingMsg.text}
-              </p>
-            )}
-          </div>
-        </div>
-
-        {/* 9 · Add to cart */}
+        {/* 8 · Primary CTA */}
         <div className="mt-6">
           {shippingMessage && shippingMessage.placement === "above_cta" && (
-            <p data-experiment="product.shipping_message" className="mb-3 rounded-[6px] bg-accent-soft px-3 py-2 text-sm text-ink-2">
+            <p data-experiment="product.shipping_message" className="mb-3 rounded-sm bg-brand-accent-soft px-3 py-2 text-sm text-brand-ink-2">
               {shippingMessage.message}
             </p>
           )}
-          <button
-            type="button"
-            className="btn btn--primary w-full !py-4 text-base"
-            disabled={!quote || missingArtwork || needsQuote || added}
-            onClick={handleAdd}
-            data-state={added ? "success" : undefined}
-          >
-            {added ? "✓ Added — opening cart" : ctaLabel}
-          </button>
-          {ctaHelperText && (
-            <p data-experiment="product.primary_cta" className="mt-2 text-center text-xs text-ink-3">
-              {ctaHelperText}
-            </p>
+          {checkout ? (
+            <Button
+              variant="accent"
+              size="lg"
+              className="w-full"
+              disabled={!quote || missingArtwork || needsQuote || added}
+              onClick={handleAdd}
+              data-state={added ? "success" : undefined}
+            >
+              {added ? "Added — opening cart" : ctaLabel}
+            </Button>
+          ) : (
+            <Button variant="accent" size="lg" className="w-full" render={<Link href={quoteHref} onClick={onQuoteClick} />}>
+              {ctaLabel}
+            </Button>
           )}
+          <p data-experiment={ctaHelperText ? "product.primary_cta" : undefined} className="mt-3 text-center text-sm text-brand-ink-muted">
+            {ctaHelperText ?? (checkout ? `${PROOF_POLICY.headline}. ${PROOF_POLICY.productionStart}` : `Your configuration is attached. Pricing replies ${QUOTE_CTA.responseTime}; ${PROOF_POLICY.headline.toLowerCase()}.`)}
+          </p>
           {shippingMessage && shippingMessage.placement === "below_cta" && (
-            <p data-experiment="product.shipping_message" className="mt-3 rounded-[6px] bg-accent-soft px-3 py-2 text-sm text-ink-2">
+            <p data-experiment="product.shipping_message" className="mt-3 rounded-sm bg-brand-accent-soft px-3 py-2 text-sm text-brand-ink-2">
               {shippingMessage.message}
             </p>
           )}
           {missingArtwork && (
-            <p className="mt-2 text-xs text-error" role="alert">
+            <p className="mt-2 text-xs text-brand-danger" role="alert">
               {/* Only offer the escape hatch that actually exists: this
                   product has one print option and it always needs artwork. */}
               {product.printOptions.some((o) => !o.requiresArtwork)
@@ -653,46 +690,77 @@ function ConfiguratorView({ product, experiments }: { product: Product; experime
                 : "Upload your logo or artwork above to continue — every bag is custom printed."}
             </p>
           )}
-          <p className="mt-3 text-center text-sm text-ink-3">
-            Need a custom size or quantity?{" "}
-            <Link
-              href={`/request-quote?product=${product.slug}`}
-              className="text-accent underline"
-              onClick={() => track({ name: "request_custom_quote", params: { product_id: product.id } })}
-            >
-              Request custom pricing
-            </Link>
-          </p>
         </div>
 
-        {/* Sticky mobile CTA */}
-        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-rule bg-paper/95 p-3 backdrop-blur-sm lg:hidden">
+        {/* 9 · Production + shipping check */}
+        <div className="mt-8 border-t border-brand-hairline pt-6 text-sm">
+          <p className="eyebrow">Production</p>
+          <p className="mt-1 text-brand-ink">{PROOF_POLICY.leadTime}</p>
+          <p className="eyebrow mt-5">Shipping · {FLAT_US_SHIPPING_COPY}</p>
+          <p className="mt-1 text-brand-ink-2">Check that we ship to your ZIP code. United States only right now.</p>
+          <form
+            className="mt-3 flex gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const est = estimateShipping(postal);
+              if (est.mode === "invalid" || est.mode === "unavailable") {
+                setShippingMsg({ text: est.message, tone: "error" });
+              } else {
+                setShippingMsg({ text: est.message, tone: "ok" });
+                track({ name: "shipping_estimate_requested", params: { market: postal.trim().slice(0, 2) } });
+              }
+            }}
+          >
+            <Input
+              id="postal"
+              aria-label="ZIP code"
+              className="max-w-44"
+              placeholder="ZIP code"
+              inputMode="numeric"
+              value={postal}
+              autoComplete="postal-code"
+              onChange={(e) => setPostal(e.target.value)}
+            />
+            <Button type="submit" variant="outline">
+              Check
+            </Button>
+          </form>
+          {shippingMsg && (
+            <p className={`mt-2 text-xs ${shippingMsg.tone === "error" ? "text-brand-danger" : "text-brand-success"}`} role="status">
+              {shippingMsg.text}
+            </p>
+          )}
+        </div>
+
+        {/* Sticky mobile CTA bar — DESIGN.md §8. */}
+        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-brand-hairline bg-brand-canvas p-3 shadow-overlay lg:hidden">
           <div className="mx-auto flex max-w-xl items-center justify-between gap-3">
             <div className="min-w-0">
-              {quote && !needsQuote ? (
+              {priceReady && quote ? (
                 <>
-                  <p className="truncate font-mono text-sm font-semibold text-ink">
+                  <p className="truncate text-sm font-medium text-brand-ink tabular">
                     {formatUnitPrice(quote.unitPriceCents, quote.currency)}/bag · {formatMoney(quote.totalCents, quote.currency)}
                   </p>
-                  <p className="font-mono text-[11px] text-ink-3">
+                  <p className="text-xs text-brand-ink-muted tabular">
                     {formatQty(quantity)} bags · +{formatMoney(FLAT_US_SHIPPING_CENTS, quote.currency)} shipping
                   </p>
                 </>
               ) : (
-                <p className="text-xs text-ink-3">Finish configuring to see your price</p>
+                <p className="text-xs text-brand-ink-muted">Quoted individually</p>
               )}
             </div>
-            <button
-              type="button"
-              className="btn btn--primary shrink-0 text-sm"
-              disabled={!quote || missingArtwork || needsQuote || added}
-              onClick={handleAdd}
-            >
-              {added ? "✓ Added" : ctaLabel}
-            </button>
+            {checkout ? (
+              <Button variant="accent" className="shrink-0" disabled={!quote || missingArtwork || needsQuote || added} onClick={handleAdd}>
+                {added ? "Added" : ctaLabel}
+              </Button>
+            ) : (
+              <Button variant="accent" className="shrink-0" render={<Link href={quoteHref} onClick={onQuoteClick} />}>
+                {ctaLabel}
+              </Button>
+            )}
           </div>
         </div>
-        {/* Spacer so sticky bar never covers content on mobile */}
+        {/* Spacer so the sticky bar never covers content on mobile */}
         <div className="h-20 lg:hidden" aria-hidden="true" />
       </div>
     </div>

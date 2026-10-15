@@ -1,59 +1,66 @@
 import Link from "next/link";
-import { BUSINESS } from "@/config/business";
+import { BUSINESS, QUOTE_CTA, isCheckoutEnabled } from "@/config/business";
+import { FLAT_US_SHIPPING_COPY } from "@/config/shipping";
+import { Button } from "@/components/ui/button";
 
-/** Ft1 mast-headed footer — wordmark mast + three compact link groups + legal line. */
+/**
+ * Footer — the page's one dark band (DESIGN.md §5: full-bleed is for photography and the
+ * dark footer only). Wordmark + a last quote CTA, three link groups, legal line.
+ */
 
 const GROUPS: { heading: string; links: { href: string; label: string }[] }[] = [
   {
-    heading: "Shop",
+    heading: "Products",
     links: [
-      { href: "/products", label: "All products" },
       { href: "/products/custom-insulated-takeout-bags", label: "Custom insulated takeout bags" },
-      { href: "/bulk-takeout-bags", label: "Bulk pricing" },
-      { href: "/request-quote", label: "Request a quote" },
+      { href: "/custom-logo-takeout-bags", label: "Custom logo printing" },
+      { href: "/bulk-takeout-bags", label: "Wholesale pricing" },
+      { href: "/custom-bags", label: "Custom manufacturing" },
     ],
   },
   {
     heading: "For your business",
     links: [
       { href: "/restaurant-takeout-bags", label: "Restaurants" },
-      { href: "/coffee-shop-bags", label: "Coffee shops & cafes" },
-      { href: "/custom-logo-takeout-bags", label: "Custom logo bags" },
-      { href: "/custom-bags", label: "Custom manufacturing" },
+      { href: "/coffee-shop-bags", label: "Coffee shops & cafés" },
+      { href: "/how-it-works", label: "How ordering works" },
+      { href: QUOTE_CTA.href, label: QUOTE_CTA.label },
     ],
   },
   {
     heading: "Company",
     links: [
       { href: "/about", label: "About the factory" },
-      { href: "/how-it-works", label: "How ordering works" },
       { href: "/faq", label: "FAQ" },
       { href: "/contact", label: "Contact" },
-      { href: "/order-status", label: "Order status" },
+      ...(isCheckoutEnabled() ? [{ href: "/order-status", label: "Order status" }] : []),
     ],
   },
 ];
 
 export function Footer() {
   return (
-    <footer className="mt-24 border-t border-rule bg-paper-2">
-      <div className="mx-auto max-w-6xl px-4 py-12 sm:px-6">
-        <div className="grid gap-10 md:grid-cols-[1.2fr_2fr]">
+    <footer className="mt-(--space-section) bg-brand-surface-ink text-brand-canvas-on-ink">
+      <div className="container-page py-16 lg:py-20">
+        <div className="grid gap-12 lg:grid-cols-[1.4fr_2fr]">
           <div>
-            <p className="font-display text-xl text-ink" style={{ fontWeight: 600 }}>
-              {BUSINESS.DISPLAY_NAME}
+            <p className="font-heading text-3xl font-medium tracking-tight">{BUSINESS.DISPLAY_NAME}</p>
+            <p className="mt-3 max-w-xs text-base text-brand-canvas-on-ink-muted">{BUSINESS.TAGLINE}</p>
+            <p className="mt-6 text-sm text-brand-canvas-on-ink-muted">
+              Ships within the United States · {FLAT_US_SHIPPING_COPY}
             </p>
-            <p className="mt-2 max-w-xs text-sm text-ink-3">{BUSINESS.TAGLINE}</p>
-            <p className="label-mono mt-4">Ships within the U.S. · flat $100 per order</p>
+            <Button variant="inverse" className="mt-8" render={<Link href={QUOTE_CTA.href} />}>
+              {QUOTE_CTA.label}
+            </Button>
           </div>
-          <div className="grid grid-cols-2 gap-8 sm:grid-cols-3">
+          <div className="grid grid-cols-2 gap-10 sm:grid-cols-3">
             {GROUPS.map((g) => (
               <nav key={g.heading} aria-label={g.heading}>
-                <p className="label-mono mb-3">{g.heading}</p>
-                <ul className="space-y-2">
+                <p className="eyebrow mb-4 text-brand-canvas-on-ink-muted">{g.heading}</p>
+                <ul className="space-y-3">
                   {g.links.map((l) => (
                     <li key={l.href}>
-                      <Link href={l.href} className="text-sm text-ink-2 hover:text-accent">
+                      <Link href={l.href} className="text-sm text-brand-canvas-on-ink/90 hover:text-white hover:underline">
                         {l.label}
                       </Link>
                     </li>
@@ -63,11 +70,11 @@ export function Footer() {
             ))}
           </div>
         </div>
-        <div className="mt-12 flex flex-col gap-3 border-t border-rule pt-6 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-xs text-ink-3">
+        <div className="mt-16 flex flex-col gap-4 border-t border-white/15 pt-6 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-xs text-brand-canvas-on-ink-muted">
             © {new Date().getFullYear()} {BUSINESS.BRAND_NAME}. All rights reserved.
           </p>
-          <ul className="flex flex-wrap gap-4">
+          <ul className="flex flex-wrap gap-5">
             {[
               { href: "/shipping-policy", label: "Shipping" },
               { href: "/return-policy", label: "Returns" },
@@ -75,7 +82,7 @@ export function Footer() {
               { href: "/terms", label: "Terms" },
             ].map((l) => (
               <li key={l.href}>
-                <Link href={l.href} className="text-xs text-ink-3 hover:text-accent">
+                <Link href={l.href} className="text-xs text-brand-canvas-on-ink-muted hover:text-white hover:underline">
                   {l.label}
                 </Link>
               </li>

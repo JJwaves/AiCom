@@ -36,19 +36,19 @@ export function TierPricingTable({
     <div>
       {/* Desktop table */}
       <div className="table-scroll hidden sm:block">
-        <table className="w-full border-collapse text-sm">
-          <caption className={caption ? "label-mono pb-2 text-left" : "sr-only"}>
+        <table className="w-full border-collapse text-sm tabular">
+          <caption className={caption ? "eyebrow pb-3 text-left" : "sr-only"}>
             {caption ?? "Volume pricing by quantity"}
           </caption>
           <thead>
-            <tr className="border-b border-rule-2">
-              <th scope="col" className="label-mono py-2 pr-4 text-left font-medium">
+            <tr className="border-b border-brand-hairline-strong">
+              <th scope="col" className="eyebrow py-2 pr-4 text-left font-medium">
                 Quantity
               </th>
-              <th scope="col" className="label-mono py-2 pr-4 text-right font-medium">
+              <th scope="col" className="eyebrow py-2 pr-4 text-right font-medium">
                 Price / bag
               </th>
-              <th scope="col" className="label-mono py-2 text-right font-medium">
+              <th scope="col" className="eyebrow py-2 text-right font-medium">
                 Total
               </th>
             </tr>
@@ -59,20 +59,20 @@ export function TierPricingTable({
               return (
                 <tr
                   key={t.minQty}
-                  className={`border-b border-rule transition-colors ${
-                    active ? "bg-accent-soft" : "hover:bg-paper-2"
+                  className={`border-b border-brand-hairline transition-colors ${
+                    active ? "bg-brand-accent-soft" : "hover:bg-brand-canvas-2"
                   } ${onPick ? "cursor-pointer" : ""}`}
                   onClick={onPick ? () => onPick(t.minQty) : undefined}
                   aria-selected={active}
                 >
-                  <td className="py-2.5 pr-4 font-mono text-ink">
+                  <td className="py-3 pr-4 text-brand-ink">
                     {qtyLabel(t.minQty)}
-                    {active && <span className="label-mono ml-2 !text-accent">← your tier</span>}
+                    {active && <span className="ml-3 text-xs font-medium text-brand-accent-ink">Your tier</span>}
                   </td>
-                  <td className="py-2.5 pr-4 text-right font-mono text-ink">
+                  <td className="py-3 pr-4 text-right font-medium text-brand-ink">
                     {formatUnitPrice(unitPrice(t), currency)}
                   </td>
-                  <td className="py-2.5 text-right font-mono text-ink-3">
+                  <td className="py-3 text-right text-brand-ink-muted">
                     {formatMoney(unitPrice(t) * t.minQty, currency)}
                   </td>
                 </tr>
@@ -92,11 +92,13 @@ export function TierPricingTable({
                 type="button"
                 onClick={onPick ? () => onPick(t.minQty) : undefined}
                 data-selected={active}
-                className="chip w-full flex-col !items-start gap-1 py-3"
+                className={`flex w-full flex-col items-start gap-1 rounded-sm border px-4 py-3 text-left tabular ${
+                  active ? "border-brand-accent bg-brand-accent-soft" : "border-brand-border-control bg-brand-surface"
+                }`}
               >
-                <span className="font-mono text-xs text-ink-3">{qtyLabel(t.minQty)} bags</span>
-                <span className="font-mono text-base text-ink">{formatUnitPrice(unitPrice(t), currency)}</span>
-                <span className="font-mono text-xs text-ink-3">{formatMoney(unitPrice(t) * t.minQty, currency)}</span>
+                <span className="text-xs text-brand-ink-muted">{qtyLabel(t.minQty)} bags</span>
+                <span className="text-base font-medium text-brand-ink">{formatUnitPrice(unitPrice(t), currency)}</span>
+                <span className="text-xs text-brand-ink-muted">{formatMoney(unitPrice(t) * t.minQty, currency)}</span>
               </button>
             </li>
           );

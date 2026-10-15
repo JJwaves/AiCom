@@ -3,7 +3,7 @@
 export const FAQ_ITEMS: { q: string; a: string }[] = [
   {
     q: "What is the minimum order quantity?",
-    a: "5,000 pieces per design. Direct online ordering is available at 5,000 and 10,000 pieces; anything smaller, larger, or in a custom size goes through the Request Custom Pricing form.",
+    a: "5,000 pieces per design. Standard wholesale pricing covers 5,000 and 10,000 pieces per design; anything smaller, larger, or in a custom size is quoted individually through the quote form.",
   },
   {
     q: "Can I see a proof before you print my logo?",
@@ -15,15 +15,15 @@ export const FAQ_ITEMS: { q: string; a: string }[] = [
   },
   {
     q: "Where do you ship, and what does shipping cost?",
-    a: "We ship within the United States only right now. Shipping is a flat $100 per order, charged once no matter how many configurations are on it, and shown separately from the product subtotal. Any sales tax is calculated at checkout.",
+    a: "We ship within the United States only right now. Shipping is a flat $100 per order, charged once no matter how many configurations are on it, and shown separately from the product subtotal. Any applicable sales tax is shown on your quote.",
   },
   {
     q: "How does pricing work?",
-    a: "Price is per bag and depends on size and quantity. Large is $950 at 5,000 pieces and $1,500 at 10,000; Extra Large is $1,150 at 5,000 and $1,900 at 10,000. Those are product subtotals — shipping is a separate flat $100 per order, and any sales tax is calculated at checkout.",
+    a: "Price is per bag and depends on size and quantity. Large is $950 at 5,000 pieces and $1,500 at 10,000; Extra Large is $1,150 at 5,000 and $1,900 at 10,000. Those are product subtotals — shipping is a separate flat $100 per order, and any applicable sales tax is shown on your quote.",
   },
   {
     q: "Can I order a custom size or color?",
-    a: "The factory can make custom dimensions, with a 5,000-piece minimum. Custom sizes and colors are not part of standard online checkout — send them through the Request Custom Pricing form and we quote them individually.",
+    a: "The factory can make custom dimensions, with a 5,000-piece minimum. Custom sizes and colours are outside the standard price list — send them through the quote form and we quote them individually.",
   },
   {
     q: "What are the bags made of?",
@@ -39,6 +39,6 @@ export const FAQ_ITEMS: { q: string; a: string }[] = [
   },
   {
     q: "How do I reorder?",
-    a: "Reorder from your order confirmation email, or contact us with your order number and we'll rerun the same specs and artwork.",
+    a: "Reply to your original quote or order email, or contact us with your order number, and we'll rerun the same specs and artwork.",
   },
 ];

@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { FinalCTA } from "@/components/landing/sections";
+import { FinalCTA, SectionHeading } from "@/components/landing/sections";
+import { Button } from "@/components/ui/button";
+import { QUOTE_CTA } from "@/config/business";
 
 export const metadata: Metadata = {
   title: "Custom Bag Manufacturing",
@@ -21,35 +23,33 @@ const CAPABILITIES = [
 export default function CustomBagsPage() {
   return (
     <>
-      <section className="mx-auto max-w-6xl px-4 py-12 sm:px-6">
-        <h1 className="max-w-xl text-3xl sm:text-4xl" style={{ fontWeight: 600 }}>
-          Custom manufacturing, beyond the catalog
-        </h1>
-        <p className="mt-3 max-w-lg text-ink-2">
-          The online configurator covers standard sizes, colors and printing. Everything else — custom
-          dimensions, matched colors, special handles — is a conversation with the factory, started from one
-          form.
-        </p>
-        <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <section className="container-page pt-10 pb-16 lg:pt-16 lg:pb-24">
+        <SectionHeading
+          as="h1"
+          eyebrow="Custom manufacturing"
+          title="Beyond the catalog."
+          lead="The online configurator covers standard sizes, colours and printing. Everything else — custom dimensions, matched colours, special handles — is a conversation with the factory, started from one form."
+        />
+        <dl className="mt-12 grid gap-x-12 border-t border-brand-hairline-strong sm:grid-cols-2 lg:grid-cols-3">
           {CAPABILITIES.map((c) => (
-            <div key={c.h} className="surface p-5">
-              <h2 className="text-base" style={{ fontWeight: 600 }}>
-                {c.h}
-              </h2>
-              <p className="mt-2 text-sm leading-relaxed text-ink-2">{c.b}</p>
+            <div key={c.h} className="border-b border-brand-hairline py-6">
+              <dt className="font-heading text-xl font-medium leading-snug text-brand-ink">{c.h}</dt>
+              <dd className="mt-2 text-sm leading-body text-brand-ink-2">{c.b}</dd>
             </div>
           ))}
-        </div>
+        </dl>
         <div className="mt-10">
-          <Link href="/request-quote" className="btn btn--primary">
-            Request custom pricing
-          </Link>
-          <p className="mt-3 text-sm text-ink-3">Pricing replies within one business day.</p>
+          <Button variant="accent" size="lg" render={<Link href={`${QUOTE_CTA.href}?product=custom`} />}>
+            {QUOTE_CTA.label}
+          </Button>
+          <p className="mt-3 text-sm text-brand-ink-muted">Pricing replies {QUOTE_CTA.responseTime}.</p>
         </div>
       </section>
       <FinalCTA
-        heading="Standard specs? Skip the quote."
-        sub="Standard sizes, colors and printing are priced online — configure and order in one sitting."
+        heading="Standard specs? The price is already on the page."
+        sub="Standard sizes, colours and printing are priced online — configure the bag and send the quote request in one sitting."
+        href="/products/custom-insulated-takeout-bags"
+        cta="Configure the standard bag"
       />
     </>
   );

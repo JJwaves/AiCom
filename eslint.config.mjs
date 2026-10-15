@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Vendored Claude Code skills (taste-skill, MIT) and their zero-dependency scripts are
+    // not application code; they are linted upstream.
+    ".claude/**",
   ]),
 ]);
 

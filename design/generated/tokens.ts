@@ -1,0 +1,385 @@
+// GENERATED from design/tokens.json by scripts/build-tokens.mjs — do not edit.
+export const tokens = {
+  "name": "Premium Industrial Minimalism",
+  "version": "0.1.0",
+  "notes": "Single source of truth for the design system. Edit this file, then run `node scripts/build-tokens.mjs` to regenerate design/generated/*. Values marked (suggested) came from the original brief and may be tuned; contrast ratios in `usage` are measured against the surface named there.",
+  "color": {
+    "canvas": {
+      "value": "#F7F5F0",
+      "usage": "Page background (suggested). Warm neutral; every contrast ratio below is measured on this unless stated."
+    },
+    "canvas-2": {
+      "value": "#EFEBE3",
+      "usage": "Alternate section band, table header rows, quiet fills. Never for text."
+    },
+    "surface": {
+      "value": "#FFFFFF",
+      "usage": "Cards, inputs, dialogs, product image stages. Sits on canvas with a hairline, not a shadow."
+    },
+    "surface-ink": {
+      "value": "#171717",
+      "usage": "Dark band / footer / primary button fill. Text on it: canvas-on-ink."
+    },
+    "surface-ink-hover": {
+      "value": "#2A2724",
+      "usage": "Hover state of ink-filled buttons and the dark band's borders."
+    },
+    "ink": {
+      "value": "#171717",
+      "usage": "Primary text and headings (suggested). 16.5:1 on canvas."
+    },
+    "ink-2": {
+      "value": "#4A4541",
+      "usage": "Secondary body text, spec table values. 8.7:1 on canvas."
+    },
+    "ink-muted": {
+      "value": "#6B645C",
+      "usage": "Captions, helper text, placeholders. 5.4:1 on canvas, 5.8:1 on surface — the lightest text colour allowed."
+    },
+    "canvas-on-ink": {
+      "value": "#F7F5F0",
+      "usage": "Text and icons on surface-ink. 16.5:1."
+    },
+    "canvas-on-ink-muted": {
+      "value": "#B5AC9E",
+      "usage": "Secondary text on surface-ink (footer small print). 8.1:1 on surface-ink."
+    },
+    "accent": {
+      "value": "#C65D32",
+      "usage": "Brand accent (suggested): terracotta. Large type ≥24px, icons, rules, selected states, sale/stock highlights. 3.8:1 on canvas — NOT for body-size text; use accent-ink."
+    },
+    "accent-ink": {
+      "value": "#A84A25",
+      "usage": "Accent for small text, links and accent-filled buttons with white labels. 5.3:1 on canvas; white on it 5.7:1."
+    },
+    "accent-ink-hover": {
+      "value": "#8F3E1F",
+      "usage": "Hover state of accent-filled buttons."
+    },
+    "accent-soft": {
+      "value": "#F5E4DB",
+      "usage": "Tinted fill behind accent text: badges, callouts, selected option background. Text on it must be accent-ink or ink."
+    },
+    "secondary": {
+      "value": "#B69573",
+      "usage": "Kraft / paper brown (suggested). Decorative only: swatches, image stages, dividers, illustration. 2.6:1 on canvas — never text."
+    },
+    "secondary-ink": {
+      "value": "#7A5C3C",
+      "usage": "Kraft tone usable for text and small UI. 5.6:1 on canvas."
+    },
+    "secondary-soft": {
+      "value": "#EFE4D6",
+      "usage": "Kraft tint for material-option fills and product stage backgrounds."
+    },
+    "hairline": {
+      "value": "#E3DED5",
+      "usage": "Default 1px divider and card border on canvas/surface. Decorative (not a required contrast)."
+    },
+    "hairline-strong": {
+      "value": "#CFC8BC",
+      "usage": "Table rules, stronger separation, borders on canvas-2."
+    },
+    "border-control": {
+      "value": "#8C8275",
+      "usage": "Input, checkbox, radio and select borders. 3.5:1 on canvas — meets the 3:1 non-text minimum."
+    },
+    "success": {
+      "value": "#2F6B4F",
+      "usage": "In-stock, quote sent, success text and icons. 5.8:1 on canvas; white on it 6.3:1."
+    },
+    "warning": {
+      "value": "#9A5A0B",
+      "usage": "Lead-time and minimum-order warnings. 5.0:1 on canvas."
+    },
+    "danger": {
+      "value": "#B3261E",
+      "usage": "Validation errors, destructive actions. 6.0:1 on canvas; white on it 6.5:1."
+    },
+    "danger-hover": {
+      "value": "#962019",
+      "usage": "Hover state of destructive buttons."
+    },
+    "focus": {
+      "value": "#171717",
+      "usage": "Focus ring (2px, 2px offset) on light surfaces. On surface-ink use canvas-on-ink."
+    }
+  },
+  "typography": {
+    "fonts": {
+      "heading": {
+        "family": "\"Space Grotesk\", \"Inter\", system-ui, sans-serif",
+        "source": "Google Fonts via next/font/google (OFL). Weights 500, 600, 700.",
+        "usage": "Headings, display numbers, nav wordmark, button labels (suggested)."
+      },
+      "body": {
+        "family": "\"Inter\", system-ui, -apple-system, \"Segoe UI\", sans-serif",
+        "source": "Google Fonts via next/font/google (OFL). Weights 400, 500, 600. Enable `tnum` for tables.",
+        "usage": "Body, forms, tables, captions (suggested)."
+      },
+      "mono": {
+        "family": "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+        "source": "System",
+        "usage": "SKUs, dimensions in spec tables, order numbers."
+      }
+    },
+    "scale": {
+      "display-xl": {
+        "font": "heading",
+        "size": "clamp(3rem, 6.5vw, 5rem)",
+        "lineHeight": "0.95",
+        "weight": 500,
+        "tracking": "-0.02em",
+        "usage": "Homepage hero headline only. One per page."
+      },
+      "display": {
+        "font": "heading",
+        "size": "clamp(2.5rem, 5vw, 4rem)",
+        "lineHeight": "1.0",
+        "weight": 500,
+        "tracking": "-0.02em",
+        "usage": "Section openers, campaign statements."
+      },
+      "h1": {
+        "font": "heading",
+        "size": "clamp(2rem, 3.5vw, 2.75rem)",
+        "lineHeight": "1.05",
+        "weight": 500,
+        "tracking": "-0.015em",
+        "usage": "Page title, product name on PDP."
+      },
+      "h2": {
+        "font": "heading",
+        "size": "clamp(1.5rem, 2.5vw, 2rem)",
+        "lineHeight": "1.15",
+        "weight": 500,
+        "tracking": "-0.01em",
+        "usage": "Section headings."
+      },
+      "h3": {
+        "font": "heading",
+        "size": "1.5rem",
+        "lineHeight": "1.2",
+        "weight": 500,
+        "tracking": "-0.005em",
+        "usage": "Card titles, dialog titles, spec group headings."
+      },
+      "h4": {
+        "font": "heading",
+        "size": "1.25rem",
+        "lineHeight": "1.3",
+        "weight": 500,
+        "tracking": "0",
+        "usage": "Sub-headings, option group labels."
+      },
+      "body-lg": {
+        "font": "body",
+        "size": "1.125rem",
+        "lineHeight": "1.6",
+        "weight": 400,
+        "tracking": "0",
+        "usage": "Lead paragraphs, hero supporting copy."
+      },
+      "body": {
+        "font": "body",
+        "size": "1rem",
+        "lineHeight": "1.6",
+        "weight": 400,
+        "tracking": "0",
+        "usage": "Default body, form fields (16px avoids iOS zoom)."
+      },
+      "body-sm": {
+        "font": "body",
+        "size": "0.875rem",
+        "lineHeight": "1.5",
+        "weight": 400,
+        "tracking": "0",
+        "usage": "Table cells, secondary copy, nav links."
+      },
+      "label": {
+        "font": "body",
+        "size": "0.875rem",
+        "lineHeight": "1.4",
+        "weight": 500,
+        "tracking": "0",
+        "usage": "Form labels, button labels (sm), tabs."
+      },
+      "caption": {
+        "font": "body",
+        "size": "0.75rem",
+        "lineHeight": "1.4",
+        "weight": 500,
+        "tracking": "0.08em",
+        "transform": "uppercase",
+        "usage": "Eyebrows, spec keys, badges. Always ink-muted or darker."
+      },
+      "numeric": {
+        "font": "body",
+        "size": "1rem",
+        "lineHeight": "1.4",
+        "weight": 500,
+        "tracking": "0",
+        "features": "\"tnum\" 1",
+        "usage": "Prices, quantities, MOQ, lead times — tabular figures so columns align."
+      }
+    },
+    "leading": {
+      "body": {
+        "value": "1.6",
+        "usage": "Running text, leads, answers."
+      },
+      "snug": {
+        "value": "1.3",
+        "usage": "Card titles, h4, fact values."
+      },
+      "label": {
+        "value": "1.4",
+        "usage": "Labels, captions, small UI."
+      },
+      "display": {
+        "value": "1.0",
+        "usage": "Display and h1 blocks (clamp sizes already carry their own)."
+      }
+    },
+    "measure": {
+      "value": "65ch",
+      "usage": "Max line length for running text."
+    }
+  },
+  "spacing": {
+    "base": "4px",
+    "scale": {
+      "1": "4px",
+      "2": "8px",
+      "3": "12px",
+      "4": "16px",
+      "5": "20px",
+      "6": "24px",
+      "8": "32px",
+      "10": "40px",
+      "12": "48px",
+      "16": "64px",
+      "20": "80px",
+      "24": "96px",
+      "32": "128px"
+    },
+    "semantic": {
+      "gutter": {
+        "value": "16px",
+        "usage": "Horizontal page padding on mobile."
+      },
+      "gutter-lg": {
+        "value": "32px",
+        "usage": "Horizontal page padding ≥1024px."
+      },
+      "section": {
+        "value": "clamp(64px, 10vw, 128px)",
+        "usage": "Vertical rhythm between major page sections."
+      },
+      "section-tight": {
+        "value": "clamp(40px, 6vw, 64px)",
+        "usage": "Between related sub-sections."
+      },
+      "stack": {
+        "value": "24px",
+        "usage": "Default gap between stacked content blocks."
+      },
+      "card-pad": {
+        "value": "24px",
+        "usage": "Card and panel inner padding (16px on mobile)."
+      },
+      "control-h": {
+        "value": "44px",
+        "usage": "Minimum height for buttons, inputs, selects — also the touch target."
+      },
+      "control-h-lg": {
+        "value": "52px",
+        "usage": "Hero and form-submit CTAs."
+      }
+    }
+  },
+  "layout": {
+    "container": {
+      "value": "1280px",
+      "usage": "Max content width. Full-bleed imagery may exceed it."
+    },
+    "container-narrow": {
+      "value": "720px",
+      "usage": "Long-form text, FAQ, quote form."
+    },
+    "columns": 12,
+    "gap": "24px",
+    "breakpoints": {
+      "sm": "640px",
+      "md": "768px",
+      "lg": "1024px",
+      "xl": "1280px",
+      "2xl": "1536px"
+    }
+  },
+  "radius": {
+    "none": {
+      "value": "0px",
+      "usage": "Product images, full-bleed media, tables."
+    },
+    "sm": {
+      "value": "2px",
+      "usage": "Badges, chips, inputs — the industrial default."
+    },
+    "md": {
+      "value": "4px",
+      "usage": "Buttons, cards, dialogs."
+    },
+    "lg": {
+      "value": "8px",
+      "usage": "Large panels, image stages inside cards."
+    },
+    "full": {
+      "value": "9999px",
+      "usage": "Avatars, swatch dots, pill toggles only. Not for primary buttons."
+    }
+  },
+  "elevation": {
+    "none": {
+      "value": "none",
+      "usage": "Default. Separation comes from hairlines and background steps, not shadows."
+    },
+    "overlay": {
+      "value": "0 16px 40px -12px rgb(23 23 23 / 0.18)",
+      "usage": "Dialogs, sheets, dropdown menus, sticky add-to-quote bar only."
+    }
+  },
+  "motion": {
+    "duration-fast": {
+      "value": "120ms",
+      "usage": "Hover/focus colour changes."
+    },
+    "duration-base": {
+      "value": "200ms",
+      "usage": "Menus, accordions, sheet open."
+    },
+    "easing": {
+      "value": "cubic-bezier(0.2, 0, 0, 1)",
+      "usage": "Standard ease-out. No bounces."
+    },
+    "rule": "Respect prefers-reduced-motion. No scroll-triggered entrance animations on content. Image zoom-on-hover ≤ 1.03."
+  },
+  "imagery": {
+    "product-ratio": {
+      "value": "4 / 5",
+      "usage": "Product cards and PDP gallery."
+    },
+    "hero-ratio": {
+      "value": "16 / 9 desktop, 4 / 5 mobile",
+      "usage": "Art-directed crops; keep the subject centred."
+    },
+    "stage": {
+      "value": "canvas-2 or secondary-soft",
+      "usage": "Studio background for cut-out product shots; consistent across a grid."
+    },
+    "rule": "Photography first: real bags, real kitchens, real hands. No stock 'business people shaking hands', no 3D blobs, no AI-generated people."
+  }
+} as const;
+export type ColorToken = keyof typeof tokens.color;
+export type TypeStyle = keyof typeof tokens.typography.scale;
+export const color = Object.fromEntries(Object.entries(tokens.color).map(([k, v]) => [k, v.value])) as Record<ColorToken, string>;

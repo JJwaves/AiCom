@@ -1,11 +1,12 @@
 /**
- * Hand-built SVG bag illustration (Tier-B enrichment — no stock photos).
- * Renders in the configured bag color with an optional logo placeholder
- * on the print face. Colors come in as CSS color strings from config.
+ * Hand-built SVG bag illustration — the designed PLACEHOLDER that stands in until the
+ * owner's product photography exists (never a stock photo, never AI imagery).
+ * Renders in the configured bag colour with an optional logo placeholder on the print
+ * face. Line work uses the brand tokens (CSS variables resolve inside inline SVG).
  */
 
 export function BagIllustration({
-  bodyColor = "oklch(97% 0 0)",
+  bodyColor = "var(--color-brand-surface)",
   showLogo = false,
   logoColors = 1,
   className,
@@ -18,11 +19,11 @@ export function BagIllustration({
   title?: string;
 }) {
   const isGradient = bodyColor.includes("gradient");
-  const fill = isGradient ? "oklch(93% 0.01 250)" : bodyColor;
+  const fill = isGradient ? "var(--color-brand-surface)" : bodyColor;
   // Dark bag bodies need light line work
   const dark = /oklch\((?:1[0-9]|2[0-9]|3[0-9]|4[0-5])%/.test(bodyColor);
-  const line = dark ? "oklch(80% 0.01 255)" : "oklch(38% 0.02 258)";
-  const crease = dark ? "oklch(45% 0.01 255)" : "oklch(75% 0.01 252)";
+  const line = dark ? "var(--color-brand-canvas-on-ink-muted)" : "var(--color-brand-ink-2)";
+  const crease = dark ? "var(--color-brand-ink-muted)" : "var(--color-brand-hairline-strong)";
 
   return (
     <svg
@@ -34,7 +35,7 @@ export function BagIllustration({
     >
       <title>{title}</title>
       {/* Ground shadow */}
-      <ellipse cx="160" cy="316" rx="110" ry="10" fill="oklch(24% 0.02 258 / 0.08)" />
+      <ellipse cx="160" cy="316" rx="110" ry="10" fill="var(--color-brand-ink)" opacity="0.08" />
       {/* Gusset (side panel) */}
       <path
         d="M232 112 L268 130 L268 300 L232 312 Z"
@@ -89,14 +90,14 @@ export function BagIllustration({
             strokeDasharray="6 5"
           />
           <circle cx="118" cy="200" r="12" fill={line} opacity="0.85" />
-          {logoColors >= 2 && <rect x="138" y="192" width="42" height="7" rx="3.5" fill="oklch(52% 0.2 256)" />}
+          {logoColors >= 2 && <rect x="138" y="192" width="42" height="7" rx="3.5" fill="var(--color-brand-accent)" />}
           {logoColors < 2 && <rect x="138" y="192" width="42" height="7" rx="3.5" fill={line} opacity="0.7" />}
           <rect x="138" y="206" width="30" height="6" rx="3" fill={line} opacity="0.5" />
           <text
             x="142"
             y="232"
             fontSize="10"
-            fontFamily="var(--font-mono)"
+            fontFamily="var(--font-body)"
             fill={line}
             opacity="0.7"
             textAnchor="middle"

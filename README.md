@@ -45,8 +45,20 @@ The funnel is: **ad → landing page → configurator → price → cart → che
   (`db:generate` emits migrations from `db/schema.ts`; `db:seed` writes
   clearly-labeled DEMO data, dev only). All access goes through the
   validated services in `lib/data/` — see `docs/DATABASE_SCHEMA.md`.
-- **Design system**: Cobalt theme (OKLCH tokens in `app/globals.css`),
-  Space Grotesk / Inter / JetBrains Mono via `next/font`.
+- **Design system**: "Premium Industrial Minimalism" — the brand book is
+  `DESIGN.md`, every value lives in `design/tokens.json`, and
+  `node scripts/build-tokens.mjs` regenerates `design/generated/tokens.css`
+  (Tailwind v4 `@theme` + the shadcn/ui variable contract) which
+  `app/globals.css` imports. UI primitives are shadcn/ui (`components/ui/`,
+  base-ui, restyled onto the tokens); HyperUI is a pattern reference only.
+  Space Grotesk 500 for headings, Inter for everything else, via `next/font`.
+  Claude Code skills for frontend work live in `.claude/skills/`
+  (`docs/DESIGN_SKILLS_GUIDE.md`); `node scripts/lint-design.mjs` is the
+  static design-system lint.
+- **Phase 1 is quote-led**: `isCheckoutEnabled()` (config/business.ts,
+  `NEXT_PUBLIC_CHECKOUT_ENABLED`, default off) hides the cart and makes
+  "Request a quote" the primary CTA; the cart/Shopify checkout stay intact
+  behind it for Phase 2.
 
 ```
 app/                 routes (see Information architecture below)

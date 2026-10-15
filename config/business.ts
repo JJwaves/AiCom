@@ -82,7 +82,7 @@ export const VALUE_PROPS = [
 
 /** Announcement bar. Set `enabled: false` to hide. */
 export const ANNOUNCEMENT = {
-  enabled: true,
+  enabled: false,
   text: "Custom printed insulated takeout bags — 5,000 piece minimum, digital proof before production.",
   href: "/products/custom-insulated-takeout-bags",
 };
@@ -126,3 +126,30 @@ export function isDemoPricing(): boolean {
 export function showsDemoPricing(product: { pricingStatus: "DEMO" | "LIVE" }): boolean {
   return isDemoPricing() || product.pricingStatus === "DEMO";
 }
+
+/**
+ * Phase 1 conversion model (storefront redesign, 2026-10-15).
+ *
+ * The brief for the public site is PRODUCT SHOWCASE + WHOLESALE LEAD
+ * GENERATION: "Request a quote" is the one accent call-to-action on every
+ * page, and the cart / Shopify checkout stay in the codebase behind this
+ * switch for Phase 2. It is NEXT_PUBLIC because the header and the product
+ * configurator are client components that must render the right CTA; it is
+ * read at BUILD time, so flipping it needs a redeploy.
+ *
+ * Default OFF = quote-led. `NEXT_PUBLIC_CHECKOUT_ENABLED=true` restores the
+ * cart link, "Add to cart" and the checkout flow exactly as before. Nothing
+ * about pricing authority changes either way: /api/checkout still re-prices
+ * every line, and /api/quote still validates every request.
+ */
+export function isCheckoutEnabled(): boolean {
+  return process.env.NEXT_PUBLIC_CHECKOUT_ENABLED === "true";
+}
+
+/** Phase 1 primary conversion label — one wording everywhere. */
+export const QUOTE_CTA = {
+  label: "Request a quote",
+  href: "/request-quote",
+  /** The promise the form page, the configurator and the FAQ all make identically. */
+  responseTime: "within one business day",
+} as const;

@@ -16,7 +16,7 @@ export function PolicyPage({
         {title}
       </h1>
       {!reviewed && (
-        <p className="mt-4 rounded-[6px] bg-error-soft px-4 py-3 text-sm text-error">
+        <p className="mt-4 rounded-sm bg-error-soft px-4 py-3 text-sm text-error">
           Draft policy — this text must be reviewed by the business owner and a legal advisor before launch. See
           BUSINESS_CONFIG_TODO.md.
         </p>

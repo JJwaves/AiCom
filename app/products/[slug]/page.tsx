@@ -4,11 +4,13 @@ import { notFound } from "next/navigation";
 import Script from "next/script";
 import { getCatalogProduct, listCatalogProducts } from "@/lib/commerce/catalog";
 import { resolveProductPrimaryCta, resolveProductShippingMessage } from "@/lib/experiments/server";
-import { BUSINESS, PROOF_POLICY, showsDemoPricing } from "@/config/business";
+import { BUSINESS, PROOF_POLICY, QUOTE_CTA, showsDemoPricing } from "@/config/business";
 import { FLAT_US_SHIPPING_COPY } from "@/config/shipping";
+import { FAQ_ITEMS } from "@/config/faq";
 import { baseUnitPriceCents, startingUnitPriceCents } from "@/modules/pricing";
 import { ProductConfigurator } from "@/components/product/ProductConfigurator";
-import { HowItWorks } from "@/components/landing/sections";
+import { WholesalePricing } from "@/components/landing/WholesalePricing";
+import { Eyebrow, FAQAccordion, FinalCTA, HowItWorks, SectionHeading } from "@/components/landing/sections";
 import { ViewItemTracker } from "./view-item-tracker";
 
 export async function generateStaticParams() {
@@ -21,10 +23,10 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   const product = await getCatalogProduct(slug);
   if (!product) return {};
   return {
-    title: `${product.title} — Pricing & Custom Printing`,
-    description: `${product.positioning} Configure size, color and quantity online and upload your logo; from $${
-      (startingUnitPriceCents(product) / 100).toFixed(2)
-    } per bag. ${FLAT_US_SHIPPING_COPY}. Ships within the United States.`,
+    title: `${product.title} — Wholesale Pricing & Custom Printing`,
+    description: `${product.positioning} Configure size, colour and quantity, from $${(
+      startingUnitPriceCents(product) / 100
+    ).toFixed(2)} per bag at wholesale quantities. ${FLAT_US_SHIPPING_COPY}. Request a quote — ships within the United States.`,
     alternates: { canonical: `/products/${product.slug}` },
   };
 }
@@ -81,68 +83,100 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
       </Script>
       <ViewItemTracker product={product} />
 
-      <nav aria-label="Breadcrumb" className="mx-auto max-w-6xl px-4 pt-6 sm:px-6">
-        <ol className="flex gap-2 font-mono text-xs text-ink-3">
+      <nav aria-label="Breadcrumb" className="container-page pt-6">
+        <ol className="flex gap-2 text-sm text-brand-ink-muted">
           <li>
-            <Link href="/products" className="hover:text-accent">
+            <Link href="/products" className="hover:text-brand-ink hover:underline">
               Products
             </Link>
           </li>
           <li aria-hidden="true">/</li>
-          <li aria-current="page" className="text-ink-2">
+          <li aria-current="page" className="text-brand-ink-2">
             {product.title}
           </li>
         </ol>
       </nav>
 
-      <section className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
+      <section className="container-page pt-6 pb-16 lg:pb-24">
         <ProductConfigurator
           product={product}
           experiments={{ shippingMessage: shippingMessage.override, primaryCta: primaryCta.override }}
         />
       </section>
 
-      {/* How customization works — three steps, no promise of an automated
-          proof: proof preparation is a human production step. */}
-      <section className="mx-auto max-w-6xl border-t border-rule px-4 py-12 sm:px-6">
-        <h2 className="text-xl" style={{ fontWeight: 600 }}>
-          How customization works
-        </h2>
-        <ol className="mt-6 grid gap-4 sm:grid-cols-3">
-          {[
-            { n: 1, h: "Configure", b: "Choose size, color and quantity." },
-            { n: 2, h: "Upload artwork", b: "Upload your restaurant logo or bag design." },
-            {
-              n: 3,
-              h: "Approve your proof",
-              b: `We'll prepare a digital proof for approval before production. ${PROOF_POLICY.productionStart}`,
-            },
-          ].map((step) => (
-            <li key={step.n} className="surface p-5">
-              <p className="label-mono">Step {step.n}</p>
-              <h3 className="mt-1 text-base" style={{ fontWeight: 600 }}>
-                {step.h}
-              </h3>
-              <p className="mt-1 text-sm text-ink-3">{step.b}</p>
-            </li>
-          ))}
-        </ol>
-        <p className="mt-6 text-sm text-ink-2">{PROOF_POLICY.leadTime}</p>
-        <p className="mt-1 text-sm text-ink-3">
-          {FLAT_US_SHIPPING_COPY}, charged once per order and shown separately from the product subtotal. Any sales tax
-          is calculated at checkout.
-        </p>
+      {/* Specifications — the catalog table in full. */}
+      <section className="bg-brand-canvas-2" aria-labelledby="pdp-specs">
+        <div className="container-page section-tight grid gap-10 lg:grid-cols-12 lg:gap-16">
+          <div className="lg:col-span-4">
+            <SectionHeading eyebrow="Specifications" title={<span id="pdp-specs">What you are ordering.</span>} lead={product.description} />
+          </div>
+          <dl className="grid gap-x-10 self-start border-t border-brand-hairline-strong sm:grid-cols-2 lg:col-span-8">
+            {product.specifications.map((spec) => (
+              <div key={spec.label} className="border-b border-brand-hairline py-4">
+                <dt className="eyebrow">{spec.label}</dt>
+                <dd className="mt-1 text-base text-brand-ink">{spec.value}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
       </section>
 
-      <section className="mx-auto max-w-6xl border-t border-rule px-4 py-12 sm:px-6">
-        <h2 className="text-xl" style={{ fontWeight: 600 }}>
-          What happens after you order
-        </h2>
-        <div className="mt-6">
-          <HowItWorks compact />
+      {/* Wholesale price breaks, both sizes. */}
+      <section className="container-page section-tight" aria-labelledby="pdp-pricing">
+        <div className="grid gap-10 lg:grid-cols-12 lg:gap-16">
+          <div className="lg:col-span-4">
+            <Eyebrow className="mb-4">Wholesale pricing</Eyebrow>
+            <h2 id="pdp-pricing" className="type-h2">
+              Price breaks by size and quantity.
+            </h2>
+            <p className="mt-4 text-sm leading-body text-brand-ink-2">
+              Product subtotal per design, including your custom print. {FLAT_US_SHIPPING_COPY}, charged once per order and shown separately.
+            </p>
+          </div>
+          <div className="lg:col-span-8">
+            <WholesalePricing product={product} />
+          </div>
         </div>
-        <p className="mt-6 max-w-2xl text-sm text-ink-3">{product.description}</p>
       </section>
+
+      {/* How customisation works — proof preparation is a human production step; no automation is promised. */}
+      <section className="container-page pb-(--space-section)" aria-labelledby="pdp-process">
+        <SectionHeading
+          eyebrow="How it works"
+          title={<span id="pdp-process">From configuration to delivery.</span>}
+          lead={`${PROOF_POLICY.detail} ${PROOF_POLICY.leadTime}`}
+        />
+        <div className="mt-10">
+          <HowItWorks />
+        </div>
+      </section>
+
+      <section className="container-page pb-(--space-section)" aria-labelledby="pdp-faq">
+        <div className="grid gap-10 lg:grid-cols-12 lg:gap-16">
+          <div className="lg:col-span-4">
+            <Eyebrow className="mb-4">FAQ</Eyebrow>
+            <h2 id="pdp-faq" className="type-h2">
+              Before you request a quote.
+            </h2>
+            <p className="mt-4 text-sm text-brand-ink-2">
+              More in the{" "}
+              <Link href="/faq" className="text-brand-accent-ink underline underline-offset-3 hover:text-brand-ink">
+                full FAQ
+              </Link>
+              .
+            </p>
+          </div>
+          <div className="lg:col-span-8">
+            <FAQAccordion items={FAQ_ITEMS.slice(0, 5)} />
+          </div>
+        </div>
+      </section>
+
+      <FinalCTA
+        heading="Send the spec, get the price."
+        sub={`Size, colour, quantity and your artwork. Pricing comes back ${QUOTE_CTA.responseTime}, and nothing prints before you approve a digital proof.`}
+        href={`${QUOTE_CTA.href}?product=${product.slug}`}
+      />
     </>
   );
 }
